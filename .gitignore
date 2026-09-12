@@ -1,4 +1,4 @@
-/conclave
-/dist/
-/.conclave.yaml
 /bin/
+/conclave
+/.conclave.yaml
+/dist/

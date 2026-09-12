@@ -11,6 +11,16 @@ Any command that reads a prompt and prints one JSON object works.
 
 ## Installation
 
+Every release publishes archives for Linux, macOS and Windows, plus Debian and Arch packages, with a `checksums.txt`. The [install.sh](./install.sh) script picks the package format of the machine, verifies the checksum, then installs:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/bornholm/conclave/main/install.sh | sh
+```
+
+On Debian/Ubuntu it installs the `.deb`, on Arch/Manjaro the pacman package. Elsewhere, or with `--binary`, it drops the binary in `/usr/local/bin`, or in `~/.local/bin` without root. Run it again to update; it does nothing when the version is already installed. `--version vX.Y.Z` pins a release, `--prefix <dir>` chooses where the bare binary goes, `--download-only` fetches and verifies without installing.
+
+With a Go toolchain:
+
 ```bash
 go install github.com/bornholm/conclave/cmd/conclave@latest
 ```

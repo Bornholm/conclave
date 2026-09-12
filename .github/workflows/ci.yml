@@ -1,15 +1,26 @@
 name: ci
+
 on:
   push:
+    branches: [main, master]
   pull_request:
+
 jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
+          cache: true
       - run: go vet ./...
       - run: go test -race ./...
-      - run: go build ./cmd/conclave
+      # Cross-compile the release targets here, so platform-specific code
+      # (process groups, syscall) breaks on the pull request, not on the tag.
+      - run: GOOS=windows GOARCH=amd64 go build ./...
+      - run: GOOS=windows GOARCH=386 go build ./...
+      - run: GOOS=darwin GOARCH=arm64 go build ./...
+      - run: GOOS=darwin GOARCH=amd64 go build ./...
+      - run: GOOS=linux GOARCH=arm64 go build ./...
+      - run: sh -n install.sh

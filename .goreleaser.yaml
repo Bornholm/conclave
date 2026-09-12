@@ -1,0 +1,69 @@
+version: 2
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: conclave
+    # No cgo: every first-class Go target cross-compiles from one runner.
+    env:
+      - CGO_ENABLED=0
+    targets: [go_first_class]
+    mod_timestamp: "{{ .CommitTimestamp }}"
+    dir: ./cmd/conclave
+    binary: conclave
+    flags:
+      - -trimpath
+    ldflags:
+      - -w -s -X 'github.com/bornholm/conclave/internal/cli.Version={{ .Version }} ({{ .Commit }})'
+
+archives:
+  - id: conclave
+    ids: [conclave]
+    formats: [tar.gz]
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    files:
+      - README.md
+      - .conclave.example.yaml
+
+nfpms:
+  - id: conclave
+    package_name: conclave
+    ids: [conclave]
+    formats:
+      - deb
+      - archlinux
+    vendor: bornholm
+    homepage: https://github.com/bornholm/conclave
+    maintainer: William Petit <will.arcanadelirium@gmail.com>
+    description: |-
+      Conclave - multi-agent pull request review.
+      Runs several local coding agents (Claude Code, OpenCode, Pi) on a
+      GitHub or Gitea pull request, each in its own Git worktree, and
+      consolidates their reports with a lead agent.
+    bindir: /usr/bin
+    contents:
+      - src: README.md
+        dst: /usr/share/doc/conclave/README.md
+      - src: .conclave.example.yaml
+        dst: /usr/share/doc/conclave/conclave.example.yaml
+
+checksum:
+  name_template: "checksums.txt"
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-next"
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+
+release:
+  name_template: "v{{ .Version }}"

@@ -2,9 +2,9 @@
 package factory
 
 import (
+	"context"
 	"fmt"
 	"net/http"
-	"os"
 
 	"github.com/bornholm/conclave/internal/config"
 	"github.com/bornholm/conclave/internal/domain"
@@ -13,14 +13,10 @@ import (
 	"github.com/bornholm/conclave/internal/forge/github"
 )
 
-// New builds the forge backend described by the configuration. The token is
-// read from the environment variable named by token_env; it may be empty for
-// public repositories.
+// New builds the forge backend described by the configuration. The token
+// comes from ResolveToken; it may be empty for public repositories.
 func New(cfg config.ForgeConfig, hc *http.Client) (forge.Forge, error) {
-	token := ""
-	if cfg.TokenEnv != "" {
-		token = os.Getenv(cfg.TokenEnv)
-	}
+	token, _ := ResolveToken(context.Background(), cfg)
 	switch cfg.Provider {
 	case config.ProviderGitHub:
 		return github.New(cfg.BaseURL, token, hc)

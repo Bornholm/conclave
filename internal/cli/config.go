@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
 
 	"github.com/bornholm/conclave/internal/agent"
 	"github.com/bornholm/conclave/internal/config"
@@ -64,12 +63,13 @@ func runConfigValidate(ctx context.Context, args []string, stdout, stderr io.Wri
 			fmt.Fprintf(stdout, "✓ remote %s: %s/%s/%s\n", cfg.Forge.Remote, repo.Host, repo.Owner, repo.Name)
 		}
 	}
-	if cfg.Forge.TokenEnv != "" {
-		if os.Getenv(cfg.Forge.TokenEnv) == "" {
-			fmt.Fprintf(stdout, "! token %s not set (only public repositories will work)\n", cfg.Forge.TokenEnv)
-		} else {
-			fmt.Fprintf(stdout, "✓ token %s present\n", cfg.Forge.TokenEnv)
-		}
+	switch _, src := factory.ResolveToken(ctx, cfg.Forge); src {
+	case factory.TokenSourceEnv:
+		fmt.Fprintf(stdout, "✓ token from %s\n", cfg.Forge.TokenEnv)
+	case factory.TokenSourceGH:
+		fmt.Fprintf(stdout, "✓ token from gh auth token (%s is empty)\n", cfg.Forge.TokenEnv)
+	default:
+		fmt.Fprintf(stdout, "! no token: %s is empty and gh auth token is unavailable (only public repositories will work)\n", cfg.Forge.TokenEnv)
 	}
 	fmt.Fprintf(stdout, "✓ %d reviewer(s) configured\n", len(cfg.Reviewers()))
 	fmt.Fprintf(stdout, "✓ 1 lead configured (%s)\n", cfg.Lead().ID)

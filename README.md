@@ -67,6 +67,8 @@ See [`.conclave.example.yaml`](.conclave.example.yaml) for the full reference.
 Key points:
 
 - `forge.token_env` holds the **name** of the environment variable, never the token.
+  For GitHub, when that variable is empty and the `gh` CLI is installed and
+  logged in, Conclave uses `gh auth token` for the forge host instead.
 - `forge.base_url` is the API root for GitHub (`https://api.github.com`,
   `https://ghe.example.com/api/v3`) and the public instance URL for Gitea
   (`https://git.example.com`, sub-paths are supported).

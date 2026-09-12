@@ -8,6 +8,7 @@ forge:
   # base_url: https://ghe.example.com/api/v3  # GitHub Enterprise
   # base_url: https://git.example.com         # Gitea / Forgejo (public instance URL)
   token_env: GITHUB_TOKEN   # name of the environment variable holding the token
+                            # (GitHub: falls back to `gh auth token` when empty)
 
 review:
   max_parallel: 3

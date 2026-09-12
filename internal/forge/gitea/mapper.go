@@ -1,0 +1,68 @@
+package gitea
+
+import (
+	"errors"
+	"fmt"
+
+	"github.com/bornholm/conclave/internal/domain"
+)
+
+func mapPullRequest(raw pullRequest) (*domain.PullRequest, error) {
+	if raw.Number == 0 || raw.Head.SHA == "" || raw.Base.SHA == "" {
+		return nil, errors.New("unexpected Gitea response: missing number or SHAs")
+	}
+	if raw.Base.Repo == nil {
+		return nil, errors.New("unexpected Gitea response: missing base repository")
+	}
+	pr := &domain.PullRequest{
+		Number:      raw.Number,
+		Title:       raw.Title,
+		Description: raw.Body,
+		State:       raw.State,
+		WebURL:      raw.HTMLURL,
+		Author:      raw.User.Login,
+		Base:        mapRef(raw.Base, raw.Base.Repo),
+	}
+	if raw.Draft {
+		pr.State = "draft"
+	}
+	if raw.Head.Repo == nil {
+		pr.Head = domain.RepositoryRef{Branch: raw.Head.Ref, SHA: raw.Head.SHA, IsFork: true}
+	} else {
+		pr.Head = mapRef(raw.Head, raw.Head.Repo)
+		pr.Head.IsFork = raw.Head.Repo.FullName != raw.Base.Repo.FullName
+	}
+	for _, l := range raw.Labels {
+		pr.Labels = append(pr.Labels, l.Name)
+	}
+	return pr, nil
+}
+
+func mapRef(r ref, repo *repository) domain.RepositoryRef {
+	return domain.RepositoryRef{
+		Owner:    repo.Owner.Login,
+		Name:     repo.Name,
+		CloneURL: repo.CloneURL,
+		Branch:   r.Ref,
+		SHA:      r.SHA,
+		IsFork:   repo.Fork,
+	}
+}
+
+func mapFile(f changedFile) domain.ChangedFile {
+	status := f.Status
+	switch status {
+	case "added", "modified", "renamed", "copied", "changed":
+	case "deleted", "removed":
+		status = domain.FileDeleted
+	default:
+		status = fmt.Sprintf("unknown(%s)", status)
+	}
+	return domain.ChangedFile{
+		Path:         f.Filename,
+		PreviousPath: f.PreviousFilename,
+		Status:       status,
+		Additions:    f.Additions,
+		Deletions:    f.Deletions,
+	}
+}

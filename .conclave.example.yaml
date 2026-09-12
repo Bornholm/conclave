@@ -1,0 +1,98 @@
+# Conclave configuration. Copy to .conclave.yaml at the repository root.
+version: 1
+
+forge:
+  provider: github          # github | gitea
+  remote: origin
+  # base_url: https://api.github.com          # GitHub.com (default)
+  # base_url: https://ghe.example.com/api/v3  # GitHub Enterprise
+  # base_url: https://git.example.com         # Gitea / Forgejo (public instance URL)
+  token_env: GITHUB_TOKEN   # name of the environment variable holding the token
+
+review:
+  max_parallel: 3
+  timeout: 30m
+  agent_timeout: 15m
+  lead_timeout: 15m
+  keep_worktrees: false
+  fail_fast: false
+  include:
+    associated_issues: true   # every issue referenced as #N in the description or discussion
+    discussion: true          # comments, reviews and inline review comments of the PR
+    changed_files: true
+    diff: true
+  limits:
+    max_output_bytes: 1048576
+    max_diff_bytes: 5242880
+    max_files: 3000
+    max_findings: 200
+    max_issues: 10            # referenced issues loaded, in order of appearance
+    max_comments: 200         # discussion entries kept (the most recent ones)
+    max_comment_bytes: 8192   # per comment or issue body
+
+output:
+  format: markdown          # markdown | json
+  show_attribution: true
+  show_failed_agents: true
+
+# Every agent receives the prompt (stdin by default), runs inside its own
+# disposable worktree checked out at the PR head, and must print one JSON
+# object on stdout. Conclave also understands the Claude Code JSON envelope,
+# NDJSON streams and ```json fenced blocks.
+#
+# Each reviewer performs a complete review. Diversity comes from using
+# different tools and models, not from splitting topics: `specialties` is
+# optional and only adds priority areas to the prompt.
+#
+# `model` is a label recorded in the report and the run manifest; it does not
+# select the model. Pass the tool's own flag for that (--model) so the model
+# never depends on which credentials happen to be available.
+agents:
+  # Claude Code — https://docs.anthropic.com/claude-code
+  - id: claude
+    role: reviewer
+    command:
+      - claude
+      - --print
+      - --output-format
+      - json
+      - --permission-mode
+      - plan
+    # model: claude-opus-4-8   # optional label; detected from the JSON envelope otherwise
+    environment:
+      CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1"
+
+  # OpenCode — https://opencode.ai
+  - id: opencode
+    role: reviewer
+    command: [opencode, run, --dir, "{worktree}"]
+    # command: [opencode, run, --model, anthropic/claude-opus-4-8]
+    input: argument          # opencode reads the message from its arguments
+
+  # Pi — https://github.com/badlogic/pi-mono
+  - id: pi
+    role: reviewer
+    command:
+      - pi
+      - --print
+      - --no-session
+      - --mode
+      - json                  # event stream: Conclave keeps the tool trace and detects the model
+      - --tools
+      - read,grep,find,ls     # read-only tools for reviewers
+      # - --model
+      # - anthropic/claude-opus-4-8
+      - --
+    input: argument          # pi reads the message from its arguments
+    output: pi-json
+    max_output_bytes: 33554432   # the event stream includes every file read
+
+  - id: claude-lead
+    role: lead
+    command:
+      - claude
+      - --print
+      - --output-format
+      - json
+      - --permission-mode
+      - plan

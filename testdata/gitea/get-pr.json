@@ -1,0 +1,13 @@
+{
+  "number": 42,
+  "title": "Add retry",
+  "body": "Closes #7",
+  "state": "open",
+  "html_url": "https://git.example.com/gitea/acme/proj/pulls/42",
+  "user": {"login": "carol"},
+  "labels": [],
+  "base": {"ref": "main", "sha": "cccc000000000000000000000000000000000003",
+           "repo": {"name": "proj", "full_name": "acme/proj", "owner": {"login": "acme"}, "clone_url": "https://git.example.com/gitea/acme/proj.git", "fork": false}},
+  "head": {"ref": "retry", "sha": "dddd000000000000000000000000000000000004",
+           "repo": {"name": "proj", "full_name": "acme/proj", "owner": {"login": "acme"}, "clone_url": "https://git.example.com/gitea/acme/proj.git", "fork": false}}
+}

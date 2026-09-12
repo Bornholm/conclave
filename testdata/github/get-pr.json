@@ -1,0 +1,13 @@
+{
+  "number": 123,
+  "title": "Prevent concurrent map writes",
+  "body": "Fixes #45\n\nCloses acme/proj#46 and other/repo#99",
+  "state": "open",
+  "html_url": "https://github.com/acme/proj/pull/123",
+  "user": {"login": "alice"},
+  "labels": [{"name": "bug"}],
+  "base": {"ref": "main", "sha": "aaaa000000000000000000000000000000000001",
+           "repo": {"name": "proj", "full_name": "acme/proj", "owner": {"login": "acme"}, "clone_url": "https://github.com/acme/proj.git", "fork": false}},
+  "head": {"ref": "fix/map", "sha": "bbbb000000000000000000000000000000000002",
+           "repo": {"name": "proj", "full_name": "bob/proj", "owner": {"login": "bob"}, "clone_url": "https://github.com/bob/proj.git", "fork": true}}
+}

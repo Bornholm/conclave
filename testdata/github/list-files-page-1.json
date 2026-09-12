@@ -1,0 +1,4 @@
+[
+  {"filename": "internal/session/store.go", "status": "modified", "additions": 10, "deletions": 2},
+  {"filename": "internal/session/new.go", "previous_filename": "internal/session/old.go", "status": "renamed", "additions": 0, "deletions": 0}
+]

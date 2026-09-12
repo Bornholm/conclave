@@ -1,0 +1,1 @@
+{"number": 45, "title": "Crash on concurrent login", "body": "panic: concurrent map writes", "html_url": "https://github.com/acme/proj/issues/45"}

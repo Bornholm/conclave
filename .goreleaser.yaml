@@ -27,6 +27,7 @@ archives:
         formats: [zip]
     files:
       - README.md
+      - LICENSE
       - .conclave.example.yaml
 
 nfpms:
@@ -39,6 +40,7 @@ nfpms:
     vendor: bornholm
     homepage: https://github.com/bornholm/conclave
     maintainer: William Petit <will.arcanadelirium@gmail.com>
+    license: MIT
     description: |-
       Conclave - multi-agent pull request review.
       Runs several local coding agents (Claude Code, OpenCode, Pi) on a
@@ -50,6 +52,8 @@ nfpms:
         dst: /usr/share/doc/conclave/README.md
       - src: .conclave.example.yaml
         dst: /usr/share/doc/conclave/conclave.example.yaml
+      - src: LICENSE
+        dst: /usr/share/doc/conclave/LICENSE
 
 checksum:
   name_template: "checksums.txt"

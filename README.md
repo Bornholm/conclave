@@ -128,3 +128,7 @@ go test -race ./...
 
 The test suite uses a fake agent (`internal/testagent`) and temporary Git
 repositories; it never calls a real forge or model.
+
+## License
+
+MIT, see [LICENSE](./LICENSE).

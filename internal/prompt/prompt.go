@@ -100,3 +100,80 @@ func Lead(in LeadInput) ([]byte, error) {
 	}
 	return buf.Bytes(), nil
 }
+
+// TriageInput feeds the triage template for one issue.
+type TriageInput struct {
+	AgentID     string
+	Worktree    string
+	Branch      string
+	HeadSHA     string
+	Issue       *domain.Issue
+	Labels      []domain.Label
+	MaxLabels   int
+	OtherIssues []domain.Issue
+}
+
+// LeadTriageInput feeds the lead triage template for a whole batch.
+type LeadTriageInput struct {
+	AgentID            string
+	Worktree           string
+	Branch             string
+	HeadSHA            string
+	Labels             []domain.Label
+	MaxLabels          int
+	Issues             []domain.Issue
+	Reports            []domain.TriageReport
+	SucceededReviewers []string
+}
+
+type triageCommon struct {
+	Schema        string
+	SchemaVersion string
+	Statuses      []string
+}
+
+func triageFields(schema string) triageCommon {
+	c := triageCommon{Schema: schema, SchemaVersion: domain.TriageSchemaVersion}
+	for _, s := range domain.TriageStatuses {
+		c.Statuses = append(c.Statuses, string(s))
+	}
+	return c
+}
+
+// Triage renders the prompt for triaging one issue.
+func Triage(in TriageInput) ([]byte, error) {
+	data := struct {
+		TriageInput
+		triageCommon
+	}{in, triageFields(TriageSchema)}
+	var buf bytes.Buffer
+	if err := tmpl.ExecuteTemplate(&buf, "triage.tmpl", data); err != nil {
+		return nil, fmt.Errorf("render triage prompt: %w", err)
+	}
+	return buf.Bytes(), nil
+}
+
+// LeadTriage renders the prompt consolidating a triage batch.
+func LeadTriage(in LeadTriageInput) ([]byte, error) {
+	// The lead needs the issue text to check the reports, but not the whole
+	// repository context: the worktree is there for that.
+	issues, err := json.MarshalIndent(in.Issues, "", "  ")
+	if err != nil {
+		return nil, err
+	}
+	reports, err := json.MarshalIndent(in.Reports, "", "  ")
+	if err != nil {
+		return nil, err
+	}
+	data := struct {
+		LeadTriageInput
+		triageCommon
+		IssuesJSON  string
+		ReportsJSON string
+	}{in, triageFields(LeadTriageSchema), string(issues), string(reports)}
+	var buf bytes.Buffer
+	if err := tmpl.ExecuteTemplate(&buf, "lead-triage.tmpl", data); err != nil {
+		return nil, fmt.Errorf("render lead triage prompt: %w", err)
+	}
+	return buf.Bytes(), nil
+}

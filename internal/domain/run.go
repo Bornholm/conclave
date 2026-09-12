@@ -14,15 +14,17 @@ const (
 // RunManifest is persisted in the run directory.
 type RunManifest struct {
 	ID        string     `json:"id"`
+	Kind      string     `json:"kind"`
 	StartedAt time.Time  `json:"started_at"`
 	EndedAt   *time.Time `json:"ended_at,omitempty"`
 	Status    RunStatus  `json:"status"`
 	Error     string     `json:"error,omitempty"`
 
-	Forge    string `json:"forge"`
-	Owner    string `json:"owner"`
-	Repo     string `json:"repo"`
-	PRNumber int64  `json:"pr_number"`
+	Forge    string  `json:"forge"`
+	Owner    string  `json:"owner"`
+	Repo     string  `json:"repo"`
+	PRNumber int64   `json:"pr_number,omitempty"`
+	Issues   []int64 `json:"issues,omitempty"`
 
 	BaseSHA      string `json:"base_sha"`
 	HeadSHA      string `json:"head_sha"`

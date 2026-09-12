@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/bornholm/conclave/internal/domain"
 )
@@ -29,7 +30,36 @@ type Forge interface {
 	// inline review comments of the pull request, oldest first, at most
 	// maxComments entries.
 	ListDiscussion(ctx context.Context, repo domain.Repository, number int64, maxComments int) ([]domain.Comment, error)
+	// ListLabels returns the labels defined on the repository.
+	ListLabels(ctx context.Context, repo domain.Repository) ([]domain.Label, error)
+	// ListIssues returns the issues matching the query, pull requests excluded.
+	ListIssues(ctx context.Context, repo domain.Repository, q IssueQuery) ([]domain.Issue, error)
+	// ListIssueComments returns the comments of an issue, oldest first.
+	ListIssueComments(ctx context.Context, repo domain.Repository, number int64, maxComments int) ([]domain.Comment, error)
+	// ListReferences returns the commits, pull requests and issues that
+	// mention the issue, oldest first. It is best-effort: a forge that does
+	// not expose a timeline returns an empty slice and no error.
+	ListReferences(ctx context.Context, repo domain.Repository, number int64, max int) ([]domain.Reference, error)
 }
+
+// IssueQuery selects the issues a triage run works on.
+type IssueQuery struct {
+	// State is open (default), closed or all.
+	State string
+	// Labels keeps only the issues carrying all of them.
+	Labels []string
+	// Since keeps only the issues updated at or after this time.
+	Since time.Time
+	// Limit caps the number of issues returned, 0 for no cap.
+	Limit int
+}
+
+// Issue states accepted by IssueQuery.
+const (
+	StateOpen   = "open"
+	StateClosed = "closed"
+	StateAll    = "all"
+)
 
 var issueRefRe = regexp.MustCompile(`(?:^|[^\w/&])(?:([\w.-]+)/([\w.-]+))?#(\d+)\b`)
 

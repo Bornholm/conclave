@@ -6,6 +6,8 @@ import (
 	"net/url"
 	"regexp"
 	"strings"
+
+	"github.com/bornholm/conclave/internal/domain"
 )
 
 var (
@@ -72,6 +74,30 @@ func Validate(cfg *Config) error {
 		add("review.limits: all limits must be positive")
 	}
 
+	switch cfg.Triage.Labels.Source {
+	case LabelSourceForge:
+	case LabelSourceList:
+		if len(cfg.Triage.Labels.List) == 0 {
+			add("triage.labels.list: required when source is list")
+		}
+	default:
+		add("triage.labels.source: must be forge or list, got %q", cfg.Triage.Labels.Source)
+	}
+	if cfg.Triage.MaxParallel < 1 {
+		add("triage.max_parallel: must be >= 1")
+	}
+	if cfg.Triage.Labels.MaxLabels < 1 {
+		add("triage.labels.max_labels: must be >= 1")
+	}
+	if cfg.Triage.Limits.MaxIssues <= 0 || cfg.Triage.Limits.MaxComments <= 0 || cfg.Triage.Limits.MaxReferences <= 0 {
+		add("triage.limits: all limits must be positive")
+	}
+	for status := range cfg.Triage.StatusLabels {
+		if domain.NormalizeStatus(status) == "" {
+			add("triage.status_labels: unknown status %q", status)
+		}
+	}
+
 	switch cfg.Output.Format {
 	case FormatMarkdown, FormatJSON:
 	default:
@@ -80,6 +106,7 @@ func Validate(cfg *Config) error {
 
 	seen := map[string]bool{}
 	reviewers, leads := 0, 0
+	reviewerIDs := map[string]bool{}
 	for i, a := range cfg.Agents {
 		prefix := fmt.Sprintf("agents[%d]", i)
 		if a.ID != "" {
@@ -96,6 +123,7 @@ func Validate(cfg *Config) error {
 		switch a.Role {
 		case RoleReviewer:
 			reviewers++
+			reviewerIDs[a.ID] = true
 		case RoleLead:
 			leads++
 		default:
@@ -138,6 +166,11 @@ func Validate(cfg *Config) error {
 			if IsProtectedEnv(name) && !a.AllowProtectedEnv {
 				add("%s.environment: %s is protected; set allow_protected_env: true to override", prefix, name)
 			}
+		}
+	}
+	for _, id := range cfg.Triage.Reviewers {
+		if !reviewerIDs[id] {
+			add("triage.reviewers: %q is not a configured reviewer", id)
 		}
 	}
 	if reviewers == 0 {

@@ -113,3 +113,64 @@ func TestTitleSimilarity(t *testing.T) {
 		t.Errorf("similarity %v", s)
 	}
 }
+
+const leadTriageJSON = `{"schema_version":"1","summary":"done","issues":[
+ {"number":11,"labels":["type/bug","ghostlabel"],"status":"still-present","confidence":0.9,
+  "summary":"yes","evidence":"a.go:1","reported_by":["r1","ghost"]},
+ {"number":99,"labels":[],"status":"fixed","confidence":0.9,"summary":"x","evidence":"y","reported_by":["r1"]},
+ {"number":12,"labels":[],"status":"fixed","confidence":0.5,"summary":"maybe","evidence":"","reported_by":["r1"]}
+]}`
+
+func TestParseLeadTriage(t *testing.T) {
+	issues := []domain.Issue{
+		{Number: 11, Title: "Crash", State: "open", Labels: []string{"type/bug"}},
+		{Number: 12, Title: "Retries", State: "open"},
+	}
+	known := map[string]string{"type/bug": "type/bug"}
+	tr, warnings, err := ParseLeadTriage([]byte(leadTriageJSON), issues, []string{"r1"}, known, 4)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(tr.Issues) != 2 {
+		t.Fatalf("issues: %+v", tr.Issues)
+	}
+	byNumber := map[int64]domain.TriagedIssue{}
+	for _, i := range tr.Issues {
+		byNumber[i.Number] = i
+	}
+	got := byNumber[11]
+	if len(got.Labels) != 1 || got.Title != "Crash" || len(got.ReportedBy) != 1 || got.ReportedBy[0] != "r1" {
+		t.Errorf("issue 11: %+v", got)
+	}
+	// A "fixed" with no evidence must be downgraded, never trusted.
+	if got := byNumber[12]; got.Status != domain.TriageNeedsInfo || got.Question == "" {
+		t.Errorf("issue 12 should be downgraded: %+v", got)
+	}
+	joined := strings.Join(warnings, "\n")
+	for _, want := range []string{"#99 was not in the batch", "ghostlabel", "requires evidence"} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("warnings lack %q: %v", want, warnings)
+		}
+	}
+}
+
+func TestFallbackTriage(t *testing.T) {
+	issues := []domain.Issue{{Number: 11, Title: "Crash", State: "open"}, {Number: 12, Title: "Lost"}}
+	outcomes := []TriageOutcome{
+		{Number: 11, Agent: "a", Report: &domain.TriageReport{Number: 11, Labels: []string{"type/bug"}, Status: domain.TriageNeedsInfo, Confidence: 0.4, Question: "?"}},
+		{Number: 11, Agent: "b", Report: &domain.TriageReport{Number: 11, Labels: []string{"area/x"}, Status: domain.TriageStillPresent, Confidence: 0.9, Evidence: "a.go:1"}},
+		{Number: 12, Agent: "a", Err: errors.New("timed out")},
+	}
+	tr := FallbackTriage(issues, outcomes)
+	if len(tr.Issues) != 1 {
+		t.Fatalf("issues: %+v", tr.Issues)
+	}
+	got := tr.Issues[0]
+	if got.Status != domain.TriageStillPresent || len(got.Labels) != 2 || len(got.ReportedBy) != 2 {
+		t.Errorf("consolidated: %+v", got)
+	}
+	failed := FailedIssues(issues, outcomes)
+	if len(failed) != 1 || failed[0].Number != 12 || !strings.Contains(failed[0].Reason, "timed out") {
+		t.Errorf("failed: %+v", failed)
+	}
+}

@@ -28,6 +28,16 @@ Agents inherit your environment by default, so their credentials keep working. `
 
 `review.limits` bounds what a run may cost. `max_diff_bytes` truncates the diff in the prompt, the agents still have the whole worktree. `max_files` refuses a pull request with more changed files than that. `max_findings` caps each report. `max_issues`, `max_comments` and `max_comment_bytes` bound the discussion and the referenced issues. When there are too many comments, the most recent ones are kept.
 
+## Triage
+
+`triage.labels.source` is `forge` by default, so the taxonomy is the one the repository defines, descriptions included. `include` and `exclude` are shell globs over label names, which is how you keep `type/*` and `area/*` and drop `wontfix` or `good first issue`. `describe` fills in or overrides a description the forge left empty, and an empty description is worth fixing: the name alone tells an agent very little. `source: list` uses `labels.list` instead, for a repository with no labels yet.
+
+`triage.reviewers` is empty by default, which means the first configured reviewer. Deciding whether a ticket still holds rarely needs three opinions the way a diff does, and a batch multiplies the cost by the number of issues.
+
+`triage.status_labels` maps a status to a label the repository defines, to propose it alongside the status. It changes nothing to the status itself, which exists whether or not the forge has a label for it.
+
+`triage.limits` bounds a batch: `max_issues`, `max_comments` per issue and `max_references` per issue.
+
 ## Agent contract
 
 The agent runs with the worktree as working directory, receives the prompt, and prints one JSON object that matches the schema embedded in the prompt. The required fields are `schema_version`, `reviewer.id`, `summary`, `findings` and `verdict`. Conclave also finds the object inside the Claude Code `--output-format json` envelope, inside an NDJSON stream and inside a ```json fenced block, so an agent that adds a sentence before its JSON still counts.

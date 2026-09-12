@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestMainCommands(t *testing.T) {
@@ -44,4 +45,44 @@ func readFile(t *testing.T, p string) []byte {
 		t.Fatal(err)
 	}
 	return data
+}
+
+func TestParseSince(t *testing.T) {
+	now := time.Date(2026, 9, 12, 12, 0, 0, 0, time.UTC)
+	cases := map[string]string{
+		"90d":        "2026-06-14",
+		"2w":         "2026-08-29",
+		"3m":         "2026-06-12",
+		"48h":        "2026-09-10",
+		"2026-01-02": "2026-01-02",
+	}
+	for in, want := range cases {
+		got, err := parseSince(in, now)
+		if err != nil {
+			t.Errorf("%s: %v", in, err)
+			continue
+		}
+		if got.Format("2006-01-02") != want {
+			t.Errorf("%s: got %s want %s", in, got.Format("2006-01-02"), want)
+		}
+	}
+	if _, err := parseSince("soon", now); err == nil {
+		t.Error("expected an error")
+	}
+}
+
+func TestTriageUsage(t *testing.T) {
+	var out, errb bytes.Buffer
+	for _, args := range [][]string{
+		{"triage"},
+		{"triage", "abc"},
+		{"triage", "--all", "12"},
+		{"triage", "--all", "--state", "nope"},
+		{"triage", "12", "--since", "soon", "--all"},
+	} {
+		errb.Reset()
+		if code := Main(args, &out, &errb); code == 0 {
+			t.Errorf("%v should fail", args)
+		}
+	}
 }

@@ -18,9 +18,19 @@ var safeNameRe = regexp.MustCompile(`[^A-Za-z0-9._-]+`)
 
 // NewRunID builds an identifier such as 20260911T210100Z-pr-123-a1b2c3d4.
 func NewRunID(now time.Time, prNumber int64) string {
+	return newID(now, fmt.Sprintf("pr-%d", prNumber))
+}
+
+// NewTriageRunID builds an identifier such as 20260911T210100Z-triage-12-a1b2c3d4,
+// where the number is how many issues the run covers.
+func NewTriageRunID(now time.Time, issues int) string {
+	return newID(now, fmt.Sprintf("triage-%d", issues))
+}
+
+func newID(now time.Time, kind string) string {
 	var b [4]byte
 	_, _ = rand.Read(b[:])
-	return fmt.Sprintf("%s-pr-%d-%s", now.UTC().Format("20060102T150405Z"), prNumber, hex.EncodeToString(b[:]))
+	return fmt.Sprintf("%s-%s-%s", now.UTC().Format("20060102T150405Z"), kind, hex.EncodeToString(b[:]))
 }
 
 // Store is the directory tree of one run.

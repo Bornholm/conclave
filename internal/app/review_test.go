@@ -13,13 +13,17 @@ import (
 
 	"github.com/bornholm/conclave/internal/config"
 	"github.com/bornholm/conclave/internal/domain"
+	"github.com/bornholm/conclave/internal/forge"
 	"github.com/bornholm/conclave/internal/testutil"
 )
 
-// fakeForge serves one pull request from memory.
+// fakeForge serves one pull request and a few issues from memory.
 type fakeForge struct {
-	pr    *domain.PullRequest
-	files []domain.ChangedFile
+	pr     *domain.PullRequest
+	files  []domain.ChangedFile
+	issues []domain.Issue
+	labels []domain.Label
+	refs   map[int64][]domain.Reference
 }
 
 func (f *fakeForge) Name() string { return "fake" }
@@ -37,7 +41,39 @@ func (f *fakeForge) ListDiscussion(context.Context, domain.Repository, int64, in
 	return []domain.Comment{{Kind: "comment", Author: "maint", CreatedAt: "t", Body: "Decided: no passthrough. Related to #9."}}, nil
 }
 func (f *fakeForge) GetIssue(_ context.Context, _ domain.Repository, n int64) (*domain.Issue, error) {
+	for _, i := range f.issues {
+		if i.Number == n {
+			issue := i
+			return &issue, nil
+		}
+	}
 	return &domain.Issue{Number: n, Title: "issue", Description: "body"}, nil
+}
+
+func (f *fakeForge) ListLabels(context.Context, domain.Repository) ([]domain.Label, error) {
+	return f.labels, nil
+}
+
+func (f *fakeForge) ListIssues(_ context.Context, _ domain.Repository, q forge.IssueQuery) ([]domain.Issue, error) {
+	var out []domain.Issue
+	for _, i := range f.issues {
+		if q.State != forge.StateAll && q.State != "" && i.State != q.State {
+			continue
+		}
+		out = append(out, i)
+		if q.Limit > 0 && len(out) >= q.Limit {
+			break
+		}
+	}
+	return out, nil
+}
+
+func (f *fakeForge) ListIssueComments(_ context.Context, _ domain.Repository, n int64, _ int) ([]domain.Comment, error) {
+	return []domain.Comment{{Kind: domain.CommentKindComment, Author: "bob", CreatedAt: "t", Body: "still happening"}}, nil
+}
+
+func (f *fakeForge) ListReferences(_ context.Context, _ domain.Repository, n int64, _ int) ([]domain.Reference, error) {
+	return f.refs[n], nil
 }
 
 // fixtureRepo creates a repository with a feature branch and returns dir, base and head SHAs.
@@ -87,6 +123,7 @@ func newApp(t *testing.T, agents ...config.AgentConfig) (*App, string) {
 		Review: config.ReviewConfig{MaxParallel: 2, Timeout: time.Minute, AgentTimeout: 10 * time.Second, LeadTimeout: 10 * time.Second,
 			Limits: config.LimitsConfig{MaxOutputBytes: 1 << 20, MaxDiffBytes: 1 << 20, MaxFiles: 100, MaxFindings: 50, MaxIssues: 10, MaxComments: 100, MaxCommentBytes: 4096}},
 		Output: config.OutputConfig{Format: "markdown"}, Agents: agents}
+	config.ApplyDefaults(cfg)
 	f := &fakeForge{
 		pr: &domain.PullRequest{Number: 7, Title: "Feature", Description: "Fixes #3", Author: "alice", State: "open",
 			Base: domain.RepositoryRef{Branch: "main", SHA: base}, Head: domain.RepositoryRef{Branch: "feature", SHA: head}},

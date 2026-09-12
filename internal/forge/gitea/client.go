@@ -5,11 +5,13 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/bornholm/conclave/internal/domain"
 	"github.com/bornholm/conclave/internal/forge"
@@ -150,14 +152,140 @@ func (c *Client) getAll(ctx context.Context, path string, out any) error {
 	return forge.MergeJSONArrays(pages, out)
 }
 
+// ListLabels implements forge.Forge. Repository labels come first, then the
+// organization labels the repository can also use.
+func (c *Client) ListLabels(ctx context.Context, repo domain.Repository) ([]domain.Label, error) {
+	var raw []label
+	if err := c.getAll(ctx, repoPath(repo)+"/labels", &raw); err != nil {
+		return nil, err
+	}
+	var org []label
+	if err := c.getAll(ctx, "/orgs/"+url.PathEscape(repo.Owner)+"/labels", &org); err == nil {
+		raw = append(raw, org...)
+	}
+	seen := make(map[string]bool, len(raw))
+	out := make([]domain.Label, 0, len(raw))
+	for _, l := range raw {
+		if seen[l.Name] {
+			continue
+		}
+		seen[l.Name] = true
+		out = append(out, domain.Label{Name: l.Name, Description: l.Description, Color: l.Color})
+	}
+	return out, nil
+}
+
+// ListIssues implements forge.Forge.
+func (c *Client) ListIssues(ctx context.Context, repo domain.Repository, q forge.IssueQuery) ([]domain.Issue, error) {
+	state := q.State
+	switch state {
+	case forge.StateClosed, forge.StateAll:
+	default:
+		state = forge.StateOpen
+	}
+	var out []domain.Issue
+	for page := 1; ; page++ {
+		values := url.Values{
+			"page": {strconv.Itoa(page)}, "limit": {"50"},
+			"type": {"issues"}, "state": {state},
+		}
+		if len(q.Labels) > 0 {
+			values.Set("labels", strings.Join(q.Labels, ","))
+		}
+		if !q.Since.IsZero() {
+			values.Set("since", q.Since.UTC().Format(time.RFC3339))
+		}
+		var raw []issueListItem
+		resp, err := c.get(ctx, repoPath(repo)+"/issues", values, &raw)
+		if err != nil {
+			return nil, err
+		}
+		for _, it := range raw {
+			if it.PullRequest != nil {
+				continue
+			}
+			out = append(out, mapIssueItem(it))
+			if q.Limit > 0 && len(out) >= q.Limit {
+				return out, nil
+			}
+		}
+		if len(raw) == 0 || !strings.EqualFold(resp.Header.Get("X-HasMore"), "true") {
+			break
+		}
+	}
+	return out, nil
+}
+
+// ListIssueComments implements forge.Forge.
+func (c *Client) ListIssueComments(ctx context.Context, repo domain.Repository, number int64, maxComments int) ([]domain.Comment, error) {
+	var raw []comment
+	if err := c.getAll(ctx, fmt.Sprintf("%s/issues/%d/comments", repoPath(repo), number), &raw); err != nil {
+		return nil, err
+	}
+	out := make([]domain.Comment, 0, len(raw))
+	for _, cm := range raw {
+		out = append(out, domain.Comment{Kind: domain.CommentKindComment, Author: cm.User.Login, CreatedAt: cm.CreatedAt, Body: cm.Body})
+	}
+	return forge.SortAndCap(out, maxComments), nil
+}
+
+// ListReferences implements forge.Forge, reading the issue timeline.
+func (c *Client) ListReferences(ctx context.Context, repo domain.Repository, number int64, max int) ([]domain.Reference, error) {
+	var raw []timelineEntry
+	if err := c.getAll(ctx, fmt.Sprintf("%s/issues/%d/timeline", repoPath(repo), number), &raw); err != nil {
+		if errors.Is(err, forge.ErrNotFound) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	var out []domain.Reference
+	for _, ev := range raw {
+		switch ev.Type {
+		case "commit_ref", "close_commit":
+			sha := ev.RefCommitSHA
+			if sha == "" {
+				sha = strings.TrimSpace(ev.Body)
+			}
+			if sha == "" {
+				continue
+			}
+			out = append(out, domain.Reference{
+				Kind: domain.ReferenceCommit, Ref: sha, State: ev.Type,
+				Actor: ev.User.Login, CreatedAt: ev.CreatedAt,
+			})
+		case "issue_ref", "pull_ref", "ref_issue":
+			if ev.RefIssue == nil {
+				continue
+			}
+			ref := domain.Reference{
+				Kind: domain.ReferenceIssue, Ref: strconv.FormatInt(ev.RefIssue.Number, 10),
+				Title: ev.RefIssue.Title, State: ev.RefIssue.State, WebURL: ev.RefIssue.HTMLURL,
+				Actor: ev.User.Login, CreatedAt: ev.CreatedAt,
+			}
+			if ev.RefIssue.PullRequest != nil {
+				ref.Kind = domain.ReferencePullRequest
+				if ev.RefIssue.PullRequest.Merged {
+					ref.State = "merged"
+				}
+			}
+			out = append(out, ref)
+		}
+	}
+	if max > 0 && len(out) > max {
+		out = out[len(out)-max:]
+	}
+	return out, nil
+}
+
 // GetIssue implements forge.Forge.
 func (c *Client) GetIssue(ctx context.Context, repo domain.Repository, number int64) (*domain.Issue, error) {
-	var raw issue
+	var raw issueListItem
 	if _, err := c.get(ctx, fmt.Sprintf("%s/issues/%d", repoPath(repo), number), nil, &raw); err != nil {
 		return nil, err
 	}
 	if raw.PullRequest != nil {
 		return nil, fmt.Errorf("%w: #%d is a pull request", forge.ErrNotFound, number)
 	}
-	return &domain.Issue{Number: raw.Number, Title: raw.Title, Description: raw.Body, WebURL: raw.HTMLURL}, nil
+	issue := mapIssueItem(raw)
+	return &issue, nil
 }

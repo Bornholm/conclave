@@ -37,8 +37,51 @@ type Config struct {
 	Version int           `yaml:"version"`
 	Forge   ForgeConfig   `yaml:"forge"`
 	Review  ReviewConfig  `yaml:"review"`
+	Triage  TriageConfig  `yaml:"triage"`
 	Output  OutputConfig  `yaml:"output"`
 	Agents  []AgentConfig `yaml:"agents"`
+}
+
+// Label sources.
+const (
+	LabelSourceForge = "forge"
+	LabelSourceList  = "list"
+)
+
+// TriageConfig tunes the triage run. It deliberately reuses the review
+// timeouts and the same agents: a triage is the same machinery with another
+// prompt.
+type TriageConfig struct {
+	MaxParallel int `yaml:"max_parallel"`
+	// Reviewers restricts the triage to these agent ids. Empty means the
+	// first configured reviewer, since triaging a ticket rarely needs three
+	// opinions the way reviewing a diff does.
+	Reviewers []string `yaml:"reviewers"`
+	// UseLead runs the lead over the whole batch. Default true.
+	UseLead *bool        `yaml:"use_lead"`
+	Labels  LabelsConfig `yaml:"labels"`
+	Limits  TriageLimits `yaml:"limits"`
+	// StatusLabels maps a triage status to a forge label to propose with it.
+	StatusLabels map[string]string `yaml:"status_labels"`
+}
+
+// LabelsConfig says where the label taxonomy comes from and which part of it
+// is a category an agent may propose.
+type LabelsConfig struct {
+	Source   string            `yaml:"source"`
+	List     []string          `yaml:"list"`
+	Include  []string          `yaml:"include"`
+	Exclude  []string          `yaml:"exclude"`
+	Describe map[string]string `yaml:"describe"`
+	// MaxLabels caps how many labels an agent may propose per issue.
+	MaxLabels int `yaml:"max_labels"`
+}
+
+// TriageLimits bounds a triage run.
+type TriageLimits struct {
+	MaxIssues     int `yaml:"max_issues"`
+	MaxComments   int `yaml:"max_comments"`
+	MaxReferences int `yaml:"max_references"`
 }
 
 // ForgeConfig describes the forge hosting the pull request.
@@ -102,6 +145,32 @@ type AgentConfig struct {
 	AllowProtectedEnv bool              `yaml:"allow_protected_env"`
 	Timeout           time.Duration     `yaml:"timeout"`
 }
+
+// TriageReviewers returns the agents a triage run uses: the ones named in
+// triage.reviewers, or the first configured reviewer.
+func (c *Config) TriageReviewers() []AgentConfig {
+	all := c.Reviewers()
+	if len(c.Triage.Reviewers) == 0 {
+		if len(all) == 0 {
+			return nil
+		}
+		return all[:1]
+	}
+	byID := make(map[string]AgentConfig, len(all))
+	for _, a := range all {
+		byID[a.ID] = a
+	}
+	var out []AgentConfig
+	for _, id := range c.Triage.Reviewers {
+		if a, ok := byID[id]; ok {
+			out = append(out, a)
+		}
+	}
+	return out
+}
+
+// TriageUsesLead reports whether the lead consolidates the triage batch.
+func (c *Config) TriageUsesLead() bool { return boolValue(c.Triage.UseLead, true) }
 
 // Reviewers returns the agents with the reviewer role, in configuration order.
 func (c *Config) Reviewers() []AgentConfig {

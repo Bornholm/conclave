@@ -23,10 +23,6 @@ type ref struct {
 	Repo *repository `json:"repo"`
 }
 
-type label struct {
-	Name string `json:"name"`
-}
-
 type pullRequest struct {
 	Number  int64   `json:"number"`
 	Title   string  `json:"title"`
@@ -46,16 +42,6 @@ type pullRequestFile struct {
 	Status           string `json:"status"`
 	Additions        int    `json:"additions"`
 	Deletions        int    `json:"deletions"`
-}
-
-type issue struct {
-	Number      int64  `json:"number"`
-	Title       string `json:"title"`
-	Body        string `json:"body"`
-	HTMLURL     string `json:"html_url"`
-	PullRequest *struct {
-		URL string `json:"url"`
-	} `json:"pull_request"`
 }
 
 type comment struct {
@@ -87,4 +73,47 @@ func decode(data []byte, out any) error {
 		return fmt.Errorf("unexpected GitHub response: %w", err)
 	}
 	return nil
+}
+
+type label struct {
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	Color       string `json:"color"`
+}
+
+type issueListItem struct {
+	Number      int64   `json:"number"`
+	Title       string  `json:"title"`
+	Body        string  `json:"body"`
+	State       string  `json:"state"`
+	HTMLURL     string  `json:"html_url"`
+	User        user    `json:"user"`
+	Labels      []label `json:"labels"`
+	CreatedAt   string  `json:"created_at"`
+	UpdatedAt   string  `json:"updated_at"`
+	ClosedAt    string  `json:"closed_at"`
+	PullRequest *struct {
+		URL string `json:"url"`
+	} `json:"pull_request"`
+}
+
+// timelineEvent covers the events that say whether an issue is still live.
+type timelineEvent struct {
+	Event     string `json:"event"`
+	CreatedAt string `json:"created_at"`
+	CommitID  string `json:"commit_id"`
+	CommitURL string `json:"commit_url"`
+	Actor     user   `json:"actor"`
+	Source    *struct {
+		Type  string `json:"type"`
+		Issue *struct {
+			Number      int64  `json:"number"`
+			Title       string `json:"title"`
+			State       string `json:"state"`
+			HTMLURL     string `json:"html_url"`
+			PullRequest *struct {
+				MergedAt string `json:"merged_at"`
+			} `json:"pull_request"`
+		} `json:"issue"`
+	} `json:"source"`
 }

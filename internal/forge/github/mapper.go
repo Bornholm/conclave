@@ -50,6 +50,18 @@ func mapRef(r ref, repo *repository) domain.RepositoryRef {
 	}
 }
 
+func mapIssueItem(it issueListItem) domain.Issue {
+	issue := domain.Issue{
+		Number: it.Number, Title: it.Title, Description: it.Body, WebURL: it.HTMLURL,
+		State: it.State, Author: it.User.Login,
+		CreatedAt: it.CreatedAt, UpdatedAt: it.UpdatedAt, ClosedAt: it.ClosedAt,
+	}
+	for _, l := range it.Labels {
+		issue.Labels = append(issue.Labels, l.Name)
+	}
+	return issue
+}
+
 func mapFile(f pullRequestFile) domain.ChangedFile {
 	status := f.Status
 	switch status {

@@ -31,6 +31,30 @@ review:
     max_comments: 200         # discussion entries kept (the most recent ones)
     max_comment_bytes: 8192   # per comment or issue body
 
+# `conclave triage` reuses the agents above with another prompt: it labels an
+# issue and says whether it still describes something true about the code.
+triage:
+  max_parallel: 3
+  # Which reviewers triage. Empty means the first one: deciding whether a
+  # ticket still holds rarely needs three opinions the way a diff does.
+  reviewers: []
+  use_lead: true
+  labels:
+    source: forge           # forge | list
+    # Labels are read from the repository, with their descriptions. Keep the
+    # families that are categories, drop process labels.
+    include: []             # e.g. ["type/*", "area/*"]
+    exclude: ["wontfix", "duplicate", "good first issue"]
+    # Fill in or override a label description the forge leaves empty.
+    describe: {}
+    max_labels: 4
+  # Propose a label alongside a status, when the repository has one for it.
+  status_labels: {}         # e.g. {needs-info: needs-info}
+  limits:
+    max_issues: 50
+    max_comments: 50
+    max_references: 30
+
 output:
   format: markdown          # markdown | json
   show_attribution: true

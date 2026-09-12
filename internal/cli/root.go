@@ -20,6 +20,8 @@ const usage = `conclave — multi-agent pull request review
 
 Usage:
   conclave review <number> [--config PATH] [--format markdown|json] [--keep-worktrees] [--verbose]
+  conclave triage <number>... [--rev REV] [--config PATH] [--format markdown|json] [--verbose]
+  conclave triage --all [--state open|closed|all] [--label L] [--since 90d] [--limit N]
   conclave config validate [--config PATH]
   conclave config example
   conclave agents check [--config PATH]
@@ -39,6 +41,8 @@ func Main(args []string, stdout, stderr io.Writer) int {
 	switch args[0] {
 	case "review":
 		err = runReview(ctx, args[1:], stdout, stderr)
+	case "triage":
+		err = runTriage(ctx, args[1:], stdout, stderr)
 	case "config":
 		err = runConfig(ctx, args[1:], stdout, stderr)
 	case "agents":

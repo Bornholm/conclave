@@ -18,10 +18,6 @@ type ref struct {
 	Repo *repository `json:"repo"`
 }
 
-type label struct {
-	Name string `json:"name"`
-}
-
 type pullRequest struct {
 	Number  int64   `json:"number"`
 	Title   string  `json:"title"`
@@ -68,12 +64,43 @@ type reviewComment struct {
 	Line      int    `json:"line"`
 }
 
-type issue struct {
-	Number      int64  `json:"number"`
-	Title       string `json:"title"`
-	Body        string `json:"body"`
-	HTMLURL     string `json:"html_url"`
+type label struct {
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	Color       string `json:"color"`
+}
+
+type issueListItem struct {
+	Number      int64   `json:"number"`
+	Title       string  `json:"title"`
+	Body        string  `json:"body"`
+	State       string  `json:"state"`
+	HTMLURL     string  `json:"html_url"`
+	User        user    `json:"user"`
+	Labels      []label `json:"labels"`
+	CreatedAt   string  `json:"created_at"`
+	UpdatedAt   string  `json:"updated_at"`
+	ClosedAt    string  `json:"closed_at"`
 	PullRequest *struct {
 		Merged bool `json:"merged"`
 	} `json:"pull_request"`
+}
+
+// timelineEntry is one entry of a Gitea issue timeline. Gitea reuses the
+// comment shape and tells the kind apart with "type".
+type timelineEntry struct {
+	Type      string `json:"type"`
+	Body      string `json:"body"`
+	CreatedAt string `json:"created_at"`
+	User      user   `json:"user"`
+	RefIssue  *struct {
+		Number      int64  `json:"number"`
+		Title       string `json:"title"`
+		State       string `json:"state"`
+		HTMLURL     string `json:"html_url"`
+		PullRequest *struct {
+			Merged bool `json:"merged"`
+		} `json:"pull_request"`
+	} `json:"ref_issue"`
+	RefCommitSHA string `json:"ref_commit_sha"`
 }

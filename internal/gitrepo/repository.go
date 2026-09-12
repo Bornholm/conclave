@@ -167,6 +167,28 @@ func (g *Git) EnsureCommit(ctx context.Context, sha string, prRef string, remote
 	return fmt.Errorf("commit %s unavailable after fetch: %w", sha, errors.Join(errs...))
 }
 
+// ResolveRevision turns a revision (a branch, a tag, HEAD, a SHA) into a
+// commit SHA, and returns a readable name for it.
+func (g *Git) ResolveRevision(ctx context.Context, rev string) (sha string, name string, err error) {
+	if rev == "" {
+		rev = "HEAD"
+	}
+	out, err := g.run(ctx, "rev-parse", "--verify", rev+"^{commit}")
+	if err != nil {
+		return "", "", fmt.Errorf("resolve revision %q: %w", rev, err)
+	}
+	sha = strings.TrimSpace(out)
+	name = rev
+	if rev == "HEAD" {
+		if branch, err := g.run(ctx, "rev-parse", "--abbrev-ref", "HEAD"); err == nil {
+			if b := strings.TrimSpace(branch); b != "" && b != "HEAD" {
+				name = b
+			}
+		}
+	}
+	return sha, name, nil
+}
+
 // MergeBase returns the best common ancestor of two commits.
 func (g *Git) MergeBase(ctx context.Context, baseSHA, headSHA string) (string, error) {
 	out, err := g.run(ctx, "merge-base", baseSHA, headSHA)

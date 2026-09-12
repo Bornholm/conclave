@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -58,6 +59,17 @@ func main() {
 			fmt.Fprintln(os.Stderr, kv)
 		}
 		fmt.Print(validReport(id))
+	case "triage":
+		fmt.Print(triageReport(id, issueNumber(prompt)))
+	case "triage-bad-label":
+		fmt.Print(strings.Replace(triageReport(id, issueNumber(prompt)), `"type/bug"`, `"invented"`, 1))
+	case "triage-no-evidence":
+		rep := strings.Replace(triageReport(id, issueNumber(prompt)), `"still-present"`, `"fixed"`, 1)
+		fmt.Print(strings.Replace(rep, `"evidence": "changed.txt:2"`, `"evidence": ""`, 1))
+	case "triage-lead":
+		fmt.Print(triageLead(issueNumbers(prompt)))
+	case "triage-lead-ghost":
+		fmt.Print(strings.Replace(triageLead(issueNumbers(prompt)), `"reported_by": ["r1"]`, `"reported_by": ["ghost"]`, 1))
 	case "pi-json":
 		rep := strings.ReplaceAll(strings.ReplaceAll(validReport(id), "\\", "\\\\"), `"`, `\"`)
 		rep = strings.ReplaceAll(rep, "\n", `\n`)
@@ -83,6 +95,58 @@ func readPrompt(args []string) string {
 	}
 	data, _ := io.ReadAll(os.Stdin)
 	return string(data)
+}
+
+// issueNumber reads the issue number out of the triage prompt, so the fake
+// agent answers about the issue it was actually asked about.
+func issueNumber(prompt string) string {
+	m := regexp.MustCompile(`"number" must be (\d+)`).FindStringSubmatch(prompt)
+	if len(m) == 2 {
+		return m[1]
+	}
+	return "1"
+}
+
+// issueNumbers reads the batch the lead prompt lists.
+func issueNumbers(prompt string) []string {
+	var out []string
+	for _, m := range regexp.MustCompile(`(?m)^- #(\d+): `).FindAllStringSubmatch(prompt, -1) {
+		out = append(out, m[1])
+	}
+	if len(out) == 0 {
+		out = []string{"1"}
+	}
+	return out
+}
+
+func triageReport(id, number string) string {
+	return `{
+  "schema_version": "1",
+  "reviewer": {"id": "` + id + `", "model": "fake"},
+  "number": ` + number + `,
+  "labels": ["type/bug", "nope"],
+  "status": "still-present",
+  "confidence": 0.8,
+  "summary": "The described behaviour is still in the code.",
+  "evidence": "changed.txt:2"
+}`
+}
+
+func triageLead(numbers []string) string {
+	var entries []string
+	for i, n := range numbers {
+		status, extra := "still-present", `"evidence": "changed.txt:2"`
+		if i%2 == 1 {
+			status, extra = "needs-info", `"evidence": "none", "question": "Which version?"`
+		}
+		entries = append(entries, `{"number": `+n+`, "labels": ["type/bug"], "status": "`+status+`",
+      "confidence": 0.9, "summary": "Checked in the worktree.", `+extra+`, "reported_by": ["r1"]}`)
+	}
+	return `{
+  "schema_version": "1",
+  "summary": "Triaged ` + fmt.Sprint(len(numbers)) + ` issue(s).",
+  "issues": [` + strings.Join(entries, ",\n    ") + `]
+}`
 }
 
 func validReport(id string) string {

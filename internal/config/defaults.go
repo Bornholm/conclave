@@ -17,7 +17,17 @@ const (
 	DefaultMaxIssues       = 10
 	DefaultMaxComments     = 200
 	DefaultMaxCommentBytes = 8 << 10
+
+	DefaultTriageMaxParallel = 3
+	DefaultMaxTriageIssues   = 50
+	DefaultMaxTriageComments = 50
+	DefaultMaxReferences     = 30
+	DefaultMaxLabels         = 4
 )
+
+// ApplyDefaults fills the empty fields of a configuration built in code
+// rather than decoded from YAML.
+func ApplyDefaults(cfg *Config) { applyDefaults(cfg) }
 
 func applyDefaults(cfg *Config) {
 	if cfg.Forge.Remote == "" {
@@ -66,6 +76,24 @@ func applyDefaults(cfg *Config) {
 	}
 	if cfg.Review.Limits.MaxCommentBytes == 0 {
 		cfg.Review.Limits.MaxCommentBytes = DefaultMaxCommentBytes
+	}
+	if cfg.Triage.MaxParallel == 0 {
+		cfg.Triage.MaxParallel = DefaultTriageMaxParallel
+	}
+	if cfg.Triage.Labels.Source == "" {
+		cfg.Triage.Labels.Source = LabelSourceForge
+	}
+	if cfg.Triage.Labels.MaxLabels == 0 {
+		cfg.Triage.Labels.MaxLabels = DefaultMaxLabels
+	}
+	if cfg.Triage.Limits.MaxIssues == 0 {
+		cfg.Triage.Limits.MaxIssues = DefaultMaxTriageIssues
+	}
+	if cfg.Triage.Limits.MaxComments == 0 {
+		cfg.Triage.Limits.MaxComments = DefaultMaxTriageComments
+	}
+	if cfg.Triage.Limits.MaxReferences == 0 {
+		cfg.Triage.Limits.MaxReferences = DefaultMaxReferences
 	}
 	if cfg.Output.Format == "" {
 		cfg.Output.Format = FormatMarkdown

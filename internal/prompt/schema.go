@@ -65,3 +65,45 @@ const LeadSchema = `{
       "properties": {"id": {"type": "string"}, "reason": {"type": "string"}}}}
   }
 }`
+
+// TriageSchema is the JSON Schema of a triage report for one issue.
+const TriageSchema = `{
+  "type": "object",
+  "required": ["schema_version", "reviewer", "number", "labels", "status", "confidence", "summary", "evidence"],
+  "properties": {
+    "schema_version": {"type": "string", "const": "1"},
+    "reviewer": {"type": "object", "required": ["id"], "properties": {"id": {"type": "string"}, "model": {"type": "string"}}},
+    "number": {"type": "integer"},
+    "labels": {"type": "array", "items": {"type": "string"}},
+    "status": {"type": "string", "enum": ["still-present", "fixed", "obsolete", "duplicate-of", "needs-info"]},
+    "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+    "summary": {"type": "string"},
+    "evidence": {"type": "string"},
+    "duplicate_of": {"type": "integer"},
+    "question": {"type": "string"}
+  }
+}`
+
+// LeadTriageSchema is the JSON Schema of the consolidated triage.
+const LeadTriageSchema = `{
+  "type": "object",
+  "required": ["schema_version", "summary", "issues"],
+  "properties": {
+    "schema_version": {"type": "string", "const": "1"},
+    "summary": {"type": "string"},
+    "issues": {"type": "array", "items": {
+      "type": "object",
+      "required": ["number", "labels", "status", "confidence", "summary", "evidence", "reported_by"],
+      "properties": {
+        "number": {"type": "integer"},
+        "labels": {"type": "array", "items": {"type": "string"}},
+        "status": {"type": "string", "enum": ["still-present", "fixed", "obsolete", "duplicate-of", "needs-info"]},
+        "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+        "summary": {"type": "string"},
+        "evidence": {"type": "string"},
+        "duplicate_of": {"type": "integer"},
+        "question": {"type": "string"},
+        "reported_by": {"type": "array", "items": {"type": "string"}}
+      }}}
+  }
+}`

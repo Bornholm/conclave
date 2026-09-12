@@ -23,9 +23,17 @@ conclave review 123 > review.md
 
 Only the review goes to `stdout`. Logs go to `stderr`.
 
+The same agents also triage issues. Each one is labelled from the taxonomy the forge defines, and gets a status that has to be backed by evidence: still present, fixed, obsolete, duplicate or needs information.
+
+```bash
+conclave triage 12 13 14 > triage.md
+conclave triage --all --since 90d --limit 20
+```
+
 ## Read more
 
 - [How a run works](docs/how-it-works.md), from the fetch to the artifacts, and what the prompts impose on the agents.
+- [Triage](docs/triage.md), what a status means and what it takes to earn it.
 - [Configuration](docs/configuration.md), the settings people get wrong and the contract an agent must honor.
 - [`.conclave.example.yaml`](.conclave.example.yaml), the full reference with the three agents.
 

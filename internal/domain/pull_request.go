@@ -80,10 +80,22 @@ type ChangedFile struct {
 	Deletions    int    `json:"deletions"`
 }
 
-// Issue is a ticket associated with the pull request.
+// Issue is a ticket of the repository. Only Number, Title, Description and
+// WebURL are filled when an issue is loaded as context for a pull request;
+// the other fields are populated by the triage command.
 type Issue struct {
 	Number      int64  `json:"number"`
 	Title       string `json:"title"`
 	Description string `json:"description"`
 	WebURL      string `json:"web_url"`
+
+	State     string   `json:"state,omitempty"`
+	Author    string   `json:"author,omitempty"`
+	Labels    []string `json:"labels,omitempty"`
+	CreatedAt string   `json:"created_at,omitempty"`
+	UpdatedAt string   `json:"updated_at,omitempty"`
+	ClosedAt  string   `json:"closed_at,omitempty"`
+
+	Comments   []Comment   `json:"comments,omitempty"`
+	References []Reference `json:"references,omitempty"`
 }

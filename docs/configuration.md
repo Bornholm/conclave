@@ -34,7 +34,7 @@ Agents inherit your environment by default, so their credentials keep working. `
 
 `triage.reviewers` is empty by default, which means the first configured reviewer. Deciding whether a ticket still holds rarely needs three opinions the way a diff does, and a batch multiplies the cost by the number of issues.
 
-`triage.status_labels` maps a status to a label the repository defines, to propose it alongside the status. It changes nothing to the status itself, which exists whether or not the forge has a label for it.
+`triage.status_labels` maps a status to a label the repository defines, and Conclave adds that label to the proposal itself rather than asking the agent to remember the rule. A mapping to a label the repository does not define is ignored with a warning. At `max_labels`, the status label replaces the last proposal, since it is the one Conclave is sure about.
 
 `triage.limits` bounds a batch: `max_issues`, `max_comments` per issue and `max_references` per issue.
 

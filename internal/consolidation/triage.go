@@ -3,6 +3,7 @@ package consolidation
 import (
 	"encoding/json"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 
@@ -194,4 +195,41 @@ func FailedIssues(issues []domain.Issue, outcomes []TriageOutcome) []domain.Fail
 		out = append(out, domain.FailedIssue{Number: i.Number, Reason: reason})
 	}
 	return out
+}
+
+// ApplyStatusLabels adds the label a status maps to, when the repository
+// defines it. Conclave applies this rule itself rather than asking the agent
+// to remember it: a status and its label must never disagree.
+func ApplyStatusLabels(triage *domain.ConsolidatedTriage, statusLabels map[string]string, known map[string]string, maxLabels int) []string {
+	if len(statusLabels) == 0 {
+		return nil
+	}
+	var warnings []string
+	warned := map[string]bool{}
+	for i := range triage.Issues {
+		issue := &triage.Issues[i]
+		name, ok := statusLabels[string(issue.Status)]
+		if !ok {
+			continue
+		}
+		canonical, defined := known[strings.ToLower(name)]
+		if !defined {
+			if !warned[name] {
+				warnings = append(warnings, fmt.Sprintf("status_labels: %q is not defined on the repository, ignored", name))
+				warned[name] = true
+			}
+			continue
+		}
+		if slices.Contains(issue.Labels, canonical) {
+			continue
+		}
+		if maxLabels > 0 && len(issue.Labels) >= maxLabels {
+			// The status label is the one Conclave is sure about: it replaces
+			// the last proposal rather than being dropped.
+			issue.Labels[len(issue.Labels)-1] = canonical
+			continue
+		}
+		issue.Labels = append(issue.Labels, canonical)
+	}
+	return warnings
 }

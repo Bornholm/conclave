@@ -48,8 +48,9 @@ triage:
     # Fill in or override a label description the forge leaves empty.
     describe: {}
     max_labels: 4
-  # Propose a label alongside a status, when the repository has one for it.
-  status_labels: {}         # e.g. {needs-info: needs-info}
+  # Conclave adds these labels itself, from the status, so a status and its
+  # label never disagree. The label must exist on the repository.
+  status_labels: {}         # e.g. {needs-info: question}
   limits:
     max_issues: 50
     max_comments: 50

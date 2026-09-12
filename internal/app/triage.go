@@ -303,6 +303,7 @@ func (a *App) executeTriage(ctx context.Context, t *triageRun, req TriageRequest
 		triage = consolidation.FallbackTriage(t.issues, outcomes)
 		triage.Summary = fmt.Sprintf("Triage of %d issue(s) by %s.", len(triage.Issues), joinIDs(succeededIDs))
 	}
+	warnings = append(warnings, consolidation.ApplyStatusLabels(triage, cfg.Triage.StatusLabels, t.known, cfg.Triage.Labels.MaxLabels)...)
 	triage.Failed = consolidation.FailedIssues(t.issues, outcomes)
 	meta.Succeeded = len(triage.Issues)
 	triage.Meta = meta

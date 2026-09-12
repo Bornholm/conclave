@@ -174,3 +174,42 @@ func TestFallbackTriage(t *testing.T) {
 		t.Errorf("failed: %+v", failed)
 	}
 }
+
+func TestApplyStatusLabels(t *testing.T) {
+	known := map[string]string{"question": "question", "type/bug": "type/bug"}
+	tr := &domain.ConsolidatedTriage{Issues: []domain.TriagedIssue{
+		{Number: 1, Status: domain.TriageNeedsInfo, Labels: []string{"type/bug"}},
+		{Number: 2, Status: domain.TriageFixed, Labels: []string{"type/bug"}},
+		{Number: 3, Status: domain.TriageNeedsInfo, Labels: []string{"Question"}},
+		{Number: 4, Status: domain.TriageNeedsInfo, Labels: []string{"type/bug"}},
+	}}
+	warnings := ApplyStatusLabels(tr, map[string]string{"needs-info": "question", "obsolete": "ghost"}, known, 2)
+	if got := tr.Issues[0].Labels; len(got) != 2 || got[1] != "question" {
+		t.Errorf("issue 1: %v", got)
+	}
+	if got := tr.Issues[1].Labels; len(got) != 1 {
+		t.Errorf("a status with no mapping must not change: %v", got)
+	}
+	// "Question" was proposed in another case; the canonical name is what counts.
+	if got := tr.Issues[2].Labels; len(got) != 2 {
+		t.Errorf("issue 3: %v", got)
+	}
+	if warnings != nil {
+		t.Errorf("an unused mapping to an undefined label must stay silent: %v", warnings)
+	}
+	// At the cap, the status label replaces the last proposal.
+	tr2 := &domain.ConsolidatedTriage{Issues: []domain.TriagedIssue{
+		{Number: 5, Status: domain.TriageNeedsInfo, Labels: []string{"type/bug", "type/bug"}},
+	}}
+	ApplyStatusLabels(tr2, map[string]string{"needs-info": "question"}, known, 2)
+	if got := tr2.Issues[0].Labels; len(got) != 2 || got[1] != "question" {
+		t.Errorf("capped: %v", got)
+	}
+	// A mapping to a label the repository does not define warns once.
+	tr3 := &domain.ConsolidatedTriage{Issues: []domain.TriagedIssue{
+		{Number: 6, Status: domain.TriageObsolete}, {Number: 7, Status: domain.TriageObsolete},
+	}}
+	if w := ApplyStatusLabels(tr3, map[string]string{"obsolete": "ghost"}, known, 2); len(w) != 1 {
+		t.Errorf("warnings: %v", w)
+	}
+}

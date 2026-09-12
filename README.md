@@ -28,6 +28,7 @@ The same agents also triage issues. Each one is labelled from the taxonomy the f
 ```bash
 conclave triage 12 13 14 > triage.md
 conclave triage --all --since 90d --limit 20
+conclave triage --all --apply          # adds the proposed labels, never closes
 ```
 
 ## Read more

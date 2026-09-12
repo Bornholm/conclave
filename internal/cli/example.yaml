@@ -51,6 +51,10 @@ triage:
   # Conclave adds these labels itself, from the status, so a status and its
   # label never disagree. The label must exist on the repository.
   status_labels: {}         # e.g. {needs-info: question}
+  # `--apply` adds the proposed labels on the forge. It only ever adds, never
+  # removes and never closes. An issue triaged below this confidence is left
+  # alone: a write to the forge is the one thing a rerun cannot undo.
+  min_apply_confidence: 0.6
   limits:
     max_issues: 50
     max_comments: 50

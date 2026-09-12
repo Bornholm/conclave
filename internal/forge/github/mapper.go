@@ -50,6 +50,10 @@ func mapRef(r ref, repo *repository) domain.RepositoryRef {
 	}
 }
 
+func mapLabel(l label) domain.Label {
+	return domain.Label{ID: l.ID, Name: l.Name, Description: l.Description, Color: l.Color}
+}
+
 func mapIssueItem(it issueListItem) domain.Issue {
 	issue := domain.Issue{
 		Number: it.Number, Title: it.Title, Description: it.Body, WebURL: it.HTMLURL,

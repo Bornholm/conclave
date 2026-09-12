@@ -36,6 +36,9 @@ type Forge interface {
 	ListIssues(ctx context.Context, repo domain.Repository, q IssueQuery) ([]domain.Issue, error)
 	// ListIssueComments returns the comments of an issue, oldest first.
 	ListIssueComments(ctx context.Context, repo domain.Repository, number int64, maxComments int) ([]domain.Comment, error)
+	// AddIssueLabels attaches labels to an issue. It only ever adds: a label
+	// a human put there is never removed by conclave.
+	AddIssueLabels(ctx context.Context, repo domain.Repository, number int64, labels []domain.Label) error
 	// ListReferences returns the commits, pull requests and issues that
 	// mention the issue, oldest first. It is best-effort: a forge that does
 	// not expose a timeline returns an empty slice and no error.

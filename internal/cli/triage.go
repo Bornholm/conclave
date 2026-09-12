@@ -38,6 +38,7 @@ func runTriage(ctx context.Context, args []string, stdout, stderr io.Writer) err
 	limit := fs.Int("limit", 0, "with --all: maximum number of issues (default: triage.limits.max_issues)")
 	var labels stringList
 	fs.Var(&labels, "label", "with --all: only issues carrying this label, repeatable")
+	apply := fs.Bool("apply", false, "add the proposed labels to the issues on the forge (adds only, never removes or closes)")
 	keep := fs.Bool("keep-worktrees", false, "keep the temporary worktrees after the run")
 	verbose := fs.Bool("verbose", false, "verbose logging on stderr")
 	positional, err := parseInterspersed(fs, args)
@@ -45,7 +46,7 @@ func runTriage(ctx context.Context, args []string, stdout, stderr io.Writer) err
 		return err
 	}
 
-	req := app.TriageRequest{Revision: *rev, KeepWorktrees: *keep}
+	req := app.TriageRequest{Revision: *rev, KeepWorktrees: *keep, Apply: *apply}
 	if *all {
 		if len(positional) > 0 {
 			return errors.New("--all and explicit issue numbers are mutually exclusive")

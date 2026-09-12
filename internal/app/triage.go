@@ -26,6 +26,9 @@ import (
 
 // TriageRequest parameterizes a triage run. Numbers wins over the query.
 type TriageRequest struct {
+	// Apply writes the proposed labels to the forge. Labels are only ever
+	// added, and nothing else about the issue is touched.
+	Apply         bool
 	Numbers       []int64
 	Query         forge.IssueQuery
 	Revision      string
@@ -135,6 +138,9 @@ func (a *App) Triage(ctx context.Context, req TriageRequest) (*TriageResult, err
 		return &TriageResult{RunDir: store.Root, Manifest: manifest}, runErr
 	}
 	triage.Warnings = append(labelWarnings, triage.Warnings...)
+	if req.Apply {
+		a.applyLabels(ctx, f, repo, triage, labels)
+	}
 	_ = store.WriteJSON("final", "triage.json", triage)
 	var md bytes.Buffer
 	if err := output.TriageMarkdown(&md, triage, output.Options{ShowAttribution: cfg.ShowAttribution()}); err == nil {
@@ -464,6 +470,45 @@ func (a *App) runTriageLead(ctx context.Context, t *triageRun, lead config.Agent
 	ex.Succeeded = true
 	log.Info("lead finished", "agent", lead.ID, "issues", len(triage.Issues), "duration", ex.Duration.Round(time.Millisecond))
 	return triage, warnings, nil
+}
+
+// applyLabels adds the proposed labels to the issues on the forge. It adds
+// and never removes, skips an issue the run is not confident enough about,
+// and records on each issue what it did.
+func (a *App) applyLabels(ctx context.Context, f forge.Forge, repo domain.Repository, triage *domain.ConsolidatedTriage, labels []domain.Label) {
+	log := a.logger()
+	byName := make(map[string]domain.Label, len(labels))
+	for _, l := range labels {
+		byName[l.Name] = l
+	}
+	floor := a.Config.Triage.MinApplyConfidence
+	for i := range triage.Issues {
+		issue := &triage.Issues[i]
+		missing := issue.AddedLabels()
+		if len(missing) == 0 {
+			continue
+		}
+		if issue.Confidence < floor {
+			issue.ApplyError = fmt.Sprintf("skipped: confidence %.0f%% is below the %.0f%% floor",
+				issue.Confidence*100, floor*100)
+			log.Info("labels not applied", "issue", issue.Number, "reason", "low confidence")
+			continue
+		}
+		toAdd := make([]domain.Label, 0, len(missing))
+		for _, name := range missing {
+			if l, ok := byName[name]; ok {
+				toAdd = append(toAdd, l)
+			}
+		}
+		if err := f.AddIssueLabels(ctx, repo, issue.Number, toAdd); err != nil {
+			issue.ApplyError = err.Error()
+			log.Warn("labels not applied", "issue", issue.Number, "error", err)
+			continue
+		}
+		issue.Applied = missing
+		issue.CurrentLabels = append(issue.CurrentLabels, missing...)
+		log.Info("labels applied", "issue", issue.Number, "labels", missing)
+	}
 }
 
 func (a *App) cleanupTriageWorktrees(t *triageRun, worktrees map[string]string, keep bool) {

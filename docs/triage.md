@@ -32,9 +32,21 @@ A report that claims `fixed` or `obsolete` without evidence is rejected, not dow
 
 To make `fixed` answerable at all, the prompt carries the issue timeline, the commits and pull requests that mention the number. Without that, an agent can only guess from the current state of the code.
 
-## What it does not do
+## Applying the labels
 
-It writes nothing to the forge. No label is applied, no issue is closed. The output is a report with proposed labels, marked with the ones that would be added, and a status per issue. Applying it is a separate decision, and for now a manual one.
+By default the run writes nothing. The report proposes labels and marks the ones that would be added, and that is all.
+
+`--apply` adds those labels on the forge:
+
+```bash
+conclave triage --all --since 90d --apply
+```
+
+Three rules bound what it does. It only ever adds, so a label a human put there is never removed. It never closes an issue and never changes anything else about it, whatever the status says: `fixed` and `obsolete` are information for a maintainer, not an instruction. And it leaves alone any issue triaged below `triage.min_apply_confidence`, 0.6 by default, because a write to the forge is the one thing a rerun cannot undo.
+
+The report says what happened per issue, `Applied` for the labels that landed and `Not applied` with the reason otherwise. A forge that refuses the write, a token without the right scope for instance, fails that issue and not the run.
+
+Closing an issue stays manual. A wrong `fixed` that closes a real bug is the failure mode this whole design is built to avoid, and automating it would hand that mistake the last safeguard it has.
 
 ## Cost
 

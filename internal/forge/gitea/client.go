@@ -170,9 +170,27 @@ func (c *Client) ListLabels(ctx context.Context, repo domain.Repository) ([]doma
 			continue
 		}
 		seen[l.Name] = true
-		out = append(out, domain.Label{Name: l.Name, Description: l.Description, Color: l.Color})
+		out = append(out, domain.Label{ID: l.ID, Name: l.Name, Description: l.Description, Color: l.Color})
 	}
 	return out, nil
+}
+
+// AddIssueLabels implements forge.Forge. Gitea identifies labels by id, so a
+// label conclave never saw in ListLabels cannot be attached.
+func (c *Client) AddIssueLabels(ctx context.Context, repo domain.Repository, number int64, labels []domain.Label) error {
+	if len(labels) == 0 {
+		return nil
+	}
+	ids := make([]int64, 0, len(labels))
+	for _, l := range labels {
+		if l.ID == 0 {
+			return fmt.Errorf("label %q has no id on this instance", l.Name)
+		}
+		ids = append(ids, l.ID)
+	}
+	path := fmt.Sprintf("%s/issues/%d/labels", repoPath(repo), number)
+	_, err := c.http.Do(ctx, http.MethodPost, c.http.Resolve(path, nil), map[string]any{"labels": ids}, "")
+	return err
 }
 
 // ListIssues implements forge.Forge.

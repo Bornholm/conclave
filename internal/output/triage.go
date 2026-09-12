@@ -97,6 +97,12 @@ func TriageMarkdown(w io.Writer, triage *domain.ConsolidatedTriage, opts Options
 		if q := strings.TrimSpace(issue.Question); q != "" {
 			b.WriteString("\n**Question:** " + q + "\n")
 		}
+		if len(issue.Applied) > 0 {
+			fmt.Fprintf(&b, "\n**Applied:** %s\n", strings.Join(issue.Applied, ", "))
+		}
+		if issue.ApplyError != "" {
+			fmt.Fprintf(&b, "\n**Not applied:** %s\n", issue.ApplyError)
+		}
 	}
 
 	if len(triage.Failed) > 0 {

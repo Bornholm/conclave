@@ -61,6 +61,10 @@ type TriageConfig struct {
 	UseLead *bool        `yaml:"use_lead"`
 	Labels  LabelsConfig `yaml:"labels"`
 	Limits  TriageLimits `yaml:"limits"`
+	// MinApplyConfidence is the floor under which --apply leaves an issue
+	// alone. Writing to the forge is the one thing a triage cannot undo by
+	// running again.
+	MinApplyConfidence float64 `yaml:"min_apply_confidence"`
 	// StatusLabels maps a triage status to a forge label to propose with it.
 	StatusLabels map[string]string `yaml:"status_labels"`
 }

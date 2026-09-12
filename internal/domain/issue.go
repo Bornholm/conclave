@@ -8,6 +8,8 @@ const TriageSchemaVersion = "1"
 // Label is a label defined on the forge repository. The description is what
 // makes a label usable by an agent, so it travels with the name.
 type Label struct {
+	// ID is the forge identifier. Gitea needs it to attach a label to an issue.
+	ID          int64  `json:"id,omitempty"`
 	Name        string `json:"name"`
 	Description string `json:"description,omitempty"`
 	Color       string `json:"color,omitempty"`
@@ -127,6 +129,11 @@ type TriagedIssue struct {
 	DuplicateOf   int64        `json:"duplicate_of,omitempty"`
 	Question      string       `json:"question,omitempty"`
 	ReportedBy    []string     `json:"reported_by"`
+
+	// Applied lists the labels conclave actually added on the forge, and
+	// ApplyError says why it could not.
+	Applied    []string `json:"applied,omitempty"`
+	ApplyError string   `json:"apply_error,omitempty"`
 }
 
 // AddedLabels returns the proposed labels the issue does not carry yet.

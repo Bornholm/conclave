@@ -166,9 +166,24 @@ func (c *Client) ListLabels(ctx context.Context, repo domain.Repository) ([]doma
 	}
 	out := make([]domain.Label, 0, len(raw))
 	for _, l := range raw {
-		out = append(out, domain.Label{Name: l.Name, Description: l.Description, Color: l.Color})
+		out = append(out, mapLabel(l))
 	}
 	return out, nil
+}
+
+// AddIssueLabels implements forge.Forge. GitHub takes label names and adds
+// them to what the issue already carries.
+func (c *Client) AddIssueLabels(ctx context.Context, repo domain.Repository, number int64, labels []domain.Label) error {
+	if len(labels) == 0 {
+		return nil
+	}
+	names := make([]string, len(labels))
+	for i, l := range labels {
+		names[i] = l.Name
+	}
+	path := fmt.Sprintf("/repos/%s/%s/issues/%d/labels", url.PathEscape(repo.Owner), url.PathEscape(repo.Name), number)
+	_, err := c.http.Do(ctx, http.MethodPost, c.http.Resolve(path, nil), map[string]any{"labels": names}, accept)
+	return err
 }
 
 // ListIssues implements forge.Forge. GitHub returns pull requests from the

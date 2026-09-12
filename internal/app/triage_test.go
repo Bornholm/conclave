@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -161,5 +162,80 @@ func TestTriageWithoutLead(t *testing.T) {
 	}
 	if !strings.Contains(res.Triage.Summary, "r1") {
 		t.Errorf("summary should name the agent: %q", res.Triage.Summary)
+	}
+}
+
+func TestTriageApply(t *testing.T) {
+	a := newTriageApp(t,
+		agentCfg(t, "r1", config.RoleReviewer, "triage"),
+		agentCfg(t, "lead", config.RoleLead, "triage-lead"))
+	f := a.Forge.(*fakeForge)
+	res, err := a.Triage(context.Background(), TriageRequest{Numbers: []int64{11, 12}, Apply: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	byNumber := map[int64]domain.TriagedIssue{}
+	for _, i := range res.Triage.Issues {
+		byNumber[i.Number] = i
+	}
+	// #11 already carries type/bug, so nothing is added and the forge is untouched.
+	if got := byNumber[11]; len(got.Applied) != 0 || got.ApplyError != "" {
+		t.Errorf("issue 11 should need no write: %+v", got)
+	}
+	if _, wrote := f.added[11]; wrote {
+		t.Errorf("issue 11 must not be written to: %v", f.added[11])
+	}
+	// #12 carries none, so type/bug is added and recorded.
+	if got := byNumber[12]; len(got.Applied) != 1 || got.Applied[0] != "type/bug" {
+		t.Errorf("issue 12 applied: %+v", got)
+	}
+	if got := f.added[12]; len(got) != 1 || got[0] != "type/bug" {
+		t.Errorf("forge received: %v", got)
+	}
+	// Without --apply nothing reaches the forge.
+	f.added = nil
+	res2, err := a.Triage(context.Background(), TriageRequest{Numbers: []int64{12}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if f.added != nil {
+		t.Errorf("a run without --apply must write nothing: %v", f.added)
+	}
+	if len(res2.Triage.Issues[0].Applied) != 0 {
+		t.Errorf("applied should be empty: %+v", res2.Triage.Issues[0])
+	}
+}
+
+func TestTriageApplyStopsBelowConfidence(t *testing.T) {
+	a := newTriageApp(t,
+		agentCfg(t, "r1", config.RoleReviewer, "triage"),
+		agentCfg(t, "lead", config.RoleLead, "triage-lead"))
+	a.Config.Triage.MinApplyConfidence = 0.95 // the fake lead answers 0.9
+	f := a.Forge.(*fakeForge)
+	res, err := a.Triage(context.Background(), TriageRequest{Numbers: []int64{12}, Apply: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if f.added != nil {
+		t.Errorf("nothing should be written below the floor: %v", f.added)
+	}
+	if got := res.Triage.Issues[0]; !strings.Contains(got.ApplyError, "below the 95% floor") {
+		t.Errorf("apply error: %q", got.ApplyError)
+	}
+}
+
+func TestTriageApplyReportsForgeFailure(t *testing.T) {
+	a := newTriageApp(t,
+		agentCfg(t, "r1", config.RoleReviewer, "triage"),
+		agentCfg(t, "lead", config.RoleLead, "triage-lead"))
+	f := a.Forge.(*fakeForge)
+	f.addErr = errors.New("HTTP 403: label write forbidden")
+	res, err := a.Triage(context.Background(), TriageRequest{Numbers: []int64{12}, Apply: true})
+	if err != nil {
+		t.Fatalf("a forge failure must not fail the run: %v", err)
+	}
+	got := res.Triage.Issues[0]
+	if len(got.Applied) != 0 || !strings.Contains(got.ApplyError, "403") {
+		t.Errorf("issue: %+v", got)
 	}
 }

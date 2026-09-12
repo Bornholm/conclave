@@ -20,7 +20,7 @@ const usage = `conclave — multi-agent pull request review
 
 Usage:
   conclave review <number> [--config PATH] [--format markdown|json] [--keep-worktrees] [--verbose]
-  conclave triage <number>... [--rev REV] [--config PATH] [--format markdown|json] [--verbose]
+  conclave triage <number>... [--apply] [--rev REV] [--config PATH] [--format markdown|json]
   conclave triage --all [--state open|closed|all] [--label L] [--since 90d] [--limit N]
   conclave config validate [--config PATH]
   conclave config example

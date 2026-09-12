@@ -24,6 +24,10 @@ type fakeForge struct {
 	issues []domain.Issue
 	labels []domain.Label
 	refs   map[int64][]domain.Reference
+
+	// added records what AddIssueLabels received, addErr makes it fail.
+	added  map[int64][]string
+	addErr error
 }
 
 func (f *fakeForge) Name() string { return "fake" }
@@ -70,6 +74,19 @@ func (f *fakeForge) ListIssues(_ context.Context, _ domain.Repository, q forge.I
 
 func (f *fakeForge) ListIssueComments(_ context.Context, _ domain.Repository, n int64, _ int) ([]domain.Comment, error) {
 	return []domain.Comment{{Kind: domain.CommentKindComment, Author: "bob", CreatedAt: "t", Body: "still happening"}}, nil
+}
+
+func (f *fakeForge) AddIssueLabels(_ context.Context, _ domain.Repository, n int64, labels []domain.Label) error {
+	if f.addErr != nil {
+		return f.addErr
+	}
+	if f.added == nil {
+		f.added = map[int64][]string{}
+	}
+	for _, l := range labels {
+		f.added[n] = append(f.added[n], l.Name)
+	}
+	return nil
 }
 
 func (f *fakeForge) ListReferences(_ context.Context, _ domain.Repository, n int64, _ int) ([]domain.Reference, error) {

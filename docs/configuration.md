@@ -1,0 +1,35 @@
+# Configuration
+
+[`.conclave.example.yaml`](../.conclave.example.yaml) is the full reference. `conclave config example` prints it. This page covers the settings that are easy to get wrong, then the contract an agent must honor.
+
+## Forge
+
+`forge.token_env` is the name of a variable, not the token. For GitHub, when that variable is empty and the `gh` CLI is logged in, Conclave asks `gh auth token` for the forge host instead. `config validate` says which source it used.
+
+`forge.base_url` means two different things. For GitHub it is the API root, `https://api.github.com` or `https://ghe.example.com/api/v3`. For Gitea it is the public instance URL, `https://git.example.com`, sub-path included if there is one.
+
+## Agents
+
+Exactly one agent has `role: lead`. At least one has `role: reviewer`.
+
+`input` decides how the prompt reaches the command. `stdin` is the default. `argument` appends the prompt to the command line, which is what `opencode run` and `pi` expect. `file` writes the prompt to a temporary file and replaces `{prompt_file}` in the command. `{worktree}` anywhere in the command becomes the absolute worktree path, for tools with a directory flag such as `opencode run --dir {worktree}`.
+
+Agents inherit your environment by default, so their credentials keep working. `GIT_DIR`, `GIT_WORK_TREE` and the other variables that would point Git elsewhere are always removed. `PATH`, `HOME` and `GIT_*` cannot be set in `environment` unless `allow_protected_env: true`. `inherit_env: false` gives a minimal environment.
+
+`output` is `auto` or `pi-json`. `pi-json` reads Pi's `--mode json` event stream. Conclave extracts the final answer, writes the tool calls to `raw/<id>.trace.jsonl` and records which model answered. Give Pi a larger `max_output_bytes`, the stream includes every file it reads.
+
+`model` is a label, not a switch. It is written into reports and the manifest. Select the model with the tool's own flag. The model an agent reports about itself is ignored, one of them called itself `claude-sonnet-4` while running Kimi. Without a label, Conclave uses the model it can detect in the output, from the Claude Code envelope or the Pi events.
+
+`specialties` is optional and does not narrow the review. Every reviewer does a complete review. Specialties add priority areas to the prompt, nothing more. A reviewer given only "performance" on a correctness fix returned zero findings, which is why the example file has none.
+
+`timeout` and `max_output_bytes` on an agent override the review-level values for that agent.
+
+## Limits
+
+`review.limits` bounds what a run may cost. `max_diff_bytes` truncates the diff in the prompt, the agents still have the whole worktree. `max_files` refuses a pull request with more changed files than that. `max_findings` caps each report. `max_issues`, `max_comments` and `max_comment_bytes` bound the discussion and the referenced issues. When there are too many comments, the most recent ones are kept.
+
+## Agent contract
+
+The agent runs with the worktree as working directory, receives the prompt, and prints one JSON object that matches the schema embedded in the prompt. The required fields are `schema_version`, `reviewer.id`, `summary`, `findings` and `verdict`. Conclave also finds the object inside the Claude Code `--output-format json` envelope, inside an NDJSON stream and inside a ```json fenced block, so an agent that adds a sentence before its JSON still counts.
+
+A non-zero exit code, a timeout, an empty output or an output over `max_output_bytes` marks the reviewer as failed. The run continues as long as one reviewer succeeded, and the failure is listed in the review.

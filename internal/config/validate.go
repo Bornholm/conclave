@@ -98,6 +98,13 @@ func Validate(cfg *Config) error {
 		}
 	}
 
+	if cfg.Plan.MaxParallel < 1 {
+		add("plan.max_parallel: must be >= 1")
+	}
+	if cfg.Plan.Limits.MaxSteps <= 0 || cfg.Plan.Limits.MaxComments <= 0 || cfg.Plan.Limits.MaxReferences <= 0 {
+		add("plan.limits: all limits must be positive")
+	}
+
 	switch cfg.Output.Format {
 	case FormatMarkdown, FormatJSON:
 	default:
@@ -171,6 +178,11 @@ func Validate(cfg *Config) error {
 	for _, id := range cfg.Triage.Reviewers {
 		if !reviewerIDs[id] {
 			add("triage.reviewers: %q is not a configured reviewer", id)
+		}
+	}
+	for _, id := range cfg.Plan.Planners {
+		if !reviewerIDs[id] {
+			add("plan.planners: %q is not a configured reviewer", id)
 		}
 	}
 	if reviewers == 0 {

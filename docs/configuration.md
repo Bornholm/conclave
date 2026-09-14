@@ -38,6 +38,14 @@ Agents inherit your environment by default, so their credentials keep working. `
 
 `triage.limits` bounds a batch: `max_issues`, `max_comments` per issue and `max_references` per issue.
 
+## Plan
+
+`plan.planners` is empty by default, which means every configured reviewer. That is the opposite of `triage.reviewers`, and deliberately: two designs of the same change are worth comparing, and the lead has to choose one. Name a subset when the cost matters more than the comparison.
+
+`plan.limits.max_steps` caps how long a plan may get, 30 by default. Steps beyond it are dropped with a warning. `max_comments` and `max_references` bound the issue context each agent receives, per issue.
+
+`plan.use_lead: false` skips the consolidation and returns the most confident plan as it was written, with the other approaches attached as alternatives.
+
 ## Agent contract
 
 The agent runs with the worktree as working directory, receives the prompt, and prints one JSON object that matches the schema embedded in the prompt. The required fields are `schema_version`, `reviewer.id`, `summary`, `findings` and `verdict`. Conclave also finds the object inside the Claude Code `--output-format json` envelope, inside an NDJSON stream and inside a ```json fenced block, so an agent that adds a sentence before its JSON still counts.

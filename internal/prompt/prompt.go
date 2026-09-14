@@ -177,3 +177,78 @@ func LeadTriage(in LeadTriageInput) ([]byte, error) {
 	}
 	return buf.Bytes(), nil
 }
+
+// PlanInput feeds the plan template for one issue.
+type PlanInput struct {
+	AgentID     string
+	Worktree    string
+	Branch      string
+	HeadSHA     string
+	Issue       *domain.Issue
+	Specialties []string
+	MaxSteps    int
+}
+
+// LeadPlanInput feeds the lead plan template.
+type LeadPlanInput struct {
+	AgentID           string
+	Worktree          string
+	Branch            string
+	HeadSHA           string
+	Issue             *domain.Issue
+	Reports           []domain.PlanReport
+	SucceededPlanners []string
+	MaxSteps          int
+}
+
+type planCommon struct {
+	Schema        string
+	SchemaVersion string
+	Efforts       []string
+}
+
+func planFields(schema string) planCommon {
+	c := planCommon{Schema: schema, SchemaVersion: domain.PlanSchemaVersion}
+	for _, e := range domain.PlanEfforts {
+		c.Efforts = append(c.Efforts, string(e))
+	}
+	return c
+}
+
+// Plan renders the prompt for planning one issue.
+func Plan(in PlanInput) ([]byte, error) {
+	data := struct {
+		PlanInput
+		planCommon
+	}{in, planFields(PlanSchema)}
+	var buf bytes.Buffer
+	if err := tmpl.ExecuteTemplate(&buf, "plan.tmpl", data); err != nil {
+		return nil, fmt.Errorf("render plan prompt: %w", err)
+	}
+	return buf.Bytes(), nil
+}
+
+// LeadPlan renders the prompt consolidating the plans of one issue.
+func LeadPlan(in LeadPlanInput) ([]byte, error) {
+	// The lead gets the plans and the discussion as JSON: the issue body is
+	// rendered in the template, and the worktree carries everything else.
+	reports, err := json.MarshalIndent(in.Reports, "", "  ")
+	if err != nil {
+		return nil, err
+	}
+	comments, err := json.MarshalIndent(in.Issue.Comments, "", "  ")
+	if err != nil {
+		return nil, err
+	}
+	data := struct {
+		LeadPlanInput
+		planCommon
+		ReportsJSON  string
+		CommentsJSON string
+	}{in, planFields(LeadPlanSchema), string(reports), string(comments)}
+	var buf bytes.Buffer
+	if err := tmpl.ExecuteTemplate(&buf, "lead-plan.tmpl", data); err != nil {
+		return nil, fmt.Errorf("render lead plan prompt: %w", err)
+	}
+	return buf.Bytes(), nil
+}

@@ -107,3 +107,72 @@ const LeadTriageSchema = `{
       }}}
   }
 }`
+
+// PlanSchema is the JSON Schema of an implementation plan for one issue.
+const PlanSchema = `{
+  "type": "object",
+  "required": ["schema_version", "reviewer", "number", "understanding", "approach", "steps", "effort", "confidence"],
+  "properties": {
+    "schema_version": {"type": "string", "const": "1"},
+    "reviewer": {"type": "object", "required": ["id"], "properties": {"id": {"type": "string"}, "model": {"type": "string"}}},
+    "number": {"type": "integer"},
+    "understanding": {"type": "string"},
+    "approach": {"type": "string"},
+    "alternatives": {"type": "array", "items": {
+      "type": "object", "required": ["approach", "why_not"],
+      "properties": {"approach": {"type": "string"}, "why_not": {"type": "string"}}}},
+    "steps": {"type": "array", "items": {
+      "type": "object",
+      "required": ["id", "title", "details"],
+      "properties": {
+        "id": {"type": "string"},
+        "title": {"type": "string"},
+        "details": {"type": "string"},
+        "files": {"type": "array", "items": {"type": "string"}},
+        "validation": {"type": "string"},
+        "depends_on": {"type": "array", "items": {"type": "string"}}
+      }}},
+    "tests": {"type": "array", "items": {"type": "string"}},
+    "risks": {"type": "array", "items": {
+      "type": "object", "required": ["description"],
+      "properties": {"description": {"type": "string"}, "mitigation": {"type": "string"}}}},
+    "open_questions": {"type": "array", "items": {"type": "string"}},
+    "effort": {"type": "string", "enum": ["small", "medium", "large"]},
+    "confidence": {"type": "number", "minimum": 0, "maximum": 1}
+  }
+}`
+
+// LeadPlanSchema is the JSON Schema of the consolidated plan.
+const LeadPlanSchema = `{
+  "type": "object",
+  "required": ["schema_version", "number", "summary", "approach", "steps", "effort", "confidence", "reported_by"],
+  "properties": {
+    "schema_version": {"type": "string", "const": "1"},
+    "number": {"type": "integer"},
+    "summary": {"type": "string"},
+    "understanding": {"type": "string"},
+    "approach": {"type": "string"},
+    "alternatives": {"type": "array", "items": {
+      "type": "object", "required": ["approach", "why_not"],
+      "properties": {"approach": {"type": "string"}, "why_not": {"type": "string"}}}},
+    "steps": {"type": "array", "items": {
+      "type": "object",
+      "required": ["id", "title", "details"],
+      "properties": {
+        "id": {"type": "string"},
+        "title": {"type": "string"},
+        "details": {"type": "string"},
+        "files": {"type": "array", "items": {"type": "string"}},
+        "validation": {"type": "string"},
+        "depends_on": {"type": "array", "items": {"type": "string"}}
+      }}},
+    "tests": {"type": "array", "items": {"type": "string"}},
+    "risks": {"type": "array", "items": {
+      "type": "object", "required": ["description"],
+      "properties": {"description": {"type": "string"}, "mitigation": {"type": "string"}}}},
+    "open_questions": {"type": "array", "items": {"type": "string"}},
+    "effort": {"type": "string", "enum": ["small", "medium", "large"]},
+    "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+    "reported_by": {"type": "array", "items": {"type": "string"}}
+  }
+}`

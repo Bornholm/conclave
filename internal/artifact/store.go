@@ -27,6 +27,11 @@ func NewTriageRunID(now time.Time, issues int) string {
 	return newID(now, fmt.Sprintf("triage-%d", issues))
 }
 
+// NewPlanRunID builds an identifier such as 20260911T210100Z-plan-12-a1b2c3d4.
+func NewPlanRunID(now time.Time, issue int64) string {
+	return newID(now, fmt.Sprintf("plan-%d", issue))
+}
+
 func newID(now time.Time, kind string) string {
 	var b [4]byte
 	_, _ = rand.Read(b[:])

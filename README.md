@@ -31,10 +31,17 @@ conclave triage --all --since 90d --limit 20
 conclave triage --all --apply          # adds the proposed labels, never closes
 ```
 
+And they plan the work. `conclave plan` reads an issue and the code, has each agent write an implementation plan, and the lead turns them into one: an approach, the alternative it set aside, ordered steps with the files they touch and what proves each one done.
+
+```bash
+conclave plan 42 > plan.md
+```
+
 ## Read more
 
 - [How a run works](docs/how-it-works.md), from the fetch to the artifacts, and what the prompts impose on the agents.
 - [Triage](docs/triage.md), what a status means and what it takes to earn it.
+- [Plan](docs/plan.md), why several agents plan and only one plan comes out.
 - [Configuration](docs/configuration.md), the settings people get wrong and the contract an agent must honor.
 - [`.conclave.example.yaml`](.conclave.example.yaml), the full reference with the three agents.
 

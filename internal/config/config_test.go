@@ -41,6 +41,10 @@ func TestDecodeValidAppliesDefaults(t *testing.T) {
 	if cfg.EffectiveTimeout(cfg.Lead()) != DefaultLeadTimeout {
 		t.Errorf("lead timeout")
 	}
+	// A plan uses every reviewer by default, a triage only the first one.
+	if len(cfg.Planners()) != 1 || !cfg.PlanUsesLead() || cfg.Plan.Limits.MaxSteps != DefaultMaxPlanSteps {
+		t.Errorf("plan defaults: %+v", cfg.Plan)
+	}
 }
 
 func TestDecodeRejects(t *testing.T) {
@@ -56,6 +60,7 @@ func TestDecodeRejects(t *testing.T) {
 		"dup id":              {strings.Replace(validYAML, "id: lead", "id: rev", 1), "duplicate"},
 		"bad version":         {strings.Replace(validYAML, "version: 1", "version: 2", 1), "version"},
 		"file no placeholder": {strings.Replace(validYAML, "command: [echo]", "command: [echo]\n    input: file", 1), "placeholder"},
+		"unknown planner":     {strings.Replace(validYAML, "review:", "plan:\n  planners: [nope]\nreview:", 1), "plan.planners"},
 		"empty":               {"", "empty document"},
 	}
 	for name, tc := range cases {

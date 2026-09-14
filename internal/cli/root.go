@@ -22,6 +22,7 @@ Usage:
   conclave review <number> [--config PATH] [--format markdown|json] [--keep-worktrees] [--verbose]
   conclave triage <number>... [--apply] [--rev REV] [--config PATH] [--format markdown|json]
   conclave triage --all [--state open|closed|all] [--label L] [--since 90d] [--limit N]
+  conclave plan <number> [--rev REV] [--config PATH] [--format markdown|json] [--keep-worktrees]
   conclave config validate [--config PATH]
   conclave config example
   conclave agents check [--config PATH]
@@ -43,6 +44,8 @@ func Main(args []string, stdout, stderr io.Writer) int {
 		err = runReview(ctx, args[1:], stdout, stderr)
 	case "triage":
 		err = runTriage(ctx, args[1:], stdout, stderr)
+	case "plan":
+		err = runPlan(ctx, args[1:], stdout, stderr)
 	case "config":
 		err = runConfig(ctx, args[1:], stdout, stderr)
 	case "agents":

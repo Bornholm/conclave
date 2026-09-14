@@ -38,6 +38,7 @@ type Config struct {
 	Forge   ForgeConfig   `yaml:"forge"`
 	Review  ReviewConfig  `yaml:"review"`
 	Triage  TriageConfig  `yaml:"triage"`
+	Plan    PlanConfig    `yaml:"plan"`
 	Output  OutputConfig  `yaml:"output"`
 	Agents  []AgentConfig `yaml:"agents"`
 }
@@ -67,6 +68,26 @@ type TriageConfig struct {
 	MinApplyConfidence float64 `yaml:"min_apply_confidence"`
 	// StatusLabels maps a triage status to a forge label to propose with it.
 	StatusLabels map[string]string `yaml:"status_labels"`
+}
+
+// PlanConfig tunes a plan run. Like triage it reuses the review timeouts and
+// the same agents: a plan is the same machinery with another prompt.
+type PlanConfig struct {
+	MaxParallel int `yaml:"max_parallel"`
+	// Planners restricts the plan to these agent ids. Empty means every
+	// reviewer: unlike a triage, where one opinion usually settles it, two
+	// designs of the same change are worth comparing.
+	Planners []string `yaml:"planners"`
+	// UseLead runs the lead over the plans. Default true.
+	UseLead *bool      `yaml:"use_lead"`
+	Limits  PlanLimits `yaml:"limits"`
+}
+
+// PlanLimits bound a plan run.
+type PlanLimits struct {
+	MaxSteps      int `yaml:"max_steps"`
+	MaxComments   int `yaml:"max_comments"`
+	MaxReferences int `yaml:"max_references"`
 }
 
 // LabelsConfig says where the label taxonomy comes from and which part of it
@@ -172,6 +193,29 @@ func (c *Config) TriageReviewers() []AgentConfig {
 	}
 	return out
 }
+
+// Planners returns the agents a plan run uses: the ones named in
+// plan.planners, or every configured reviewer.
+func (c *Config) Planners() []AgentConfig {
+	all := c.Reviewers()
+	if len(c.Plan.Planners) == 0 {
+		return all
+	}
+	byID := make(map[string]AgentConfig, len(all))
+	for _, a := range all {
+		byID[a.ID] = a
+	}
+	var out []AgentConfig
+	for _, id := range c.Plan.Planners {
+		if a, ok := byID[id]; ok {
+			out = append(out, a)
+		}
+	}
+	return out
+}
+
+// PlanUsesLead reports whether the lead consolidates the plans.
+func (c *Config) PlanUsesLead() bool { return boolValue(c.Plan.UseLead, true) }
 
 // TriageUsesLead reports whether the lead consolidates the triage batch.
 func (c *Config) TriageUsesLead() bool { return boolValue(c.Triage.UseLead, true) }

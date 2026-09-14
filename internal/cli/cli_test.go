@@ -32,7 +32,7 @@ func TestMainCommands(t *testing.T) {
 	if code := Main([]string{"review", "13", "--config", "/nonexistent.yaml"}, &out, &errb); code != 1 || !strings.Contains(errb.String(), "nonexistent.yaml") {
 		t.Errorf("interspersed flags: %d %s", code, errb.String())
 	}
-	for _, args := range [][]string{{}, {"bogus"}, {"review"}, {"review", "abc"}, {"review", "1", "2"}, {"config"}, {"agents"}} {
+	for _, args := range [][]string{{}, {"bogus"}, {"review"}, {"review", "abc"}, {"review", "1", "2"}, {"plan"}, {"plan", "abc"}, {"plan", "1", "2"}, {"config"}, {"agents"}} {
 		if code := Main(args, &out, &errb); code == 0 {
 			t.Errorf("%v should fail", args)
 		}

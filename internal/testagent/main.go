@@ -70,6 +70,14 @@ func main() {
 		fmt.Print(triageLead(issueNumbers(prompt)))
 	case "triage-lead-ghost":
 		fmt.Print(strings.Replace(triageLead(issueNumbers(prompt)), `"reported_by": ["r1"]`, `"reported_by": ["ghost"]`, 1))
+	case "plan":
+		fmt.Print(planReport(id, issueNumber(prompt)))
+	case "plan-no-steps":
+		fmt.Print(strings.Replace(planReport(id, issueNumber(prompt)), planSteps, `"steps": [{"id": "s0", "title": "", "details": ""}],`, 1))
+	case "plan-lead":
+		fmt.Print(planLead(issueNumber(prompt)))
+	case "plan-lead-ghost":
+		fmt.Print(strings.Replace(planLead(issueNumber(prompt)), `"reported_by": ["r1"]`, `"reported_by": ["ghost"]`, 1))
 	case "pi-json":
 		rep := strings.ReplaceAll(strings.ReplaceAll(validReport(id), "\\", "\\\\"), `"`, `\"`)
 		rep = strings.ReplaceAll(rep, "\n", `\n`)
@@ -146,6 +154,51 @@ func triageLead(numbers []string) string {
   "schema_version": "1",
   "summary": "Triaged ` + fmt.Sprint(len(numbers)) + ` issue(s).",
   "issues": [` + strings.Join(entries, ",\n    ") + `]
+}`
+}
+
+// planSteps is extracted so a mode can replace the whole block.
+const planSteps = `  "steps": [
+    {"id": "s1", "title": "Add the retry loop", "details": "Wrap the call in changed.txt.",
+     "files": ["changed.txt", "../etc/passwd"], "validation": "go test ./..."},
+    {"id": "s2", "title": "Document the new flag", "details": "Mention it in the README.",
+     "depends_on": ["s1", "s9"]}
+  ],`
+
+func planReport(id, number string) string {
+	return `{
+  "schema_version": "1",
+  "reviewer": {"id": "` + id + `", "model": "fake"},
+  "number": ` + number + `,
+  "understanding": "The retry logic lives in changed.txt and stops after the first failure.",
+  "approach": "Wrap the call in a bounded retry loop, as the rest of the package already does.",
+  "alternatives": [{"approach": "Retry in the caller", "why_not": "every caller would repeat it"}],
+` + planSteps + `
+  "tests": ["a unit test covering the second attempt"],
+  "risks": [{"description": "a slow call is now retried", "mitigation": "cap the total duration"}],
+  "open_questions": ["How many attempts should be the default?"],
+  "effort": "small",
+  "confidence": 0.8
+}`
+}
+
+func planLead(number string) string {
+	return `{
+  "schema_version": "1",
+  "number": ` + number + `,
+  "summary": "Add a bounded retry around the failing call.",
+  "understanding": "Checked in the worktree: changed.txt holds the call.",
+  "approach": "Bounded retry loop in changed.txt.",
+  "steps": [
+    {"id": "s1", "title": "Add the retry loop", "details": "Confirmed in the code.",
+     "files": ["changed.txt"], "validation": "go test ./..."}
+  ],
+  "tests": ["a unit test covering the second attempt"],
+  "risks": [{"description": "a slow call is now retried"}],
+  "open_questions": ["How many attempts should be the default?"],
+  "effort": "small",
+  "confidence": 0.9,
+  "reported_by": ["r1"]
 }`
 }
 

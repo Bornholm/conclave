@@ -26,6 +26,8 @@ reports/               validated reports, one per successful reviewer
 final/                 groups.json, review.json, review.md
 ```
 
+A `triage` or a `plan` run lands in the same place, with `triage-*`/`plan-*` prompts, reports and a `final/triage.*` or `final/plan.*` pair.
+
 When a verdict looks wrong, the raw output usually shows why.
 
 ## What the prompts impose

@@ -23,6 +23,10 @@ const (
 	DefaultMaxTriageComments = 50
 	DefaultMaxReferences     = 30
 	DefaultMaxLabels         = 4
+
+	DefaultPlanMaxParallel = 3
+	DefaultMaxPlanSteps    = 30
+	DefaultMaxPlanComments = 50
 )
 
 // ApplyDefaults fills the empty fields of a configuration built in code
@@ -94,6 +98,18 @@ func applyDefaults(cfg *Config) {
 	}
 	if cfg.Triage.Limits.MaxReferences == 0 {
 		cfg.Triage.Limits.MaxReferences = DefaultMaxReferences
+	}
+	if cfg.Plan.MaxParallel == 0 {
+		cfg.Plan.MaxParallel = DefaultPlanMaxParallel
+	}
+	if cfg.Plan.Limits.MaxSteps == 0 {
+		cfg.Plan.Limits.MaxSteps = DefaultMaxPlanSteps
+	}
+	if cfg.Plan.Limits.MaxComments == 0 {
+		cfg.Plan.Limits.MaxComments = DefaultMaxPlanComments
+	}
+	if cfg.Plan.Limits.MaxReferences == 0 {
+		cfg.Plan.Limits.MaxReferences = DefaultMaxReferences
 	}
 	if cfg.Output.Format == "" {
 		cfg.Output.Format = FormatMarkdown

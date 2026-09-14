@@ -60,6 +60,20 @@ triage:
     max_comments: 50
     max_references: 30
 
+# `conclave plan` reuses the same agents again: each one reads the code and
+# writes the implementation plan for one issue, and the lead turns them into
+# the single plan a developer follows.
+plan:
+  max_parallel: 3
+  # Which reviewers write a plan. Empty means all of them: two designs of the
+  # same change are worth comparing, and the lead has to choose one.
+  planners: []
+  use_lead: true
+  limits:
+    max_steps: 30           # steps kept per plan
+    max_comments: 50        # issue comments given to the agents
+    max_references: 30      # commits and pull requests mentioning the issue
+
 output:
   format: markdown          # markdown | json
   show_attribution: true

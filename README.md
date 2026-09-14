@@ -7,7 +7,7 @@ It works with GitHub and with Gitea or Forgejo. [Claude Code](https://docs.anthr
 ## Install
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/bornholm/conclave/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/Bornholm/conclave/refs/heads/master/install.sh | sh
 ```
 
 The script installs the Debian or Arch package when it can, the bare binary otherwise, and verifies the checksum first. Options and the `go install` alternative are in [docs/install.md](docs/install.md).

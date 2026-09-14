@@ -76,7 +76,7 @@ func (r *Runner) Run(ctx context.Context, cfg *config.Config, a config.AgentConf
 	case res.ExitCode != 0:
 		ex.Err = fmt.Errorf("exited with code %d: %s", res.ExitCode, lastLine(res.Stderr))
 	case res.StdoutTruncated:
-		ex.Err = fmt.Errorf("output exceeded %d bytes", cfg.EffectiveMaxOutputBytes(a))
+		ex.Err = fmt.Errorf("output exceeded %d bytes: raise max_output_bytes for agent %s", cfg.EffectiveMaxOutputBytes(a), a.ID)
 	case len(res.Stdout) == 0:
 		ex.Err = errors.New("empty output")
 	}

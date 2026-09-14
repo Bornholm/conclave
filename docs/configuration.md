@@ -16,7 +16,7 @@ Exactly one agent has `role: lead`. At least one has `role: reviewer`.
 
 Agents inherit your environment by default, so their credentials keep working. `GIT_DIR`, `GIT_WORK_TREE` and the other variables that would point Git elsewhere are always removed. `PATH`, `HOME` and `GIT_*` cannot be set in `environment` unless `allow_protected_env: true`. `inherit_env: false` gives a minimal environment.
 
-`output` is `auto` or `pi-json`. `pi-json` reads Pi's `--mode json` event stream. Conclave extracts the final answer, writes the tool calls to `raw/<id>.trace.jsonl` and records which model answered. Give Pi a larger `max_output_bytes`, the stream includes every file it reads.
+`output` is `auto` or `pi-json`. `pi-json` reads Pi's `--mode json` event stream. Conclave extracts the final answer, writes the tool calls to `raw/<id>.trace.jsonl` and records which model answered. Give Pi a larger `max_output_bytes`, the stream includes every file it reads. This applies to the lead as much as to the reviewers; `conclave config validate` warns about a `--mode json` agent that is missing either setting.
 
 `model` is a label, not a switch. It is written into reports and the manifest. Select the model with the tool's own flag. The model an agent reports about itself is ignored, one of them called itself `claude-sonnet-4` while running Kimi. Without a label, Conclave uses the model it can detect in the output, from the Claude Code envelope or the Pi events.
 

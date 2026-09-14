@@ -87,7 +87,11 @@ func runTriage(ctx context.Context, args []string, stdout, stderr io.Writer) err
 		}
 		cfg.Output.Format = *format
 	}
-	a := &app.App{Config: cfg, Logger: newLogger(stderr, *verbose)}
+	logger := newLogger(stderr, *verbose)
+	for _, w := range config.Warnings(cfg) {
+		logger.Warn(w)
+	}
+	a := &app.App{Config: cfg, Logger: logger}
 	res, err := a.Triage(ctx, req)
 	if err != nil {
 		if res != nil && res.RunDir != "" {

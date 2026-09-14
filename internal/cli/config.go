@@ -43,6 +43,9 @@ func runConfigValidate(ctx context.Context, args []string, stdout, stderr io.Wri
 		return errors.New("configuration invalid")
 	}
 	fmt.Fprintf(stdout, "✓ configuration %s valid\n", *configPath)
+	for _, w := range config.Warnings(cfg) {
+		fmt.Fprintf(stdout, "! %s\n", w)
+	}
 	failed := false
 	fail := func(format string, a ...any) {
 		failed = true

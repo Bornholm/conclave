@@ -57,6 +57,8 @@ wrap it in Markdown.
 {{.Schema}}
 
 Rules:
+- Escape every backslash inside a JSON string as "\\": a namespace like
+  OA\Property or a regexp like \d otherwise makes the report unparsable.
 - "schema_version" must be "{{.SchemaVersion}}".
 - One entry per issue listed above, with its "number".
 - "labels" contains only names from REPOSITORY LABELS, at most {{.MaxLabels}}.

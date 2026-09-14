@@ -92,6 +92,8 @@ must match this schema:
 {{.Schema}}
 
 Rules:
+- Escape every backslash inside a JSON string as "\\": a namespace like
+  OA\Property or a regexp like \d otherwise makes the report unparsable.
 - "schema_version" must be "{{.SchemaVersion}}".
 - "reviewer.id" must be "{{.AgentID}}".
 - "file" is a path relative to the repository root, using forward slashes.

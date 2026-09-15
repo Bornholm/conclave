@@ -55,6 +55,7 @@ func TestDecodeRejects(t *testing.T) {
 		"empty command":       {strings.Replace(validYAML, "command: [echo]", "command: []", 1), "at least the executable"},
 		"bad provider":        {strings.Replace(validYAML, "provider: github", "provider: gitlab", 1), "unsupported"},
 		"gitea no url":        {strings.Replace(validYAML, "provider: github", "provider: gitea", 1), "base_url: required"},
+		"redmine no url":      {strings.Replace(validYAML, "provider: github", "provider: redmine", 1), "base_url: required"},
 		"bad token env":       {strings.Replace(validYAML, "provider: github", "provider: github\n  token_env: ghp-secret", 1), "token_env"},
 		"protected env":       {strings.Replace(validYAML, "command: [echo]", "command: [echo]\n    environment: {PATH: /x}", 1), "PATH is protected"},
 		"dup id":              {strings.Replace(validYAML, "id: lead", "id: rev", 1), "duplicate"},

@@ -140,10 +140,9 @@ func (c *Client) ListLabels(ctx context.Context, repo domain.Repository) ([]doma
 }
 
 // AddIssueLabels implements forge.Forge.
-// Redmine has no label attachment API. This is a no-op.
+// Redmine has no label attachment API.
 func (c *Client) AddIssueLabels(ctx context.Context, repo domain.Repository, number int64, labels []domain.Label) error {
-	// Redmine does not support attaching arbitrary labels to issues via the API.
-	return nil
+	return forge.ErrLabelsUnsupported
 }
 
 // ListIssues implements forge.Forge.

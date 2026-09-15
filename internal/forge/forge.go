@@ -118,3 +118,7 @@ func LoadAssociatedIssues(ctx context.Context, f Forge, repo domain.Repository, 
 
 // ErrNotFound is returned when a resource does not exist.
 var ErrNotFound = errors.New("not found")
+
+// ErrLabelsUnsupported is returned by AddIssueLabels when the forge does not
+// support attaching labels to issues.
+var ErrLabelsUnsupported = errors.New("labels are not supported on this forge")

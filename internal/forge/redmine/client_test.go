@@ -2,6 +2,7 @@ package redmine
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -239,5 +240,16 @@ func TestRedmineListLabelsEmpty(t *testing.T) {
 	// Redmine has no label system; returns nil
 	if labels != nil {
 		t.Errorf("labels: got %v, want nil", labels)
+	}
+}
+
+func TestRedmineAddIssueLabelsUnsupported(t *testing.T) {
+	srv := newServer(t)
+	c, _ := New(srv.URL, "tok", nil)
+	err := c.AddIssueLabels(context.Background(), domain.Repository{Owner: "acme", Name: "proj"}, 42, []domain.Label{
+		{Name: "bug"},
+	})
+	if !errors.Is(err, forge.ErrLabelsUnsupported) {
+		t.Errorf("expected ErrLabelsUnsupported, got %v", err)
 	}
 }

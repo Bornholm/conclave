@@ -2,13 +2,15 @@
 version: 1
 
 forge:
-  provider: github          # github | gitea
+  provider: github          # github | gitea | redmine
   remote: origin
   # base_url: https://api.github.com          # GitHub.com (default)
   # base_url: https://ghe.example.com/api/v3  # GitHub Enterprise
   # base_url: https://git.example.com         # Gitea / Forgejo (public instance URL)
+  # base_url: https://redmine.example.com   # Redmine (public instance URL)
   token_env: GITHUB_TOKEN   # name of the environment variable holding the token
                             # (GitHub: falls back to `gh auth token` when empty)
+                            # (Redmine: set REDMINE_TOKEN)
 
 review:
   max_parallel: 3

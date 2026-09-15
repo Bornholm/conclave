@@ -35,14 +35,14 @@ func Validate(cfg *Config) error {
 	}
 
 	switch cfg.Forge.Provider {
-	case ProviderGitHub, ProviderGitea:
+	case ProviderGitHub, ProviderGitea, ProviderRedmine:
 	case "":
-		add("forge.provider: required (github or gitea)")
+		add("forge.provider: required (github, gitea or redmine)")
 	default:
-		add("forge.provider: unsupported %q (github or gitea)", cfg.Forge.Provider)
+		add("forge.provider: unsupported %q (github, gitea or redmine)", cfg.Forge.Provider)
 	}
-	if cfg.Forge.Provider == ProviderGitea && cfg.Forge.BaseURL == "" {
-		add("forge.base_url: required for gitea")
+	if (cfg.Forge.Provider == ProviderGitea || cfg.Forge.Provider == ProviderRedmine) && cfg.Forge.BaseURL == "" {
+		add("forge.base_url: required for %s", cfg.Forge.Provider)
 	}
 	if cfg.Forge.BaseURL != "" {
 		u, err := url.Parse(cfg.Forge.BaseURL)

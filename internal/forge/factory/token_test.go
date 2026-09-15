@@ -59,3 +59,11 @@ func TestResolveTokenGiteaNoGH(t *testing.T) {
 		t.Errorf("gh must not be used for gitea, got %q", tok)
 	}
 }
+
+func TestResolveTokenRedmineNoGH(t *testing.T) {
+	fakeGH(t, `echo ghtoken`)
+	t.Setenv("REDMINE_TOKEN", "")
+	if tok, _ := ResolveToken(context.Background(), config.ForgeConfig{Provider: config.ProviderRedmine, TokenEnv: "REDMINE_TOKEN", BaseURL: "https://redmine.example.com"}); tok != "" {
+		t.Errorf("gh must not be used for redmine, got %q", tok)
+	}
+}

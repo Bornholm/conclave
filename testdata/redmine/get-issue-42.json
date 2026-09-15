@@ -1,0 +1,52 @@
+{
+  "issue": {
+    "id": 42,
+    "project": {"id": 1, "name": "ACME Project"},
+    "tracker": {"id": 1, "name": "Feature"},
+    "status": {"id": 2, "name": "New"},
+    "priority": {"id": 4, "name": "Normal"},
+    "author": {"id": 5, "name": "alice"},
+    "subject": "Add retry logic",
+    "description": "This PR adds exponential backoff retries to the HTTP client.\nCloses #7",
+    "start_date": "2025-01-15",
+    "done_ratio": 0,
+    "is_private": false,
+    "created_on": "2025-01-15T09:00:00Z",
+    "updated_on": "2025-01-16T11:30:00Z",
+    "closed_on": null,
+    "custom_fields": [],
+    "journals": [
+      {
+        "id": 101,
+        "user": {"id": 5, "name": "alice"},
+        "notes": "I implemented a basic retry with 3 attempts.",
+        "created_on": "2025-01-15T10:00:00Z",
+        "details": []
+      },
+      {
+        "id": 102,
+        "user": {"id": 6, "name": "bob"},
+        "notes": "Please add tests for edge cases.",
+        "created_on": "2025-01-16T11:30:00Z",
+        "details": [
+          {"property": "attr", "name": "status_id", "old_value": "1", "new_value": "2"}
+        ]
+      }
+    ],
+    "changesets": [
+      {
+        "revision": 1234,
+        "committed_on": "2025-01-15T09:45:00Z",
+        "comments": "Add retry logic"
+      },
+      {
+        "revision": 1235,
+        "committed_on": "2025-01-15T10:30:00Z",
+        "comments": "Fix race in retry counter"
+      }
+    ],
+    "attachments": [],
+    "relations": [],
+    "watchers": []
+  }
+}

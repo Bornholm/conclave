@@ -10,12 +10,24 @@ import (
 // the full content of every file the agent reads.
 const EventStreamMinOutputBytes = 32 << 20
 
+// MaxArgBytes is the Linux limit on the size of a single command-line argument
+// (MAX_ARG_STRLEN, 32 pages). A prompt over that size makes the exec fail with
+// E2BIG before the agent starts, which the kernel reports as "argument list
+// too long". Other platforms cap the whole argument vector instead, at a size
+// a prompt alone does not reach.
+const MaxArgBytes = 128 << 10
+
 // Warnings lists configuration problems that do not make the file invalid but
 // are known to break a run. They are reported by `conclave config validate`
 // and logged when a run starts.
 func Warnings(cfg *Config) []string {
 	var out []string
 	for _, a := range cfg.Agents {
+		if a.Input == InputArgument && cfg.Review.Limits.MaxDiffBytes >= MaxArgBytes {
+			out = append(out, fmt.Sprintf(
+				"agent %s: input is argument but max_diff_bytes is %d, over the %d-byte limit for a single argument; a diff over that size fails the exec with \"argument list too long\" before the agent starts, set input: stdin or file, or lower max_diff_bytes",
+				a.ID, cfg.Review.Limits.MaxDiffBytes, MaxArgBytes))
+		}
 		if !emitsPiEventStream(a.Command) {
 			continue
 		}

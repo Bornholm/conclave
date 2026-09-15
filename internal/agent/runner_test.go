@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"os"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -104,6 +105,23 @@ func TestPromptDelivery(t *testing.T) {
 				t.Errorf("prompt not delivered: %q", got)
 			}
 		})
+	}
+}
+
+func TestRunPromptOverArgumentLimit(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("the per-argument limit is a Linux one")
+	}
+	cfg, a := testCfg(t, "echo-prompt", config.InputArgument)
+	ex := newRunner(t).Run(context.Background(), cfg, a, t.TempDir(), make([]byte, config.MaxArgBytes))
+	if ex.Err == nil {
+		t.Fatal("expected an error")
+	}
+	if !strings.Contains(ex.Err.Error(), "set input to stdin or file") {
+		t.Errorf("unhelpful error: %v", ex.Err)
+	}
+	if ex.Result != nil {
+		t.Error("the agent should not have been started")
 	}
 }
 

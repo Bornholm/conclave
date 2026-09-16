@@ -1,0 +1,8 @@
+{"type":"session","sessionId":"fixture"}
+{"type":"agent_start"}
+{"type":"turn_start"}
+{"type":"tool_execution_start","toolName":"read","args":{"path":"internal/setup/oidc.go"}}
+{"type":"tool_execution_end","toolName":"read","result":{"ok":true}}
+{"type":"message_start","message":{"role":"assistant"}}
+{"type":"message_end","message":{"role":"assistant","model":"fixture-model","provider":"fixture-provider","content":[{"type":"thinking","text":""},{"type":"text","text":"```json\n{\n  \"schema_version\": \"1\",\n  \"reviewer\": {\n    \"id\": \"reviewer-2\"\n  },\n  \"summary\": \"The change makes `jwks_uri` optional and warns at startup when it is absent.\",\n  \"verdict\": \"approve\",\n  \"findings\": [\n    {\n      \"id\": \"1\",\n      \"category\": \"correctness\",\n      \"severity\": \"low\",\n      \"confidence\": 0.9,\n      \"file\": \"internal/setup/oidc.go\",\n      \"start_line\": 141,\n      \"end_line\": 159,\n      \"title\": \"Discovery errors are silently ignored\",\n      \"description\": \"`fetchDiscovery` is called but its error is only tested with `err == nil`, so a provider whose document is unreachable falls through with no error and no warning.\",\n      \"evidence\": \"The branch reads `if err == nil && d.JWKSURI != \"\" { ... } else if err == nil { warn }`. When `err != nil`, nothing is done.\",\n      \"suggestion\": \"No change needed: explicitly out of scope, see the linked issue.\"\n    }\n  ],\n  \"questions\": []\n}\n```"}]}}
+{"type":"agent_settled"}

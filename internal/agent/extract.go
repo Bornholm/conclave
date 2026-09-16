@@ -24,39 +24,79 @@ var fenceRe = regexp.MustCompile("(?s)```(?:json)?[ \\t]*\\r?\\n(.*?)```")
 // balanced object containing the marker key. The marker is a key that must be
 // present at the top level (e.g. "schema_version").
 //
-// Candidates that fail to parse are retried on a repaired copy, because agents
-// regularly emit an unescaped backslash or a literal newline inside a string.
-// When such a candidate carries the marker but stays unparsable, the returned
-// error describes the syntax error instead of claiming nothing was found.
+// The whole search runs twice. The first pass parses strictly, so a run where
+// every agent behaved pays for no repair and, when the output holds both a
+// garbled candidate and an intact report, the intact one is the one returned.
+// Only if that pass finds nothing does the second one allow repairs, because
+// agents regularly emit an unescaped backslash, a literal newline or an
+// unescaped quote inside a string. When a candidate carries the marker but
+// stays unparsable either way, the returned error describes the syntax error
+// instead of claiming nothing was found.
 func ExtractJSON(raw []byte, marker string) ([]byte, error) {
-	return extract(bytes.TrimSpace(raw), marker, 0)
+	raw = bytes.TrimSpace(raw)
+	out, strictErr := extract(raw, marker, 0, false)
+	if strictErr == nil {
+		return out, nil
+	}
+	out, err := extract(raw, marker, 0, true)
+	if err == nil {
+		return out, nil
+	}
+	// The strict pass names the syntax error precisely; the repairing one only
+	// reports that its guesses did not land.
+	if errors.Is(err, ErrNoJSON) && !errors.Is(strictErr, ErrNoJSON) {
+		return nil, strictErr
+	}
+	return nil, err
 }
 
-func extract(raw []byte, marker string, depth int) ([]byte, error) {
+func extract(raw []byte, marker string, depth int, repair bool) ([]byte, error) {
 	if depth > 4 || len(raw) == 0 {
 		return nil, ErrNoJSON
 	}
 	var malformed error
-	if obj, fixed, ok := parseObject(raw); ok {
+	// The whole input read as a single object. Repairing it is the riskiest
+	// reading there is: the fixer is free to run a string across what is in
+	// fact the boundary between two documents, welding an NDJSON stream into
+	// one object that no agent ever wrote. So it is tried first when parsing
+	// strictly, and kept for last once repairs are allowed, by which time the
+	// narrower candidates below have had their chance.
+	whole := func() ([]byte, error) {
+		obj, fixed, ok := parseObject(raw, repair)
+		if !ok {
+			return nil, ErrNoJSON
+		}
 		if _, has := obj[marker]; has {
 			return fixed, nil
 		}
+		var err error
 		if so, ok := obj["structured_output"]; ok && len(so) > 0 && so[0] == '{' {
-			if out, err := extract(so, marker, depth+1); err == nil {
+			out, e := extract(so, marker, depth+1, repair)
+			if e == nil {
 				return out, nil
-			} else {
-				malformed = keepMalformed(malformed, err)
 			}
+			err = keepMalformed(err, e)
 		}
 		if res, ok := obj["result"]; ok {
 			var s string
 			if json.Unmarshal(res, &s) == nil {
-				if out, err := extract([]byte(strings.TrimSpace(s)), marker, depth+1); err == nil {
+				out, e := extract([]byte(strings.TrimSpace(s)), marker, depth+1, repair)
+				if e == nil {
 					return out, nil
-				} else {
-					malformed = keepMalformed(malformed, err)
 				}
+				err = keepMalformed(err, e)
 			}
+		}
+		if err != nil {
+			return nil, err
+		}
+		return nil, ErrNoJSON
+	}
+	if !repair {
+		if out, err := whole(); err == nil {
+			return out, nil
+		} else {
+			malformed = keepMalformed(malformed, err)
 		}
 	}
 	// NDJSON: try each line.
@@ -64,8 +104,8 @@ func extract(raw []byte, marker string, depth int) ([]byte, error) {
 		for _, line := range bytes.Split(raw, []byte("\n")) {
 			line = bytes.TrimSpace(line)
 			if len(line) > 1 && line[0] == '{' {
-				if _, _, ok := parseObject(line); ok {
-					if out, err := extract(line, marker, depth+1); err == nil {
+				if _, _, ok := parseObject(line, repair); ok {
+					if out, err := extract(line, marker, depth+1, repair); err == nil {
 						return out, nil
 					} else {
 						malformed = keepMalformed(malformed, err)
@@ -80,7 +120,7 @@ func extract(raw []byte, marker string, depth int) ([]byte, error) {
 		if len(body) == 0 || bytes.Equal(body, raw) {
 			continue
 		}
-		if out, err := extract(body, marker, depth+1); err == nil {
+		if out, err := extract(body, marker, depth+1, repair); err == nil {
 			return out, nil
 		} else {
 			malformed = keepMalformed(malformed, err)
@@ -90,7 +130,7 @@ func extract(raw []byte, marker string, depth int) ([]byte, error) {
 	for start := bytes.IndexByte(raw, '{'); start >= 0 && start < len(raw); {
 		if end := matchBrace(raw, start); end >= 0 {
 			candidate := raw[start : end+1]
-			if obj, fixed, ok := parseObject(candidate); ok {
+			if obj, fixed, ok := parseObject(candidate, repair); ok {
 				if _, has := obj[marker]; has {
 					return fixed, nil
 				}
@@ -105,6 +145,13 @@ func extract(raw []byte, marker string, depth int) ([]byte, error) {
 			break
 		}
 		start += 1 + next
+	}
+	if repair {
+		if out, err := whole(); err == nil {
+			return out, nil
+		} else {
+			malformed = keepMalformed(malformed, err)
+		}
 	}
 	if malformed != nil {
 		return nil, malformed
@@ -131,15 +178,27 @@ func syntaxError(candidate []byte) error {
 	return fmt.Errorf("malformed JSON report in agent output: %w", err)
 }
 
-// parseObject parses raw as a JSON object. On failure it retries once on a
-// repaired copy and returns the bytes that actually parsed.
-func parseObject(raw []byte) (map[string]json.RawMessage, []byte, bool) {
+// parseObject parses raw as a JSON object and returns the bytes that actually
+// parsed. Unless repair is set, that strict parse is all it does. When it is,
+// a failure is retried on repaired copies, in order of how safe the repair is:
+// escaping backslashes and control characters first, then the riskier guess
+// about unescaped quotes.
+func parseObject(raw []byte, repair bool) (map[string]json.RawMessage, []byte, bool) {
 	if obj, ok := asObject(raw); ok {
 		return obj, raw, true
 	}
-	if fixed, changed := repairJSON(raw); changed {
+	if !repair {
+		return nil, nil, false
+	}
+	fixed, changed := repairJSON(raw)
+	if changed {
 		if obj, ok := asObject(fixed); ok {
 			return obj, fixed, true
+		}
+	}
+	if quoted, changed := repairQuotes(fixed); changed {
+		if obj, ok := asObject(quoted); ok {
+			return obj, quoted, true
 		}
 	}
 	return nil, nil, false
@@ -194,6 +253,225 @@ func repairJSON(raw []byte) ([]byte, bool) {
 		}
 	}
 	return out.Bytes(), changed
+}
+
+// maxFixerSteps bounds the backtracking below, which is exponential in the
+// worst case. A report that needs more attempts than this is reported as
+// malformed rather than parsed slowly.
+const maxFixerSteps = 1 << 15
+
+// repairQuotes escapes the quotes agents leave unescaped inside a JSON string,
+// which happens as soon as they quote code (`x != "" {`, `map[string]string{"a":
+// "b"}`) or speech. Deciding locally whether a quote closes its string is not
+// possible — a literal quote is regularly followed by `,`, `:` or `}`, exactly
+// like a closing one. So the document is walked as a grammar instead: at every
+// quote that could close a string, the rest of the document is parsed, and the
+// reading that makes the whole document fit is the one kept. Quotes skipped
+// along the way are the literals, and they are escaped.
+//
+// This is still a guess, so it only runs after the strict parse and repairJSON
+// have both failed, and its result is handed to the strict parser again.
+func repairQuotes(raw []byte) ([]byte, bool) {
+	f := &quoteFixer{raw: raw}
+	_, ok := f.value(0, func(i int) (int, bool) {
+		if i = f.skipSpace(i); i != len(f.raw) {
+			return 0, false
+		}
+		return i, true
+	})
+	if !ok || len(f.escapes) == 0 {
+		return raw, false
+	}
+	out := make([]byte, 0, len(raw)+len(f.escapes))
+	prev := 0
+	for _, p := range f.escapes {
+		out = append(out, raw[prev:p]...)
+		out = append(out, '\\', '"')
+		prev = p + 1
+	}
+	return append(out, raw[prev:]...), true
+}
+
+// cont is the rest of the parse that follows the value being read. Returning
+// false makes the value try its next possible reading, if it has one.
+type cont func(i int) (int, bool)
+
+// quoteFixer parses raw loosely, recording the positions of the quotes that
+// turned out to be string contents rather than delimiters.
+type quoteFixer struct {
+	raw     []byte
+	escapes []int
+	steps   int
+}
+
+func (f *quoteFixer) budget() bool {
+	f.steps++
+	return f.steps <= maxFixerSteps
+}
+
+func (f *quoteFixer) skipSpace(i int) int {
+	for ; i < len(f.raw); i++ {
+		switch f.raw[i] {
+		case ' ', '\t', '\r', '\n':
+			continue
+		}
+		break
+	}
+	return i
+}
+
+func (f *quoteFixer) value(i int, k cont) (int, bool) {
+	if !f.budget() {
+		return 0, false
+	}
+	if i = f.skipSpace(i); i >= len(f.raw) {
+		return 0, false
+	}
+	switch f.raw[i] {
+	case '{':
+		return f.object(i+1, k)
+	case '[':
+		return f.array(i+1, k)
+	case '"':
+		return f.str(i, k)
+	}
+	// A scalar. It is matched strictly: a loose reading here would let the
+	// fixer close a string too early and take the remaining text for a value,
+	// producing bytes that parse as something the agent never wrote.
+	j, ok := f.scalar(i)
+	if !ok {
+		return 0, false
+	}
+	return k(j)
+}
+
+// scalar returns the end of the literal starting at i, or false if what starts
+// there is not `true`, `false`, `null` or a JSON number.
+func (f *quoteFixer) scalar(i int) (int, bool) {
+	for _, lit := range []string{"true", "false", "null"} {
+		if bytes.HasPrefix(f.raw[i:], []byte(lit)) {
+			return i + len(lit), true
+		}
+	}
+	j := i
+	if j < len(f.raw) && f.raw[j] == '-' {
+		j++
+	}
+	digits := j
+	for ; j < len(f.raw) && f.raw[j] >= '0' && f.raw[j] <= '9'; j++ {
+	}
+	if j == digits {
+		return 0, false
+	}
+	if j < len(f.raw) && f.raw[j] == '.' {
+		j++
+		frac := j
+		for ; j < len(f.raw) && f.raw[j] >= '0' && f.raw[j] <= '9'; j++ {
+		}
+		if j == frac {
+			return 0, false
+		}
+	}
+	if j < len(f.raw) && (f.raw[j] == 'e' || f.raw[j] == 'E') {
+		j++
+		if j < len(f.raw) && (f.raw[j] == '+' || f.raw[j] == '-') {
+			j++
+		}
+		exp := j
+		for ; j < len(f.raw) && f.raw[j] >= '0' && f.raw[j] <= '9'; j++ {
+		}
+		if j == exp {
+			return 0, false
+		}
+	}
+	return j, true
+}
+
+func (f *quoteFixer) object(i int, k cont) (int, bool) {
+	if i = f.skipSpace(i); i < len(f.raw) && f.raw[i] == '}' {
+		return k(i + 1)
+	}
+	var member cont
+	member = func(i int) (int, bool) {
+		if !f.budget() {
+			return 0, false
+		}
+		if i = f.skipSpace(i); i >= len(f.raw) || f.raw[i] != '"' {
+			return 0, false
+		}
+		return f.str(i, func(j int) (int, bool) {
+			if j = f.skipSpace(j); j >= len(f.raw) || f.raw[j] != ':' {
+				return 0, false
+			}
+			return f.value(j+1, func(m int) (int, bool) {
+				if m = f.skipSpace(m); m >= len(f.raw) {
+					return 0, false
+				}
+				switch f.raw[m] {
+				case ',':
+					return member(m + 1)
+				case '}':
+					return k(m + 1)
+				}
+				return 0, false
+			})
+		})
+	}
+	return member(i)
+}
+
+func (f *quoteFixer) array(i int, k cont) (int, bool) {
+	if i = f.skipSpace(i); i < len(f.raw) && f.raw[i] == ']' {
+		return k(i + 1)
+	}
+	var element cont
+	element = func(i int) (int, bool) {
+		if !f.budget() {
+			return 0, false
+		}
+		return f.value(i, func(m int) (int, bool) {
+			if m = f.skipSpace(m); m >= len(f.raw) {
+				return 0, false
+			}
+			switch f.raw[m] {
+			case ',':
+				return element(m + 1)
+			case ']':
+				return k(m + 1)
+			}
+			return 0, false
+		})
+	}
+	return element(i)
+}
+
+// str reads the string opening at i, trying each quote that could close it in
+// turn: the earliest one first, so a well-formed string costs a single
+// attempt. Every quote the successful reading stepped over is recorded as a
+// literal to escape.
+func (f *quoteFixer) str(i int, k cont) (int, bool) {
+	mark, skipped := len(f.escapes), 0
+	for j := i + 1; j < len(f.raw); j++ {
+		if f.raw[j] == '\\' {
+			j++
+			continue
+		}
+		if f.raw[j] != '"' {
+			continue
+		}
+		if !f.budget() {
+			break
+		}
+		if end, ok := k(j + 1); ok {
+			return end, true
+		}
+		// Drop what the failed reading recorded, then treat this quote as a
+		// literal and look for the next candidate.
+		f.escapes = append(f.escapes[:mark+skipped], j)
+		skipped++
+	}
+	f.escapes = f.escapes[:mark]
+	return 0, false
 }
 
 func isValidEscape(raw []byte, i int) bool {

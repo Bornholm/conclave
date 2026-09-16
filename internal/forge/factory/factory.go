@@ -11,6 +11,7 @@ import (
 	"github.com/bornholm/conclave/internal/forge"
 	"github.com/bornholm/conclave/internal/forge/gitea"
 	"github.com/bornholm/conclave/internal/forge/github"
+	"github.com/bornholm/conclave/internal/forge/redmine"
 )
 
 // New builds the forge backend described by the configuration. The token
@@ -22,6 +23,8 @@ func New(cfg config.ForgeConfig, hc *http.Client) (forge.Forge, error) {
 		return github.New(cfg.BaseURL, token, hc)
 	case config.ProviderGitea:
 		return gitea.New(cfg.BaseURL, token, hc)
+	case config.ProviderRedmine:
+		return redmine.New(cfg.BaseURL, token, hc)
 	default:
 		return nil, fmt.Errorf("unsupported forge provider %q", cfg.Provider)
 	}
@@ -41,7 +44,12 @@ func ExpectedHost(cfg config.ForgeConfig) string {
 }
 
 // MatchesRepository reports whether the remote repository host belongs to the forge.
+// Redmine is not a Git hosting service, so it always matches (the Git remote is
+// separate from the issue tracker).
 func MatchesRepository(cfg config.ForgeConfig, repo domain.Repository) bool {
+	if cfg.Provider == config.ProviderRedmine {
+		return true
+	}
 	want := ExpectedHost(cfg)
 	if want == "" {
 		return true

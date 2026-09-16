@@ -7,8 +7,9 @@ const (
 	// CurrentVersion is the only supported configuration schema version.
 	CurrentVersion = 1
 
-	ProviderGitHub = "github"
-	ProviderGitea  = "gitea"
+	ProviderGitHub  = "github"
+	ProviderGitea   = "gitea"
+	ProviderRedmine = "redmine"
 
 	RoleReviewer = "reviewer"
 	RoleLead     = "lead"

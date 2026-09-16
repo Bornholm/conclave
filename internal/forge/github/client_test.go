@@ -63,6 +63,12 @@ func newServer(t *testing.T) (*httptest.Server, *Client) {
 		w.WriteHeader(404)
 		w.Write([]byte(`{"message":"Not Found"}`))
 	})
+	mux.HandleFunc("/api/v3/repos/bob/proj", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"name":"proj","full_name":"bob/proj","owner":{"login":"bob"},"fork":true,"parent":{"name":"proj","full_name":"acme/proj","owner":{"login":"acme"}}}`))
+	})
+	mux.HandleFunc("/api/v3/repos/acme/proj", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"name":"proj","full_name":"acme/proj","owner":{"login":"acme"},"fork":false}`))
+	})
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
 	c, err := New(srv.URL+"/api/v3", "tok", nil)
@@ -133,5 +139,20 @@ func TestBadCredentials(t *testing.T) {
 	_, err := c.GetPullRequest(context.Background(), domain.Repository{Owner: "acme", Name: "proj"}, 123)
 	if err == nil || !strings.Contains(err.Error(), "401") || strings.Contains(err.Error(), "wrong") {
 		t.Errorf("unexpected: %v", err)
+	}
+}
+
+func TestParentRepository(t *testing.T) {
+	_, c := newServer(t)
+	ctx := context.Background()
+	parent, err := c.ParentRepository(ctx, domain.Repository{Host: "ghe.example.com", Owner: "bob", Name: "proj"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if parent.Owner != "acme" || parent.Name != "proj" || parent.Host != "ghe.example.com" {
+		t.Errorf("parent: %+v", parent)
+	}
+	if _, err := c.ParentRepository(ctx, domain.Repository{Owner: "acme", Name: "proj"}); !errors.Is(err, forge.ErrNotFork) {
+		t.Errorf("expected ErrNotFork, got %v", err)
 	}
 }

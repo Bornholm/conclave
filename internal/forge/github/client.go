@@ -78,6 +78,19 @@ func (c *Client) GetPullRequest(ctx context.Context, repo domain.Repository, num
 	return mapPullRequest(raw)
 }
 
+// ParentRepository implements forge.ForkResolver.
+func (c *Client) ParentRepository(ctx context.Context, repo domain.Repository) (domain.Repository, error) {
+	var raw repository
+	path := fmt.Sprintf("/repos/%s/%s", url.PathEscape(repo.Owner), url.PathEscape(repo.Name))
+	if _, err := c.get(ctx, path, nil, &raw); err != nil {
+		return domain.Repository{}, err
+	}
+	if !raw.Fork || raw.Parent == nil || raw.Parent.Name == "" {
+		return domain.Repository{}, forge.ErrNotFork
+	}
+	return domain.Repository{Host: repo.Host, Owner: raw.Parent.Owner.Login, Name: raw.Parent.Name}, nil
+}
+
 // ListChangedFiles implements forge.Forge.
 func (c *Client) ListChangedFiles(ctx context.Context, repo domain.Repository, number int64, maxFiles int) ([]domain.ChangedFile, error) {
 	path := fmt.Sprintf("/repos/%s/%s/pulls/%d/files", url.PathEscape(repo.Owner), url.PathEscape(repo.Name), number)

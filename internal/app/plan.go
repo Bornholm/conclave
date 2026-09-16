@@ -149,6 +149,11 @@ func (a *App) collectPlanIssue(ctx context.Context, f forge.Forge, repo domain.R
 	limits := a.Config.Plan.Limits
 	issue, err := f.GetIssue(ctx, repo, number)
 	if err != nil {
+		if errors.Is(err, forge.ErrNotFound) {
+			if hint := a.forkHint(ctx, f, repo, "issue"); hint != "" {
+				return nil, fmt.Errorf("get issue #%d: %w\n%s", number, err, hint)
+			}
+		}
 		return nil, fmt.Errorf("get issue #%d: %w", number, err)
 	}
 	comments, err := f.ListIssueComments(ctx, repo, number, limits.MaxComments)

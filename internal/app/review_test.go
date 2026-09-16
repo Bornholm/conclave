@@ -2,7 +2,7 @@ package app
 
 import (
 	"context"
-	"errors"
+	"fmt"
 	"log/slog"
 	"os"
 	"os/exec"
@@ -28,12 +28,23 @@ type fakeForge struct {
 	// added records what AddIssueLabels received, addErr makes it fail.
 	added  map[int64][]string
 	addErr error
+
+	// parent, when set, makes the fake forge a ForkResolver whose repository
+	// is a fork of it.
+	parent *domain.Repository
+}
+
+func (f *fakeForge) ParentRepository(context.Context, domain.Repository) (domain.Repository, error) {
+	if f.parent == nil {
+		return domain.Repository{}, forge.ErrNotFork
+	}
+	return *f.parent, nil
 }
 
 func (f *fakeForge) Name() string { return "fake" }
 func (f *fakeForge) GetPullRequest(_ context.Context, _ domain.Repository, n int64) (*domain.PullRequest, error) {
 	if n != f.pr.Number {
-		return nil, errors.New("not found")
+		return nil, fmt.Errorf("%w: pull request #%d", forge.ErrNotFound, n)
 	}
 	pr := *f.pr
 	return &pr, nil
@@ -285,6 +296,25 @@ func TestReviewFailFastAndCancel(t *testing.T) {
 	}
 	if entries, _ := os.ReadDir(a2.WorktreeBase); len(entries) != 0 {
 		t.Errorf("worktrees left behind after cancel")
+	}
+}
+
+func TestReviewForkHint(t *testing.T) {
+	a, _ := newApp(t, agentCfg(t, "r1", config.RoleReviewer, "valid"), agentCfg(t, "lead", config.RoleLead, "valid"))
+	f := a.Forge.(*fakeForge)
+	f.parent = &domain.Repository{Host: "github.com", Owner: "upstream", Name: "proj"}
+	_, err := a.Review(context.Background(), ReviewRequest{Number: 54})
+	if err == nil || !strings.Contains(err.Error(), "acme/proj is a fork of upstream/proj") {
+		t.Fatalf("got %v", err)
+	}
+	if !strings.Contains(err.Error(), `forge.remote to its name (currently "origin")`) {
+		t.Errorf("hint does not name the configured remote: %v", err)
+	}
+
+	// Not a fork: the bare not-found error is kept.
+	f.parent = nil
+	if _, err := a.Review(context.Background(), ReviewRequest{Number: 54}); err == nil || strings.Contains(err.Error(), "hint:") {
+		t.Fatalf("got %v", err)
 	}
 }
 

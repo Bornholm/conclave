@@ -77,6 +77,11 @@ func (a *App) Review(ctx context.Context, req ReviewRequest) (*ReviewResult, err
 	log.Info("fetching pull request", "forge", f.Name(), "repo", repo.FullName(), "number", req.Number)
 	pr, err := f.GetPullRequest(ctx, repo, req.Number)
 	if err != nil {
+		if errors.Is(err, forge.ErrNotFound) {
+			if hint := a.forkHint(ctx, f, repo, "pull request"); hint != "" {
+				return nil, fmt.Errorf("get pull request #%d: %w\n%s", req.Number, err, hint)
+			}
+		}
 		return nil, fmt.Errorf("get pull request #%d: %w", req.Number, err)
 	}
 	files, err := f.ListChangedFiles(ctx, repo, req.Number, cfg.Review.Limits.MaxFiles)

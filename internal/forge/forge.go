@@ -122,3 +122,28 @@ var ErrNotFound = errors.New("not found")
 // ErrLabelsUnsupported is returned by AddIssueLabels when the forge does not
 // support attaching labels to issues.
 var ErrLabelsUnsupported = errors.New("labels are not supported on this forge")
+
+// ErrNotFork is returned by ParentRepository when the repository exists but
+// was not forked from another one, or when the forge has no notion of forks.
+var ErrNotFork = errors.New("repository is not a fork")
+
+// ForkResolver is implemented by the forges that expose the upstream a
+// repository was forked from. It is optional: a forge without forks does not
+// implement it.
+type ForkResolver interface {
+	// ParentRepository returns the repository repo was forked from. It
+	// returns ErrNotFork when repo is not a fork and ErrNotFound when repo
+	// itself is not visible.
+	ParentRepository(ctx context.Context, repo domain.Repository) (domain.Repository, error)
+}
+
+// ParentRepository returns the repository repo was forked from, when the
+// forge exposes that relation. It returns ErrNotFork for a forge that does
+// not implement ForkResolver.
+func ParentRepository(ctx context.Context, f Forge, repo domain.Repository) (domain.Repository, error) {
+	r, ok := f.(ForkResolver)
+	if !ok {
+		return domain.Repository{}, ErrNotFork
+	}
+	return r.ParentRepository(ctx, repo)
+}

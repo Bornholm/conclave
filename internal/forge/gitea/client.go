@@ -152,6 +152,18 @@ func (c *Client) getAll(ctx context.Context, path string, out any) error {
 	return forge.MergeJSONArrays(pages, out)
 }
 
+// ParentRepository implements forge.ForkResolver.
+func (c *Client) ParentRepository(ctx context.Context, repo domain.Repository) (domain.Repository, error) {
+	var raw repository
+	if _, err := c.get(ctx, repoPath(repo), nil, &raw); err != nil {
+		return domain.Repository{}, err
+	}
+	if !raw.Fork || raw.Parent == nil || raw.Parent.Name == "" {
+		return domain.Repository{}, forge.ErrNotFork
+	}
+	return domain.Repository{Host: repo.Host, Owner: raw.Parent.Owner.Login, Name: raw.Parent.Name}, nil
+}
+
 // ListLabels implements forge.Forge. Repository labels come first, then the
 // organization labels the repository can also use.
 func (c *Client) ListLabels(ctx context.Context, repo domain.Repository) ([]domain.Label, error) {

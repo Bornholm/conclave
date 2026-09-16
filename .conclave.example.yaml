@@ -3,7 +3,11 @@ version: 1
 
 forge:
   provider: github          # github | gitea | redmine
-  remote: origin
+  remote: origin            # git remote naming the repository holding the pull
+                            # requests and issues. A pull request opened from a
+                            # fork lives in the upstream repository: contributors
+                            # working from a fork point this at their `upstream`
+                            # remote, not at `origin`.
   # base_url: https://api.github.com          # GitHub.com (default)
   # base_url: https://ghe.example.com/api/v3  # GitHub Enterprise
   # base_url: https://git.example.com         # Gitea / Forgejo (public instance URL)

@@ -10,11 +10,12 @@ type user struct {
 }
 
 type repository struct {
-	Name     string `json:"name"`
-	FullName string `json:"full_name"`
-	Owner    user   `json:"owner"`
-	CloneURL string `json:"clone_url"`
-	Fork     bool   `json:"fork"`
+	Name     string      `json:"name"`
+	FullName string      `json:"full_name"`
+	Owner    user        `json:"owner"`
+	CloneURL string      `json:"clone_url"`
+	Fork     bool        `json:"fork"`
+	Parent   *repository `json:"parent"`
 }
 
 type ref struct {

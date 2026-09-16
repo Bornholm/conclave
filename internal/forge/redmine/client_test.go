@@ -253,3 +253,24 @@ func TestRedmineAddIssueLabelsUnsupported(t *testing.T) {
 		t.Errorf("expected ErrLabelsUnsupported, got %v", err)
 	}
 }
+
+func TestRedmineListReferences(t *testing.T) {
+	srv := newServer(t)
+	c, _ := New(srv.URL, "tok", nil)
+	refs, err := c.ListReferences(context.Background(), domain.Repository{Owner: "acme", Name: "proj"}, 42, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(refs) != 2 {
+		t.Errorf("refs: got %d, want 2", len(refs))
+	}
+	if refs[0].Ref != "1:a1b2c3d4e5f6789012345678901234567890abcd" {
+		t.Errorf("first ref: got %q", refs[0].Ref)
+	}
+	if refs[0].Kind != domain.ReferenceCommit {
+		t.Errorf("kind: got %v", refs[0].Kind)
+	}
+	if refs[0].Title != "Add retry logic" {
+		t.Errorf("title: got %q", refs[0].Title)
+	}
+}

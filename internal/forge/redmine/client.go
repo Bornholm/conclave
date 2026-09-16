@@ -94,7 +94,7 @@ func (c *Client) ListChangedFiles(ctx context.Context, repo domain.Repository, n
 		// We record the changeset as a synthetic entry to signal that files
 		// were changed, without per-file granularity.
 		out = append(out, domain.ChangedFile{
-			Path:      fmt.Sprintf("(changeset r%d)", cs.Revision),
+			Path:      fmt.Sprintf("(changeset r%s)", cs.Revision),
 			Status:    domain.FileModified,
 			Additions: 0,
 			Deletions: 0,
@@ -146,16 +146,15 @@ func (c *Client) AddIssueLabels(ctx context.Context, repo domain.Repository, num
 }
 
 // ListIssues implements forge.Forge.
+// Note: Redmine does not support generic labels. The q.Labels filter is
+// silently ignored (there is no mapping to status_id or tracker_id here).
 func (c *Client) ListIssues(ctx context.Context, repo domain.Repository, q forge.IssueQuery) ([]domain.Issue, error) {
 	values := url.Values{
 		"limit":     {"100"},
 		"status_id": {issueStatus(q.State)},
 		"sort":      {"updated_on:desc"},
 	}
-	if len(q.Labels) > 0 {
-		// Redmine does not support generic labels. Instead, map to status_id or tracker_id.
-		// This is best-effort; we simply ignore unknown labels.
-	}
+
 	if !q.Since.IsZero() {
 		values.Set("updated_on", ">="+q.Since.UTC().Format(time.RFC3339))
 	}
@@ -186,6 +185,8 @@ func (c *Client) ListIssues(ctx context.Context, repo domain.Repository, q forge
 }
 
 // ListIssueComments implements forge.Forge.
+// Redmine has no separate issue-comments endpoint; journals serve as both
+// discussion and comments.
 func (c *Client) ListIssueComments(ctx context.Context, repo domain.Repository, number int64, maxComments int) ([]domain.Comment, error) {
 	return c.ListDiscussion(ctx, repo, number, maxComments)
 }
@@ -204,7 +205,7 @@ func (c *Client) ListReferences(ctx context.Context, repo domain.Repository, num
 	for _, cs := range resp.Issue.Changesets {
 		out = append(out, domain.Reference{
 			Kind:      domain.ReferenceCommit,
-			Ref:       strconv.Itoa(cs.Revision),
+			Ref:       cs.Revision,
 			Title:     cs.Comments,
 			State:     "referenced",
 			Actor:     "",

@@ -70,7 +70,7 @@ type detail struct {
 }
 
 type changeset struct {
-	Revision    int    `json:"revision"`
+	Revision    string `json:"revision"`
 	CommittedOn string `json:"committed_on"`
 	Comments    string `json:"comments"`
 }

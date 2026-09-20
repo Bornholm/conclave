@@ -105,6 +105,14 @@ func Validate(cfg *Config) error {
 		add("plan.limits: all limits must be positive")
 	}
 
+	if cfg.Ask.MaxParallel < 1 {
+		add("ask.max_parallel: must be >= 1")
+	}
+	if cfg.Ask.Limits.MaxQuestionBytes <= 0 || cfg.Ask.Limits.MaxContextBytes <= 0 || cfg.Ask.Limits.MaxAnswerBytes <= 0 ||
+		cfg.Ask.Limits.MaxKeyPoints <= 0 || cfg.Ask.Limits.MaxReferences <= 0 {
+		add("ask.limits: all limits must be positive")
+	}
+
 	switch cfg.Output.Format {
 	case FormatMarkdown, FormatJSON:
 	default:
@@ -183,6 +191,11 @@ func Validate(cfg *Config) error {
 	for _, id := range cfg.Plan.Planners {
 		if !reviewerIDs[id] {
 			add("plan.planners: %q is not a configured reviewer", id)
+		}
+	}
+	for _, id := range cfg.Ask.Respondents {
+		if !reviewerIDs[id] {
+			add("ask.respondents: %q is not a configured reviewer", id)
 		}
 	}
 	if reviewers == 0 {

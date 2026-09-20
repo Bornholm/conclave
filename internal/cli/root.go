@@ -23,6 +23,9 @@ Usage:
   conclave triage <number>... [--apply] [--rev REV] [--config PATH] [--format markdown|json]
   conclave triage --all [--state open|closed|all] [--label L] [--since 90d] [--limit N]
   conclave plan <number> [--rev REV] [--config PATH] [--format markdown|json] [--keep-worktrees]
+  conclave ask [question] [--question TEXT] [--project PATH] [--rev REV] [--config PATH]
+               [--format markdown|json] [--keep-worktrees]
+               (the question, or the context it comes with, may be piped on stdin)
   conclave config validate [--config PATH]
   conclave config example
   conclave agents check [--config PATH]
@@ -46,6 +49,8 @@ func Main(args []string, stdout, stderr io.Writer) int {
 		err = runTriage(ctx, args[1:], stdout, stderr)
 	case "plan":
 		err = runPlan(ctx, args[1:], stdout, stderr)
+	case "ask":
+		err = runAsk(ctx, args[1:], stdout, stderr)
 	case "config":
 		err = runConfig(ctx, args[1:], stdout, stderr)
 	case "agents":

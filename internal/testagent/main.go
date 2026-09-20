@@ -78,6 +78,14 @@ func main() {
 		fmt.Print(planLead(issueNumber(prompt)))
 	case "plan-lead-ghost":
 		fmt.Print(strings.Replace(planLead(issueNumber(prompt)), `"reported_by": ["r1"]`, `"reported_by": ["ghost"]`, 1))
+	case "ask":
+		fmt.Print(answerReport(id))
+	case "ask-empty":
+		fmt.Print(strings.Replace(answerReport(id), `"answer": "`+askAnswer+`"`, `"answer": "  "`, 1))
+	case "ask-lead":
+		fmt.Print(askLead())
+	case "ask-lead-ghost":
+		fmt.Print(strings.Replace(askLead(), `"by": ["r1"]`, `"by": ["ghost"]`, 1))
 	case "pi-json":
 		rep := strings.ReplaceAll(strings.ReplaceAll(validReport(id), "\\", "\\\\"), `"`, `\"`)
 		rep = strings.ReplaceAll(rep, "\n", `\n`)
@@ -199,6 +207,37 @@ func planLead(number string) string {
   "effort": "small",
   "confidence": 0.9,
   "reported_by": ["r1"]
+}`
+}
+
+// askAnswer is extracted so a mode can replace the answer itself.
+const askAnswer = "The retry lives in `changed.txt` and stops after the first failure."
+
+func answerReport(id string) string {
+	return `{
+  "schema_version": "1",
+  "reviewer": {"id": "` + id + `", "model": "fake"},
+  "answer": "` + askAnswer + `",
+  "key_points": ["It gives up after one attempt.", "  "],
+  "references": [{"source": "changed.txt", "line": 2, "note": "the call"}, {"source": ""}],
+  "caveats": ["Read only the checked-out revision."],
+  "open_questions": ["How many attempts are wanted?"],
+  "confidence": 0.8
+}`
+}
+
+func askLead() string {
+	return `{
+  "schema_version": "1",
+  "answer": "Checked in the worktree: the call in changed.txt is not retried.",
+  "key_points": ["One attempt, no retry."],
+  "disagreements": [{"topic": "How many attempts", "positions": [
+    {"by": ["r1"], "position": "three"}, {"by": ["ghost"], "position": "ten"}]}],
+  "references": [{"source": "changed.txt", "line": 2}],
+  "caveats": ["Read only the checked-out revision."],
+  "open_questions": ["How many attempts are wanted?"],
+  "confidence": 0.9,
+  "reported_by": ["r1", "ghost"]
 }`
 }
 

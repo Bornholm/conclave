@@ -252,3 +252,66 @@ func LeadPlan(in LeadPlanInput) ([]byte, error) {
 	}
 	return buf.Bytes(), nil
 }
+
+// AskInput feeds the ask template for one question.
+type AskInput struct {
+	AgentID     string
+	Worktree    string
+	Specialties []string
+	// HasProject says whether the worktree holds the project the question is
+	// about. When false the worktree is an empty scratch directory.
+	HasProject bool
+	Branch     string
+	HeadSHA    string
+	Question   string
+	Context    string
+}
+
+// LeadAskInput feeds the lead ask template.
+type LeadAskInput struct {
+	AgentID              string
+	Worktree             string
+	HasProject           bool
+	Branch               string
+	HeadSHA              string
+	Question             string
+	Context              string
+	Reports              []domain.AnswerReport
+	SucceededRespondents []string
+}
+
+type askCommon struct {
+	Schema        string
+	SchemaVersion string
+}
+
+// Ask renders the prompt for answering one question.
+func Ask(in AskInput) ([]byte, error) {
+	data := struct {
+		AskInput
+		askCommon
+	}{in, askCommon{Schema: AskSchema, SchemaVersion: domain.AnswerSchemaVersion}}
+	var buf bytes.Buffer
+	if err := tmpl.ExecuteTemplate(&buf, "ask.tmpl", data); err != nil {
+		return nil, fmt.Errorf("render ask prompt: %w", err)
+	}
+	return buf.Bytes(), nil
+}
+
+// LeadAsk renders the prompt consolidating the answers to one question.
+func LeadAsk(in LeadAskInput) ([]byte, error) {
+	reports, err := json.MarshalIndent(in.Reports, "", "  ")
+	if err != nil {
+		return nil, err
+	}
+	data := struct {
+		LeadAskInput
+		askCommon
+		ReportsJSON string
+	}{in, askCommon{Schema: LeadAskSchema, SchemaVersion: domain.AnswerSchemaVersion}, string(reports)}
+	var buf bytes.Buffer
+	if err := tmpl.ExecuteTemplate(&buf, "lead-ask.tmpl", data); err != nil {
+		return nil, fmt.Errorf("render lead ask prompt: %w", err)
+	}
+	return buf.Bytes(), nil
+}

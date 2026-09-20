@@ -40,6 +40,7 @@ type Config struct {
 	Review  ReviewConfig  `yaml:"review"`
 	Triage  TriageConfig  `yaml:"triage"`
 	Plan    PlanConfig    `yaml:"plan"`
+	Ask     AskConfig     `yaml:"ask"`
 	Output  OutputConfig  `yaml:"output"`
 	Agents  []AgentConfig `yaml:"agents"`
 }
@@ -82,6 +83,33 @@ type PlanConfig struct {
 	// UseLead runs the lead over the plans. Default true.
 	UseLead *bool      `yaml:"use_lead"`
 	Limits  PlanLimits `yaml:"limits"`
+}
+
+// AskConfig tunes an ask run. Like triage and plan it reuses the review
+// timeouts and the same agents: answering a question is the same machinery
+// with another prompt, and without a forge.
+type AskConfig struct {
+	MaxParallel int `yaml:"max_parallel"`
+	// Respondents restricts the question to these agent ids. Empty means
+	// every reviewer: a question asked to one agent is a question asked to
+	// one agent, and conclave exists to ask several.
+	Respondents []string `yaml:"respondents"`
+	// UseLead runs the lead over the answers. Default true.
+	UseLead *bool     `yaml:"use_lead"`
+	Limits  AskLimits `yaml:"limits"`
+}
+
+// AskLimits bound an ask run.
+type AskLimits struct {
+	// MaxQuestionBytes caps the question itself.
+	MaxQuestionBytes int `yaml:"max_question_bytes"`
+	// MaxContextBytes caps the context read from stdin. It is the reason
+	// stdin exists: a question may come with a log, a diff or a document.
+	MaxContextBytes int `yaml:"max_context_bytes"`
+	// MaxAnswerBytes caps one answer, which is a document, not a field.
+	MaxAnswerBytes int `yaml:"max_answer_bytes"`
+	MaxKeyPoints   int `yaml:"max_key_points"`
+	MaxReferences  int `yaml:"max_references"`
 }
 
 // PlanLimits bound a plan run.
@@ -214,6 +242,29 @@ func (c *Config) Planners() []AgentConfig {
 	}
 	return out
 }
+
+// Respondents returns the agents an ask run uses: the ones named in
+// ask.respondents, or every configured reviewer.
+func (c *Config) Respondents() []AgentConfig {
+	all := c.Reviewers()
+	if len(c.Ask.Respondents) == 0 {
+		return all
+	}
+	byID := make(map[string]AgentConfig, len(all))
+	for _, a := range all {
+		byID[a.ID] = a
+	}
+	var out []AgentConfig
+	for _, id := range c.Ask.Respondents {
+		if a, ok := byID[id]; ok {
+			out = append(out, a)
+		}
+	}
+	return out
+}
+
+// AskUsesLead reports whether the lead consolidates the answers.
+func (c *Config) AskUsesLead() bool { return boolValue(c.Ask.UseLead, true) }
 
 // PlanUsesLead reports whether the lead consolidates the plans.
 func (c *Config) PlanUsesLead() bool { return boolValue(c.Plan.UseLead, true) }

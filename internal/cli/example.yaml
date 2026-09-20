@@ -78,6 +78,22 @@ plan:
     max_comments: 50        # issue comments given to the agents
     max_references: 30      # commits and pull requests mentioning the issue
 
+# `conclave ask` asks the same agents one question, with or without a project.
+# It needs no forge: `--project PATH` attaches the question to a repository,
+# and the question itself comes from an argument, --question or stdin.
+ask:
+  max_parallel: 3
+  # Which reviewers answer. Empty means all of them: asking one agent is
+  # asking one agent, and several answers are the point of the command.
+  respondents: []
+  use_lead: true
+  limits:
+    max_question_bytes: 32768    # the question itself
+    max_context_bytes: 524288    # the context piped on stdin
+    max_answer_bytes: 65536      # one answer, which is a document
+    max_key_points: 10
+    max_references: 50
+
 output:
   format: markdown          # markdown | json
   show_attribution: true

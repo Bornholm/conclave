@@ -86,3 +86,65 @@ func TestTriageUsage(t *testing.T) {
 		}
 	}
 }
+
+func TestAskQuestionSources(t *testing.T) {
+	var out, errb bytes.Buffer
+	// A configuration that cannot be loaded stops the run right after the
+	// question is read, which is exactly what these cases check.
+	missing := []string{"--config", "/nonexistent.yaml"}
+	t.Run("argument", func(t *testing.T) {
+		stdinReader = strings.NewReader("")
+		defer func() { stdinReader = nil }()
+		errb.Reset()
+		if code := Main(append([]string{"ask", "why?"}, missing...), &out, &errb); code != 1 || !strings.Contains(errb.String(), "nonexistent.yaml") {
+			t.Errorf("got %d %s", code, errb.String())
+		}
+	})
+	t.Run("stdin", func(t *testing.T) {
+		stdinReader = strings.NewReader("why is it slow?")
+		defer func() { stdinReader = nil }()
+		errb.Reset()
+		if code := Main(append([]string{"ask"}, missing...), &out, &errb); code != 1 || !strings.Contains(errb.String(), "nonexistent.yaml") {
+			t.Errorf("got %d %s", code, errb.String())
+		}
+	})
+	for name, args := range map[string][]string{
+		"no question":    {"ask"},
+		"question twice": {"ask", "why?", "--question", "how?"},
+		"two arguments":  {"ask", "why?", "how?"},
+		"bad format":     {"ask", "why?", "--format", "yaml"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			stdinReader = strings.NewReader("")
+			defer func() { stdinReader = nil }()
+			errb.Reset()
+			if code := Main(append(args, missing...), &out, &errb); code == 0 {
+				t.Errorf("%v should fail", args)
+			}
+		})
+	}
+}
+
+func TestResolveConfigPath(t *testing.T) {
+	dir := t.TempDir()
+	// Isolate the lookup from whatever the machine running the tests has.
+	t.Chdir(dir)
+	t.Setenv("HOME", dir)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(dir, "config"))
+	project := filepath.Join(dir, "repo")
+	if err := os.MkdirAll(project, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := resolveConfigPath(".conclave.yaml", project); err == nil {
+		t.Error("a missing configuration must be reported, not silently defaulted")
+	}
+	inProject := filepath.Join(project, ".conclave.yaml")
+	os.WriteFile(inProject, []byte("version: 1\n"), 0o644)
+	got, err := resolveConfigPath(".conclave.yaml", project)
+	if err != nil || got != inProject {
+		t.Errorf("got %q %v, want the project file", got, err)
+	}
+	if got, _ := resolveConfigPath("/explicit.yaml", project); got != "/explicit.yaml" {
+		t.Errorf("an explicit path must win: %q", got)
+	}
+}

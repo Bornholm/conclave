@@ -46,6 +46,16 @@ Agents inherit your environment by default, so their credentials keep working. `
 
 `plan.use_lead: false` skips the consolidation and returns the most confident plan as it was written, with the other approaches attached as alternatives.
 
+## Ask
+
+`ask.respondents` is empty by default, which means every configured reviewer, for the same reason `plan.planners` is: a second opinion is what the command is for. Name a subset when the cost matters more than the comparison.
+
+`ask.limits.max_question_bytes` and `max_context_bytes` bound the question and the material piped with it, at 32 KiB and 512 KiB. `max_answer_bytes` bounds one answer, 64 KiB, since an answer is a document and not a field. `max_key_points` and `max_references` cut what an agent returns beyond them, with a warning.
+
+`ask.use_lead: false` skips the consolidation and returns the most confident answer as it was written, with the other answers published beside it.
+
+An ask run reads no forge, so a configuration used only for questions never needs a working token. It still needs a `forge` section to pass validation.
+
 ## Agent contract
 
 The agent runs with the worktree as working directory, receives the prompt, and prints one JSON object that matches the schema embedded in the prompt. The required fields are `schema_version`, `reviewer.id`, `summary`, `findings` and `verdict`. Conclave also finds the object inside the Claude Code `--output-format json` envelope, inside an NDJSON stream and inside a ```json fenced block, so an agent that adds a sentence before its JSON still counts.

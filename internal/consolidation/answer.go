@@ -32,7 +32,13 @@ func ParseLeadAnswer(raw []byte, question string, succeeded []string, lim agent.
 	if ans.SchemaVersion != domain.AnswerSchemaVersion {
 		return nil, nil, fmt.Errorf("unsupported schema_version %q", ans.SchemaVersion)
 	}
+	var warnings []string
 	if ans.Confidence < 0 || ans.Confidence > 1 {
+		// A respondent is rejected outright for this. The lead is not: its
+		// answer is the run's whole output, and throwing it away over one
+		// bad number would cost more than it saves. The reader is told
+		// instead, so a 0% confidence is never mistaken for a considered one.
+		warnings = append(warnings, fmt.Sprintf("lead: confidence %v is out of [0,1], read as 0", ans.Confidence))
 		ans.Confidence = 0
 	}
 	ans.Answer = agent.TruncateField(ans.Answer, maxAnswerBytes(lim))
@@ -44,8 +50,9 @@ func ParseLeadAnswer(raw []byte, question string, succeeded []string, lim agent.
 	for _, id := range succeeded {
 		known[id] = true
 	}
-	var warnings []string
-	ans.KeyPoints, warnings = agent.NormalizeKeyPoints(ans.KeyPoints, lim, "lead: ")
+	keyPoints, keyWarnings := agent.NormalizeKeyPoints(ans.KeyPoints, lim, "lead: ")
+	ans.KeyPoints = keyPoints
+	warnings = append(warnings, keyWarnings...)
 	refs, refWarnings := agent.NormalizeAnswerReferences(ans.References, lim, "lead: ")
 	ans.References = refs
 	warnings = append(warnings, refWarnings...)
@@ -74,6 +81,9 @@ func ParseLeadAnswer(raw []byte, question string, succeeded []string, lim agent.
 	ans.Disagreements = disagreements
 
 	ans.ReportedBy = keepKnown(ans.ReportedBy, known)
+	if len(ans.ReportedBy) == 0 {
+		warnings = append(warnings, "lead: the answer credits no respondent")
+	}
 	ans.Question = question
 	return &ans, warnings, nil
 }
@@ -109,8 +119,11 @@ func FallbackAnswer(question string, outcomes []AnswerOutcome) *domain.Consolida
 		Confidence:    rep.Confidence,
 		ReportedBy:    contributors,
 	}
+	// Why there was no lead belongs to the warnings, which say whether it
+	// failed or was never asked for. The caveat only says what the reader
+	// is holding.
 	ans.Caveats = append(ans.Caveats, fmt.Sprintf(
-		"Deterministic consolidation (lead unavailable): the answer of %s, the most confident of %s. The other answers are kept below, unreconciled.",
+		"Deterministic consolidation, no lead: the answer of %s, the most confident of %s. The other answers are kept below, unreconciled.",
 		best.ID, joinIDs(contributors)))
 	seenCaveat := map[string]bool{}
 	for _, c := range rep.Caveats {

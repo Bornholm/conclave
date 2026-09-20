@@ -211,7 +211,13 @@ func (a *App) executeAsk(ctx context.Context, p *askRun, req AskRequest, respond
 	meta := domain.AnswerMeta{
 		RunID: p.manifest.ID, HeadSHA: p.headSHA, Branch: p.branch,
 		RespondentsTotal: len(respondents), RespondentsSucceeded: len(succeeded),
-		LeadID: lead.ID, Models: map[string]string{},
+		Models: map[string]string{},
+	}
+	// LeadID is what the output reads as "a lead was expected here". A run
+	// configured with use_lead: false expected none, and must not be
+	// reported as one where the lead was unavailable.
+	if useLead {
+		meta.LeadID = lead.ID
 	}
 	var warnings []string
 	for _, ex := range p.manifest.Agents {
@@ -234,9 +240,11 @@ func (a *App) executeAsk(ctx context.Context, p *askRun, req AskRequest, respond
 			answer = consolidation.FallbackAnswer(p.question, outcomes)
 		} else {
 			meta.LeadUsed = true
-			if last := p.manifest.Agents[len(p.manifest.Agents)-1]; last.ID == lead.ID && last.Model != "" {
-				meta.Models[lead.ID] = last.Model
-			}
+		}
+		// The model is captured on both paths: an artifact of a failed
+		// consolidation has to say which model failed it.
+		if last := p.manifest.Agents[len(p.manifest.Agents)-1]; last.ID == lead.ID && last.Model != "" {
+			meta.Models[lead.ID] = last.Model
 		}
 	} else {
 		answer = consolidation.FallbackAnswer(p.question, outcomes)

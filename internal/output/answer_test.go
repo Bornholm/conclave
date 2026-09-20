@@ -26,7 +26,7 @@ func sampleAnswer() *domain.ConsolidatedAnswer {
 		Warnings:     []string{"a: 1 reference dropped"},
 		Meta: domain.AnswerMeta{RunID: "run1", Repository: "acme/proj", Project: "/tmp/proj",
 			HeadSHA: "7a88e4f0000", Branch: "main", RespondentsTotal: 3, RespondentsSucceeded: 2,
-			LeadUsed: true, Models: map[string]string{"a": "m1"}},
+			LeadID: "lead", LeadUsed: true, Models: map[string]string{"a": "m1"}},
 	}
 }
 
@@ -52,6 +52,22 @@ func TestAnswerMarkdown(t *testing.T) {
 	AnswerMarkdown(&buf, sampleAnswer(), Options{})
 	if strings.Contains(buf.String(), "Answered by") || strings.Contains(buf.String(), "Agents that failed") {
 		t.Error("options not honored")
+	}
+	// A lead that was never asked for is not an unavailable lead.
+	skipped := sampleAnswer()
+	skipped.Meta.LeadUsed, skipped.Meta.LeadID = false, ""
+	buf.Reset()
+	AnswerMarkdown(&buf, skipped, Options{})
+	if strings.Contains(buf.String(), "lead unavailable") {
+		t.Errorf("a disabled lead must not be reported as unavailable:\n%s", buf.String())
+	}
+	// One that ran and failed is.
+	failed := sampleAnswer()
+	failed.Meta.LeadUsed, failed.Meta.LeadID = false, "lead"
+	buf.Reset()
+	AnswerMarkdown(&buf, failed, Options{})
+	if !strings.Contains(buf.String(), "lead unavailable") {
+		t.Error("a lead that failed must be reported")
 	}
 	// Without a project the header falls back to nothing at all rather than
 	// naming a repository that does not exist.

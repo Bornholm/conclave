@@ -35,7 +35,7 @@ conclave ask -q "Is this migration reversible?" --context migration.sql
 
 `--context -` with no question anywhere is an error: standard input cannot be both.
 
-`ask.limits.max_question_bytes` and `ask.limits.max_context_bytes` bound the two, at 32 KiB and 512 KiB by default. What is over the limit is cut, with a marker in the text.
+`ask.limits.max_question_bytes` and `ask.limits.max_context_bytes` bound the two, at 32 KiB and 512 KiB by default. They bound the read itself, not only the text that reaches the agents, so `conclave ask -q "why?" --context - < /dev/zero` stops at the limit instead of growing until it dies. What is over the limit is cut, with a marker in the text, on a character boundary.
 
 An agent configured with `input: argument` passes the whole prompt on its command line, which the kernel caps at around 128 KiB on Linux. A large context needs `input: stdin` or `input: file` for that agent.
 
@@ -71,9 +71,13 @@ The lead is told not to average the answers. Where the evidence lets it decide, 
 
 A report with no answer text fails, because everything else describes an answer that is not there. Key points and references over the limits are cut with a warning.
 
-## When the lead fails
+## When there is no lead
 
-The deterministic fallback takes the most confident answer whole and publishes the others beside it, under `other_answers`, unreconciled. Caveats and open questions are unioned. It never merges two answers: they may contradict each other, and without the lead there is nobody to decide which one is right. The first caveat says the consolidation was deterministic, and `meta.lead_used` is false.
+The deterministic fallback takes the most confident answer whole and publishes the others beside it, under `other_answers`, unreconciled. Caveats and open questions are unioned. It never merges two answers: they may contradict each other, and without the lead there is nobody to decide which one is right. The first caveat says the consolidation was deterministic.
+
+Two things can leave a run without a lead, and the output tells them apart. A lead that ran and failed is named in `meta.lead_id`, the header says it was unavailable, and a warning carries the reason. A run configured with `ask.use_lead: false` never asked for one, so `meta.lead_id` stays empty and nothing claims an unavailability.
+
+A lead whose confidence falls outside `[0, 1]` keeps its answer, which is the whole output of the run, but the value is read as 0 and a warning says so. A respondent is rejected outright for the same mistake, since another one is there to answer.
 
 ## Cost
 

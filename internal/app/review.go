@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+	"unicode/utf8"
 
 	"golang.org/x/sync/errgroup"
 
@@ -261,11 +262,19 @@ func (a *App) execute(ctx context.Context, r *run, req ReviewRequest) (*domain.C
 	return review, nil
 }
 
+// truncateBytes cuts s to max bytes, backing off to a rune boundary. Cutting
+// mid-rune leaves invalid UTF-8 in the prompt and in the artifacts, where the
+// JSON encoder silently replaces it. It matters most to `ask`, whose input is
+// arbitrary text up to half a megabyte.
 func truncateBytes(s string, max int) string {
 	if max <= 0 || len(s) <= max {
 		return s
 	}
-	return s[:max] + "\n[truncated by conclave]"
+	cut := s[:max]
+	for len(cut) > 0 && !utf8.ValidString(cut) {
+		cut = cut[:len(cut)-1]
+	}
+	return cut + "\n[truncated by conclave]"
 }
 
 func outcomeErrors(outcomes []consolidation.ReviewerOutcome) []error {

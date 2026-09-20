@@ -84,6 +84,8 @@ func main() {
 		fmt.Print(strings.Replace(answerReport(id), `"answer": "`+askAnswer+`"`, `"answer": "  "`, 1))
 	case "ask-lead":
 		fmt.Print(askLead())
+	case "ask-lead-badconf":
+		fmt.Print(strings.Replace(askLead(), `"confidence": 0.9`, `"confidence": 2`, 1))
 	case "ask-lead-ghost":
 		fmt.Print(strings.Replace(askLead(), `"by": ["r1"]`, `"by": ["ghost"]`, 1))
 	case "pi-json":

@@ -160,6 +160,62 @@ func TestAskRejectsEmptyQuestionAndEmptyAnswer(t *testing.T) {
 	}
 }
 
+func TestAskLeadDisabledIsNotLeadUnavailable(t *testing.T) {
+	a := newAskApp(t,
+		agentCfg(t, "r1", config.RoleReviewer, "ask"),
+		agentCfg(t, "lead", config.RoleLead, "ask-lead"))
+	no := false
+	a.Config.Ask.UseLead = &no
+	res, err := a.Ask(context.Background(), AskRequest{Question: "Why?"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// LeadID is what the renderer reads as "a lead was expected here". A run
+	// that asked for none must leave it empty, or the report claims the lead
+	// was unavailable when it was simply never called.
+	if res.Answer.Meta.LeadID != "" {
+		t.Errorf("a lead that was never asked for must not be named: %+v", res.Answer.Meta)
+	}
+	for _, c := range res.Answer.Caveats {
+		if strings.Contains(c, "unavailable") {
+			t.Errorf("caveat claims an unavailable lead: %q", c)
+		}
+	}
+}
+
+func TestAskLeadFailureKeepsItsModelAndWarnsOnBadConfidence(t *testing.T) {
+	a := newAskApp(t,
+		agentCfg(t, "r1", config.RoleReviewer, "ask"),
+		agentCfg(t, "lead", config.RoleLead, "invalid-json"))
+	a.Config.Agents[1].Model = "fake/lead"
+	res, err := a.Ask(context.Background(), AskRequest{Question: "Why?"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := res.Answer.Meta
+	if m.LeadID != "lead" || m.LeadUsed {
+		t.Errorf("a lead that ran and failed must still be named: %+v", m)
+	}
+	if m.Models["lead"] != "fake/lead" {
+		t.Errorf("the model that failed the consolidation must be recorded: %v", m.Models)
+	}
+
+	// A lead confidence outside [0,1] is read as 0, and the reader is told.
+	b := newAskApp(t,
+		agentCfg(t, "r1", config.RoleReviewer, "ask"),
+		agentCfg(t, "lead", config.RoleLead, "ask-lead-badconf"))
+	res2, err := b.Ask(context.Background(), AskRequest{Question: "Why?"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res2.Answer.Confidence != 0 {
+		t.Errorf("confidence: %v", res2.Answer.Confidence)
+	}
+	if !strings.Contains(strings.Join(res2.Answer.Warnings, "\n"), "out of [0,1]") {
+		t.Errorf("the clamp must be reported: %v", res2.Answer.Warnings)
+	}
+}
+
 func TestAskSelectsRespondentsAndSkipsLead(t *testing.T) {
 	a := newAskApp(t,
 		agentCfg(t, "r1", config.RoleReviewer, "ask"),

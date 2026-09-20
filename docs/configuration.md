@@ -50,7 +50,7 @@ Agents inherit your environment by default, so their credentials keep working. `
 
 `ask.respondents` is empty by default, which means every configured reviewer, for the same reason `plan.planners` is: a second opinion is what the command is for. Name a subset when the cost matters more than the comparison. Listing the same id twice is rejected, here and in `plan.planners` and `triage.reviewers`: the duplicated agent would share one working directory with itself and overwrite its own artifacts.
 
-`ask.limits.max_question_bytes` and `max_context_bytes` bound the question and the material piped with it, at 32 KiB and 512 KiB. `max_answer_bytes` bounds one answer, 64 KiB, since an answer is a document and not a field. `max_key_points` and `max_references` cut what an agent returns beyond them, with a warning.
+`ask.limits.max_question_bytes` and `max_context_bytes` bound the question and the material given with it, at 32 KiB and 512 KiB. They bound the read, so an unbounded input is cut rather than held whole in memory. `max_answer_bytes` bounds one answer, 64 KiB, since an answer is a document and not a field. `max_key_points` and `max_references` cut what an agent returns beyond them, with a warning.
 
 `ask.use_lead: false` skips the consolidation and returns the most confident answer as it was written, with the other answers published beside it.
 

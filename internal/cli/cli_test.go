@@ -133,26 +133,24 @@ func TestAskQuestionSources(t *testing.T) {
 		}
 	})
 	t.Run("stdin is not read behind the question", func(t *testing.T) {
-		// The note is what tells the user their pipe was ignored, and the
-		// run must not have waited for that pipe to close.
-		_, err := run(t, "a log nobody asked for", append([]string{"ask", "why?"}, missing...)...)
+		// The note is what tells the user their pipe was ignored. It is
+		// printed once the configuration is read, so the run needs one that
+		// loads; --project stops it before any agent runs.
+		_, err := run(t, "a log nobody asked for", "ask", "why?", "--config", askConfig(t), "--project", "/nonexistent")
 		if !strings.Contains(err, "--context -") {
 			t.Errorf("the ignored input must be reported: %s", err)
 		}
 	})
-	t.Run("context from a file", func(t *testing.T) {
+	t.Run("a given context silences the note", func(t *testing.T) {
 		file := filepath.Join(t.TempDir(), "ctx.txt")
 		os.WriteFile(file, []byte("the log"), 0o644)
-		code, err := run(t, "", "ask", "why?", "--context", file, "--config", "/nonexistent.yaml")
-		if code != 1 || !strings.Contains(err, "nonexistent.yaml") {
-			t.Errorf("got %d %s", code, err)
-		}
+		_, err := run(t, "a log nobody asked for", "ask", "why?", "--context", file, "--config", askConfig(t), "--project", "/nonexistent")
 		if strings.Contains(err, "--context -") {
-			t.Error("the note must not fire when a context was given")
+			t.Errorf("the note must not fire when a context was given: %s", err)
 		}
 	})
 	t.Run("missing context file", func(t *testing.T) {
-		if code, err := run(t, "", "ask", "why?", "--context", "/nonexistent.ctx", "--config", "/nonexistent.yaml"); code == 0 || !strings.Contains(err, "read context") {
+		if code, err := run(t, "", "ask", "why?", "--context", "/nonexistent.ctx", "--config", askConfig(t)); code == 0 || !strings.Contains(err, "read context") {
 			t.Errorf("got %d %s", code, err)
 		}
 	})
@@ -175,6 +173,32 @@ func TestAskQuestionSources(t *testing.T) {
 				t.Errorf("%v should fail", args)
 			}
 		})
+	}
+}
+
+func TestReadContext(t *testing.T) {
+	file := filepath.Join(t.TempDir(), "ctx.txt")
+	if err := os.WriteFile(file, []byte("  the log  "), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := readContext("", 0); got != "" || err != nil {
+		t.Errorf("no context: %q %v", got, err)
+	}
+	if got, err := readContext(file, 0); got != "the log" || err != nil {
+		t.Errorf("from a file: %q %v", got, err)
+	}
+	// "-" is read whatever standard input is, a terminal included: the
+	// terminal guard belongs to the implicit path only.
+	stdinReader = strings.NewReader("typed by hand")
+	defer func() { stdinReader = nil }()
+	if got, err := readContext("-", 0); got != "typed by hand" || err != nil {
+		t.Errorf("from standard input: %q %v", got, err)
+	}
+	// The limit bounds what is held in memory, plus the one byte that lets
+	// the app see the input was cut.
+	stdinReader = strings.NewReader(strings.Repeat("x", 100))
+	if got, err := readContext("-", 10); len(got) != 11 || err != nil {
+		t.Errorf("bounded read: %d bytes %v", len(got), err)
 	}
 }
 

@@ -47,27 +47,11 @@ func runAsk(ctx context.Context, args []string, stdout, stderr io.Writer) error 
 	if text == "" && *contextPath == "-" {
 		return errors.New("standard input cannot be both the question and the context")
 	}
-	questionContext, err := readContext(*contextPath)
-	if err != nil {
-		return err
-	}
-	// Standard input is the question only when nothing else gave one. It is
-	// never read behind the user's back otherwise: a process started with an
-	// inherited pipe nobody closes would block here forever, before printing
-	// anything, although the question was already in hand.
-	if text == "" {
-		piped, err := readStdin()
-		if err != nil {
-			return fmt.Errorf("read standard input: %w", err)
-		}
-		text = strings.TrimSpace(string(piped))
-	} else if *contextPath == "" && stdinIsRedirected() {
-		fmt.Fprintln(stderr, "note: standard input is not read when the question is given; pass --context - to use it")
-	}
-	if text == "" {
-		return errors.New("no question: pass it as an argument, with --question, or on standard input")
-	}
 
+	// The configuration is read first because it carries the limits, and a
+	// limit that is applied after the whole input is in memory is not a
+	// limit: `conclave ask -q "why?" --context - < /dev/zero` would grow the
+	// heap until it dies.
 	resolved, err := resolveConfigPath(*configPath, *project)
 	if err != nil {
 		return err
@@ -81,6 +65,27 @@ func runAsk(ctx context.Context, args []string, stdout, stderr io.Writer) error 
 			return fmt.Errorf("invalid --format %q", *format)
 		}
 		cfg.Output.Format = *format
+	}
+
+	questionContext, err := readContext(*contextPath, cfg.Ask.Limits.MaxContextBytes)
+	if err != nil {
+		return err
+	}
+	// Standard input is the question only when nothing else gave one. It is
+	// never read behind the user's back otherwise: a process started with an
+	// inherited pipe nobody closes would block here forever, before printing
+	// anything, although the question was already in hand.
+	if text == "" {
+		piped, err := readStdin(cfg.Ask.Limits.MaxQuestionBytes)
+		if err != nil {
+			return fmt.Errorf("read standard input: %w", err)
+		}
+		text = strings.TrimSpace(string(piped))
+	} else if *contextPath == "" && stdinIsRedirected() {
+		fmt.Fprintln(stderr, "note: standard input is not read when the question is given; pass --context - to use it")
+	}
+	if text == "" {
+		return errors.New("no question: pass it as an argument, with --question, or on standard input")
 	}
 	logger := newLogger(stderr, *verbose)
 	for _, w := range config.Warnings(cfg) {
@@ -109,18 +114,27 @@ func runAsk(ctx context.Context, args []string, stdout, stderr io.Writer) error 
 // a file or, for "-", from standard input. It is read only when asked for,
 // which is what keeps a question given on the command line from blocking on
 // an inherited pipe.
-func readContext(path string) (string, error) {
+func readContext(path string, max int) (string, error) {
 	switch path {
 	case "":
 		return "", nil
 	case "-":
-		data, err := readStdin()
+		// Asked for by name, standard input is read whatever it is, a
+		// terminal included: the user typing a context and ending it with
+		// Ctrl-D meant exactly that. The terminal guard belongs to the
+		// implicit path, where nobody asked for a read at all.
+		data, err := readAllStdin(max)
 		if err != nil {
 			return "", fmt.Errorf("read standard input: %w", err)
 		}
 		return strings.TrimSpace(string(data)), nil
 	default:
-		data, err := os.ReadFile(path)
+		f, err := os.Open(path)
+		if err != nil {
+			return "", fmt.Errorf("read context: %w", err)
+		}
+		defer f.Close()
+		data, err := readLimited(f, max)
 		if err != nil {
 			return "", fmt.Errorf("read context: %w", err)
 		}
@@ -131,14 +145,29 @@ func readContext(path string) (string, error) {
 // readStdin returns what standard input holds, and nothing when it is a
 // terminal: `conclave ask` with no question anywhere must fail rather than
 // wait for a question nobody is going to type.
-func readStdin() ([]byte, error) {
-	if stdinReader != nil {
-		return io.ReadAll(stdinReader)
-	}
+func readStdin(max int) ([]byte, error) {
 	if !stdinIsRedirected() {
 		return nil, nil
 	}
-	return io.ReadAll(os.Stdin)
+	return readAllStdin(max)
+}
+
+// readAllStdin reads standard input, with no terminal guard.
+func readAllStdin(max int) ([]byte, error) {
+	if stdinReader != nil {
+		return readLimited(stdinReader, max)
+	}
+	return readLimited(os.Stdin, max)
+}
+
+// readLimited reads at most max bytes plus one. The extra byte is what lets
+// the app tell a full input from a cut one and add its truncation marker,
+// while the process never holds more than the configured limit in memory.
+func readLimited(r io.Reader, max int) ([]byte, error) {
+	if max <= 0 {
+		return io.ReadAll(r)
+	}
+	return io.ReadAll(io.LimitReader(r, int64(max)+1))
 }
 
 // stdinIsRedirected reports whether standard input is something other than a

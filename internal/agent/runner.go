@@ -93,7 +93,7 @@ func lastLine(b []byte) string {
 	lines := strings.Split(strings.TrimSpace(string(b)), "\n")
 	l := strings.TrimSpace(lines[len(lines)-1])
 	if len(l) > 200 {
-		l = l[:200] + "…"
+		l = CutRunes(l, 200) + "…"
 	}
 	return l
 }

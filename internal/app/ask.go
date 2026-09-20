@@ -245,10 +245,9 @@ func (a *App) executeAsk(ctx context.Context, p *askRun, req AskRequest, respond
 		} else {
 			meta.LeadUsed = true
 		}
-		// The model is captured on both paths: an artifact of a failed
-		// consolidation has to say which model failed it. It is looked up by
-		// id rather than read off the end of the slice, so recording another
-		// execution after the lead cannot quietly drop it.
+		// The model is captured whether the lead succeeded or not, and it is
+		// looked up by id rather than read off the end of the slice, so
+		// recording another execution after the lead cannot drop it.
 		for _, ex := range p.manifest.Agents {
 			if ex.ID == lead.ID && ex.Model != "" {
 				meta.Models[lead.ID] = ex.Model
@@ -358,7 +357,11 @@ func (a *App) runRespondent(ctx context.Context, p *askRun, ag config.AgentConfi
 
 func (a *App) runAskLead(ctx context.Context, p *askRun, lead config.AgentConfig, worktree string, reports []domain.AnswerReport, succeeded []string) (*domain.ConsolidatedAnswer, []string, error) {
 	log := a.logger()
-	ex := domain.AgentExecution{ID: lead.ID, Role: lead.Role, Worktree: worktree}
+	// The configured model is recorded before the run: a lead that times out
+	// or exits non-zero never reaches adapt, and an artifact of a failed
+	// consolidation still has to say which model failed it. adapt overwrites
+	// this with the model it detects when the output can be read.
+	ex := domain.AgentExecution{ID: lead.ID, Role: lead.Role, Worktree: worktree, Model: lead.Model}
 	defer func() {
 		p.manifest.Agents = append(p.manifest.Agents, ex)
 		_ = p.store.WriteManifest(p.manifest)

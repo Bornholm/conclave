@@ -87,7 +87,9 @@ func main() {
 	case "ask-lead-badconf":
 		fmt.Print(strings.Replace(askLead(), `"confidence": 0.9`, `"confidence": 2`, 1))
 	case "ask-lead-ghost":
-		fmt.Print(strings.Replace(askLead(), `"by": ["r1"]`, `"by": ["ghost"]`, 1))
+		// Every attribution names an agent that never answered.
+		ghost := strings.ReplaceAll(askLead(), `["r1"]`, `["ghost"]`)
+		fmt.Print(strings.Replace(ghost, `"reported_by": ["r1", "ghost"]`, `"reported_by": ["ghost"]`, 1))
 	case "pi-json":
 		rep := strings.ReplaceAll(strings.ReplaceAll(validReport(id), "\\", "\\\\"), `"`, `\"`)
 		rep = strings.ReplaceAll(rep, "\n", `\n`)

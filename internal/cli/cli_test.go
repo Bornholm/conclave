@@ -141,12 +141,25 @@ func TestAskQuestionSources(t *testing.T) {
 			t.Errorf("the ignored input must be reported: %s", err)
 		}
 	})
-	t.Run("a given context silences the note", func(t *testing.T) {
+	t.Run("a context file does not claim standard input", func(t *testing.T) {
+		// --context FILE names a file, not the pipe: what was piped in is
+		// still dropped, so the note still has to fire.
 		file := filepath.Join(t.TempDir(), "ctx.txt")
 		os.WriteFile(file, []byte("the log"), 0o644)
 		_, err := run(t, "a log nobody asked for", "ask", "why?", "--context", file, "--config", askConfig(t), "--project", "/nonexistent")
+		if !strings.Contains(err, "--context -") {
+			t.Errorf("the dropped input must be reported: %s", err)
+		}
+	})
+	t.Run("--context - silences the note", func(t *testing.T) {
+		_, err := run(t, "the log", "ask", "why?", "--context", "-", "--config", askConfig(t), "--project", "/nonexistent")
 		if strings.Contains(err, "--context -") {
-			t.Errorf("the note must not fire when a context was given: %s", err)
+			t.Errorf("standard input was claimed, no note is due: %s", err)
+		}
+	})
+	t.Run("question given twice through the alias", func(t *testing.T) {
+		if code, err := run(t, "", "ask", "-q", "a", "--question", "b", "--config", "/nonexistent.yaml"); code == 0 || !strings.Contains(err, "same flag") {
+			t.Errorf("got %d %s", code, err)
 		}
 	})
 	t.Run("missing context file", func(t *testing.T) {

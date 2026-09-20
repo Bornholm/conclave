@@ -200,6 +200,20 @@ func TestAskLeadFailureKeepsItsModelAndWarnsOnBadConfidence(t *testing.T) {
 		t.Errorf("the model that failed the consolidation must be recorded: %v", m.Models)
 	}
 
+	// A lead that never produces readable output never reaches the adapter,
+	// so the configured model is what the artifact has to keep.
+	crashed := newAskApp(t,
+		agentCfg(t, "r1", config.RoleReviewer, "ask"),
+		agentCfg(t, "lead", config.RoleLead, "exit-1"))
+	crashed.Config.Agents[1].Model = "fake/lead"
+	resCrashed, err := crashed.Ask(context.Background(), AskRequest{Question: "Why?"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resCrashed.Answer.Meta.Models["lead"] != "fake/lead" {
+		t.Errorf("a lead that exited non-zero must still name its model: %v", resCrashed.Answer.Meta.Models)
+	}
+
 	// A lead confidence outside [0,1] is read as 0, and the reader is told.
 	b := newAskApp(t,
 		agentCfg(t, "r1", config.RoleReviewer, "ask"),
@@ -213,6 +227,30 @@ func TestAskLeadFailureKeepsItsModelAndWarnsOnBadConfidence(t *testing.T) {
 	}
 	if !strings.Contains(strings.Join(res2.Answer.Warnings, "\n"), "out of [0,1]") {
 		t.Errorf("the clamp must be reported: %v", res2.Answer.Warnings)
+	}
+}
+
+func TestAskLeadCreditingOnlyGhostsIsReported(t *testing.T) {
+	a := newAskApp(t,
+		agentCfg(t, "r1", config.RoleReviewer, "ask"),
+		agentCfg(t, "lead", config.RoleLead, "ask-lead-ghost"))
+	res, err := a.Ask(context.Background(), AskRequest{Question: "Why?"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ans := res.Answer
+	// Every attribution names an agent that never answered. The answer is
+	// kept, the credit is not, and the reader is told rather than left with
+	// a consolidation that appears to rest on nobody.
+	if len(ans.ReportedBy) != 0 {
+		t.Errorf("a ghost must not be credited: %v", ans.ReportedBy)
+	}
+	if len(ans.Disagreements) != 0 {
+		t.Errorf("a disagreement held by nobody must be dropped: %+v", ans.Disagreements)
+	}
+	joined := strings.Join(ans.Warnings, "\n")
+	if !strings.Contains(joined, "credits no respondent") || !strings.Contains(joined, "names no successful respondent") {
+		t.Errorf("warnings: %v", ans.Warnings)
 	}
 }
 

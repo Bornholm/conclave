@@ -183,11 +183,17 @@ func Validate(cfg *Config) error {
 			}
 		}
 	}
-	for field, ids := range map[string][]string{
-		"triage.reviewers": cfg.Triage.Reviewers,
-		"plan.planners":    cfg.Plan.Planners,
-		"ask.respondents":  cfg.Ask.Respondents,
+	// A slice, not a map: the messages are joined in the order they are
+	// added, and a map would reorder a multi-field failure on every run.
+	for _, list := range []struct {
+		field string
+		ids   []string
+	}{
+		{"triage.reviewers", cfg.Triage.Reviewers},
+		{"plan.planners", cfg.Plan.Planners},
+		{"ask.respondents", cfg.Ask.Respondents},
 	} {
+		field, ids := list.field, list.ids
 		listed := map[string]bool{}
 		for _, id := range ids {
 			switch {

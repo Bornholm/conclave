@@ -22,7 +22,7 @@ Only the answer goes to `stdout`. Logs go to `stderr`.
 
 The flag and the argument are the same thing, and giving both is an error rather than a guess.
 
-Standard input is never read behind your back. A question given on the command line is answered without touching it, and a process started with an inherited pipe that nobody ever closes would otherwise block in the read, before printing anything, with the question already in hand. That is not a rare shape: it is what a supervisor, a CI wrapper or another agent hands its children. When something is piped in and no `--context` asked for it, a note on `stderr` says it was ignored, so the input does not disappear silently.
+Standard input is never read behind your back. A question given on the command line is answered without touching it, and a process started with an inherited pipe that nobody ever closes would otherwise block in the read, before printing anything, with the question already in hand. That is not a rare shape: it is what a supervisor, a CI wrapper or another agent hands its children. Anything piped in that `--context -` did not claim is dropped, and a note on `stderr` says so, `--context FILE` included: the input never disappears without a word.
 
 ## Where the context comes from
 
@@ -33,7 +33,9 @@ kubectl logs deploy/api | conclave ask -q "What is crashing here, and why?" --co
 conclave ask -q "Is this migration reversible?" --context migration.sql
 ```
 
-`--context -` with no question anywhere is an error: standard input cannot be both.
+`--context -` with no question anywhere is an error: standard input cannot be both. `--question` and its shorthand `-q` are one flag, so giving both is an error too, like giving the flag and the argument.
+
+`--rev` and `--keep-worktrees` only mean something against a checkout. Passing either without `--project` prints a note rather than answering as though it had been honoured.
 
 `ask.limits.max_question_bytes` and `ask.limits.max_context_bytes` bound the two, at 32 KiB and 512 KiB by default. They bound the read itself, not only the text that reaches the agents, so `conclave ask -q "why?" --context - < /dev/zero` stops at the limit instead of growing until it dies. What is over the limit is cut, with a marker in the text, on a character boundary.
 

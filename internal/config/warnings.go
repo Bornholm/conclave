@@ -28,6 +28,11 @@ func Warnings(cfg *Config) []string {
 				"agent %s: input is argument but max_diff_bytes is %d, over the %d-byte limit for a single argument; a diff over that size fails the exec with \"argument list too long\" before the agent starts, set input: stdin or file, or lower max_diff_bytes",
 				a.ID, cfg.Review.Limits.MaxDiffBytes, MaxArgBytes))
 		}
+		if askPrompt := cfg.Ask.Limits.MaxQuestionBytes + cfg.Ask.Limits.MaxContextBytes; a.Input == InputArgument && askPrompt >= MaxArgBytes {
+			out = append(out, fmt.Sprintf(
+				"agent %s: input is argument but an ask prompt may reach %d bytes (max_question_bytes plus max_context_bytes), over the %d-byte limit for a single argument; `conclave ask` with a large context fails the exec before the agent starts, set input: stdin or file, or lower ask.limits",
+				a.ID, askPrompt, MaxArgBytes))
+		}
 		if !emitsPiEventStream(a.Command) {
 			continue
 		}

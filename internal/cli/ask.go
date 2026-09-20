@@ -40,6 +40,9 @@ func runAsk(ctx context.Context, args []string, stdout, stderr io.Writer) error 
 		return errors.New("usage: conclave ask [question] [--question TEXT] [--context FILE] [--project PATH]")
 	}
 
+	if set["question"] && set["q"] {
+		return errors.New("the question is given twice: --question and -q are the same flag")
+	}
 	text := strings.TrimSpace(*question)
 	if len(positional) == 1 {
 		if text != "" {
@@ -90,7 +93,10 @@ func runAsk(ctx context.Context, args []string, stdout, stderr io.Writer) error 
 			return fmt.Errorf("read standard input: %w", err)
 		}
 		text = strings.TrimSpace(string(piped))
-	} else if *contextPath == "" && stdinIsRedirected() {
+	} else if *contextPath != "-" && stdinIsRedirected() {
+		// Anything piped in and not claimed is dropped, --context FILE
+		// included. Saying so is the whole promise: the input never
+		// disappears without a word.
 		fmt.Fprintln(stderr, "note: standard input is not read when the question is given; pass --context - to use it")
 	}
 	if text == "" {

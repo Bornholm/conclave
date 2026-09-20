@@ -35,7 +35,7 @@ conclave ask -q "Is this migration reversible?" --context migration.sql
 
 `--context -` with no question anywhere is an error: standard input cannot be both. `--question` and its shorthand `-q` are one flag, so giving both is an error too, like giving the flag and the argument.
 
-`--rev` and `--keep-worktrees` only mean something against a checkout. Passing either without `--project` prints a note rather than answering as though it had been honoured.
+`--rev` only means something against a checkout, so passing it without `--project` prints a note rather than answering as though it had been honoured. `--keep-worktrees` is honoured either way: without a project it keeps the scratch directories the agents ran in.
 
 `ask.limits.max_question_bytes` and `ask.limits.max_context_bytes` bound the two, at 32 KiB and 512 KiB by default. They bound the read itself, not only the text that reaches the agents, so `conclave ask -q "why?" --context - < /dev/zero` stops at the limit instead of growing until it dies. What is over the limit is cut, with a marker in the text, on a character boundary.
 

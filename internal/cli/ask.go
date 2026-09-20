@@ -54,10 +54,12 @@ func runAsk(ctx context.Context, args []string, stdout, stderr io.Writer) error 
 		return errors.New("standard input cannot be both the question and the context")
 	}
 
-	if *project == "" && (set["rev"] || set["keep-worktrees"]) {
-		// Both only mean something against a checkout. Saying so beats
-		// answering as though the flag had been honoured.
-		fmt.Fprintln(stderr, "note: --rev and --keep-worktrees do nothing without --project")
+	if *project == "" && set["rev"] {
+		// A revision only means something against a checkout. Saying so
+		// beats answering as though the flag had been honoured.
+		// --keep-worktrees is not in the same case: without a project it
+		// still keeps the scratch directories, which is what it promises.
+		fmt.Fprintln(stderr, "note: --rev does nothing without --project")
 	}
 
 	// The configuration is read first because it carries the limits, and a
@@ -92,7 +94,7 @@ func runAsk(ctx context.Context, args []string, stdout, stderr io.Writer) error 
 		if err != nil {
 			return fmt.Errorf("read standard input: %w", err)
 		}
-		text = strings.TrimSpace(string(piped))
+		text = trimRead(piped, cfg.Ask.Limits.MaxQuestionBytes)
 	} else if *contextPath != "-" && stdinIsRedirected() {
 		// Anything piped in and not claimed is dropped, --context FILE
 		// included. Saying so is the whole promise: the input never
@@ -142,7 +144,7 @@ func readContext(path string, max int) (string, error) {
 		if err != nil {
 			return "", fmt.Errorf("read standard input: %w", err)
 		}
-		return strings.TrimSpace(string(data)), nil
+		return trimRead(data, max), nil
 	default:
 		f, err := os.Open(path)
 		if err != nil {
@@ -153,8 +155,20 @@ func readContext(path string, max int) (string, error) {
 		if err != nil {
 			return "", fmt.Errorf("read context: %w", err)
 		}
-		return strings.TrimSpace(string(data)), nil
+		return trimRead(data, max), nil
 	}
+}
+
+// trimRead trims the read and marks it when it hit the bound. The marker
+// cannot be left to the app: trimming an input whose last byte is a newline
+// brings the length back under the limit, and the cut would go unannounced
+// precisely where it is most ordinary, at the end of a log.
+func trimRead(data []byte, max int) string {
+	s := strings.TrimSpace(string(data))
+	if max > 0 && len(data) > max && len(s) <= max {
+		s += app.TruncationMarker
+	}
+	return s
 }
 
 // readStdin returns what standard input holds, and nothing when it is a

@@ -2,11 +2,15 @@ package cli
 
 import (
 	"bytes"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/bornholm/conclave/internal/domain"
+	"github.com/bornholm/conclave/internal/testutil"
 )
 
 func TestMainCommands(t *testing.T) {
@@ -169,8 +173,16 @@ func TestAskQuestionSources(t *testing.T) {
 	})
 	t.Run("rev without project is reported", func(t *testing.T) {
 		_, err := run(t, "", "ask", "why?", "--rev", "abc", "--config", "/nonexistent.yaml")
-		if !strings.Contains(err, "--rev and --keep-worktrees do nothing") {
+		if !strings.Contains(err, "--rev does nothing") {
 			t.Errorf("the ignored flag must be reported: %s", err)
+		}
+	})
+	t.Run("keep-worktrees without project is honoured", func(t *testing.T) {
+		// It keeps the scratch directories, which is what it promises, so
+		// nothing must claim it was ignored.
+		_, err := run(t, "", "ask", "why?", "--keep-worktrees", "--config", "/nonexistent.yaml")
+		if strings.Contains(err, "does nothing") {
+			t.Errorf("--keep-worktrees is honoured without a project: %s", err)
 		}
 	})
 	t.Run("bad format", func(t *testing.T) {
@@ -192,6 +204,69 @@ func TestAskQuestionSources(t *testing.T) {
 				t.Errorf("%v should fail", args)
 			}
 		})
+	}
+}
+
+// askAgentConfig writes a configuration whose single reviewer and lead are
+// the fake agent, so a run reaches the agents and comes back with an answer.
+func askAgentConfig(t *testing.T) string {
+	t.Helper()
+	agent := testutil.TestAgent(t)
+	path := filepath.Join(t.TempDir(), "c.yaml")
+	body := `
+version: 1
+forge:
+  provider: github
+ask:
+  use_lead: false
+agents:
+  - id: r1
+    role: reviewer
+    command: [` + agent + `]
+    environment: {CONCLAVE_TESTAGENT_MODE: ask, CONCLAVE_TESTAGENT_ID: r1}
+  - id: lead
+    role: lead
+    command: [` + agent + `]
+    environment: {CONCLAVE_TESTAGENT_MODE: ask-lead, CONCLAVE_TESTAGENT_ID: lead}
+`
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+// The question read from standard input has machinery of its own: the
+// terminal guard, the configured bound and the trim. This crosses all of it
+// in one run and reads the question back out of the answer.
+func TestAskQuestionFromStdinEndToEnd(t *testing.T) {
+	var out, errb bytes.Buffer
+	stdinReader = strings.NewReader("  why is it slow?  ")
+	defer func() { stdinReader = nil }()
+	code := Main([]string{"ask", "--config", askAgentConfig(t), "--format", "json"}, &out, &errb)
+	if code != 0 {
+		t.Fatalf("exit %d: %s", code, errb.String())
+	}
+	var answer domain.ConsolidatedAnswer
+	if err := json.Unmarshal(out.Bytes(), &answer); err != nil {
+		t.Fatalf("decode: %v\n%s", err, out.String())
+	}
+	if answer.Question != "why is it slow?" {
+		t.Errorf("the piped question must be the one answered: %q", answer.Question)
+	}
+	if answer.Answer == "" || len(answer.ReportedBy) != 1 {
+		t.Errorf("answer: %+v", answer)
+	}
+}
+
+func TestTrimReadMarksACutThatEndsInWhitespace(t *testing.T) {
+	// The bound is 10, the read brings back 11 bytes, and trimming the
+	// trailing newline would otherwise bring it back to 10 and hide the cut.
+	if got := trimRead([]byte("0123456789\n"), 10); !strings.HasSuffix(got, "[truncated by conclave]") {
+		t.Errorf("a cut must be announced: %q", got)
+	}
+	// An input that fits is left alone.
+	if got := trimRead([]byte(" abc "), 10); got != "abc" {
+		t.Errorf("untouched: %q", got)
 	}
 }
 

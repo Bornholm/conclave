@@ -28,10 +28,20 @@ func Warnings(cfg *Config) []string {
 				"agent %s: input is argument but max_diff_bytes is %d, over the %d-byte limit for a single argument; a diff over that size fails the exec with \"argument list too long\" before the agent starts, set input: stdin or file, or lower max_diff_bytes",
 				a.ID, cfg.Review.Limits.MaxDiffBytes, MaxArgBytes))
 		}
-		if askPrompt := cfg.Ask.Limits.MaxQuestionBytes + cfg.Ask.Limits.MaxContextBytes; a.Input == InputArgument && askPrompt >= MaxArgBytes {
-			out = append(out, fmt.Sprintf(
-				"agent %s: input is argument but an ask prompt may reach %d bytes (max_question_bytes plus max_context_bytes), over the %d-byte limit for a single argument; `conclave ask` with a large context fails the exec before the agent starts, set input: stdin or file, or lower ask.limits",
-				a.ID, askPrompt, MaxArgBytes))
+		if a.Input == InputArgument {
+			// The lead is handed the question, the context and every answer
+			// it has to consolidate, so its prompt is the larger of the two.
+			askPrompt := cfg.Ask.Limits.MaxQuestionBytes + cfg.Ask.Limits.MaxContextBytes
+			what := "max_question_bytes plus max_context_bytes"
+			if a.Role == RoleLead {
+				askPrompt += len(cfg.Respondents()) * cfg.Ask.Limits.MaxAnswerBytes
+				what = "the question, the context and one answer per respondent"
+			}
+			if askPrompt >= MaxArgBytes {
+				out = append(out, fmt.Sprintf(
+					"agent %s: input is argument but an ask prompt may reach %d bytes (%s), over the %d-byte limit for a single argument; `conclave ask` fails the exec before the agent starts, set input: stdin or file, or lower ask.limits",
+					a.ID, askPrompt, what, MaxArgBytes))
+			}
 		}
 		if !emitsPiEventStream(a.Command) {
 			continue

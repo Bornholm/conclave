@@ -154,6 +154,12 @@ func TestAskQuestionSources(t *testing.T) {
 			t.Errorf("got %d %s", code, err)
 		}
 	})
+	t.Run("rev without project is reported", func(t *testing.T) {
+		_, err := run(t, "", "ask", "why?", "--rev", "abc", "--config", "/nonexistent.yaml")
+		if !strings.Contains(err, "--rev and --keep-worktrees do nothing") {
+			t.Errorf("the ignored flag must be reported: %s", err)
+		}
+	})
 	t.Run("bad format", func(t *testing.T) {
 		// This one needs a configuration that loads: the format is checked
 		// after the configuration is read, so a missing file would hide it.
@@ -212,16 +218,21 @@ func TestResolveConfigPath(t *testing.T) {
 	if err := os.MkdirAll(project, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := resolveConfigPath(".conclave.yaml", project); err == nil {
+	if _, err := resolveConfigPath(".conclave.yaml", project, false); err == nil {
 		t.Error("a missing configuration must be reported, not silently defaulted")
 	}
 	inProject := filepath.Join(project, ".conclave.yaml")
 	os.WriteFile(inProject, []byte("version: 1\n"), 0o644)
-	got, err := resolveConfigPath(".conclave.yaml", project)
+	got, err := resolveConfigPath(".conclave.yaml", project, false)
 	if err != nil || got != inProject {
 		t.Errorf("got %q %v, want the project file", got, err)
 	}
-	if got, _ := resolveConfigPath("/explicit.yaml", project); got != "/explicit.yaml" {
+	if got, _ := resolveConfigPath("/explicit.yaml", project, true); got != "/explicit.yaml" {
 		t.Errorf("an explicit path must win: %q", got)
+	}
+	// A path spelled like the default, but typed, is taken as typed: the
+	// fallback chain would otherwise hand back a file nobody named.
+	if got, _ := resolveConfigPath(".conclave.yaml", project, true); got != ".conclave.yaml" {
+		t.Errorf("an explicitly named default must not fall back: %q", got)
 	}
 }

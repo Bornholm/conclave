@@ -75,8 +75,12 @@ func (a *App) Ask(ctx context.Context, req AskRequest) (*AskResult, error) {
 		ctx, cancel = context.WithTimeout(ctx, cfg.Review.Timeout)
 		defer cancel()
 	}
-	question = truncateBytes(question, cfg.Ask.Limits.MaxQuestionBytes)
-	questionContext := truncateBytes(strings.TrimSpace(req.Context), cfg.Ask.Limits.MaxContextBytes)
+	// The artifacts keep what was asked, the agents get what fits. The run
+	// directory is the only place the full text would survive, and a
+	// question read back months later is the point of storing it.
+	askedQuestion, askedContext := question, strings.TrimSpace(req.Context)
+	question = truncateBytes(askedQuestion, cfg.Ask.Limits.MaxQuestionBytes)
+	questionContext := truncateBytes(askedContext, cfg.Ask.Limits.MaxContextBytes)
 
 	now := time.Now()
 	runID := artifact.NewAskRunID(now)
@@ -128,9 +132,9 @@ func (a *App) Ask(ctx context.Context, req AskRequest) (*AskResult, error) {
 	}
 	log.Info("ask started", "run", runID, "agents", len(respondents), "project", req.Project, "revision", branch)
 	_ = store.WriteManifest(manifest)
-	_ = store.Write("context", "question.txt", []byte(question))
-	if questionContext != "" {
-		_ = store.Write("context", "context.txt", []byte(questionContext))
+	_ = store.Write("context", "question.txt", []byte(askedQuestion))
+	if askedContext != "" {
+		_ = store.Write("context", "context.txt", []byte(askedContext))
 	}
 
 	p := &askRun{
@@ -242,9 +246,13 @@ func (a *App) executeAsk(ctx context.Context, p *askRun, req AskRequest, respond
 			meta.LeadUsed = true
 		}
 		// The model is captured on both paths: an artifact of a failed
-		// consolidation has to say which model failed it.
-		if last := p.manifest.Agents[len(p.manifest.Agents)-1]; last.ID == lead.ID && last.Model != "" {
-			meta.Models[lead.ID] = last.Model
+		// consolidation has to say which model failed it. It is looked up by
+		// id rather than read off the end of the slice, so recording another
+		// execution after the lead cannot quietly drop it.
+		for _, ex := range p.manifest.Agents {
+			if ex.ID == lead.ID && ex.Model != "" {
+				meta.Models[lead.ID] = ex.Model
+			}
 		}
 	} else {
 		answer = consolidation.FallbackAnswer(p.question, outcomes)

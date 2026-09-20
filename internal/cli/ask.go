@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"errors"
+	"flag"
 	"fmt"
 	"io"
 	"os"
@@ -33,6 +34,8 @@ func runAsk(ctx context.Context, args []string, stdout, stderr io.Writer) error 
 	if err != nil {
 		return err
 	}
+	set := map[string]bool{}
+	fs.Visit(func(f *flag.Flag) { set[f.Name] = true })
 	if len(positional) > 1 {
 		return errors.New("usage: conclave ask [question] [--question TEXT] [--context FILE] [--project PATH]")
 	}
@@ -48,11 +51,17 @@ func runAsk(ctx context.Context, args []string, stdout, stderr io.Writer) error 
 		return errors.New("standard input cannot be both the question and the context")
 	}
 
+	if *project == "" && (set["rev"] || set["keep-worktrees"]) {
+		// Both only mean something against a checkout. Saying so beats
+		// answering as though the flag had been honoured.
+		fmt.Fprintln(stderr, "note: --rev and --keep-worktrees do nothing without --project")
+	}
+
 	// The configuration is read first because it carries the limits, and a
 	// limit that is applied after the whole input is in memory is not a
 	// limit: `conclave ask -q "why?" --context - < /dev/zero` would grow the
 	// heap until it dies.
-	resolved, err := resolveConfigPath(*configPath, *project)
+	resolved, err := resolveConfigPath(*configPath, *project, set["config"])
 	if err != nil {
 		return err
 	}
@@ -182,9 +191,12 @@ func stdinIsRedirected() bool {
 
 // resolveConfigPath finds the configuration of an ask run. A question needs
 // no repository, so the working directory may hold no .conclave.yaml: the
-// project's own file is tried next, then the user-wide one.
-func resolveConfigPath(path, project string) (string, error) {
-	if path != config.DefaultFileName {
+// project's own file is tried next, then the user-wide one. A path the user
+// actually typed is never one of several candidates, even when it is spelled
+// like the default: naming a file and getting another one is worse than the
+// error.
+func resolveConfigPath(path, project string, explicit bool) (string, error) {
+	if explicit || path != config.DefaultFileName {
 		return path, nil
 	}
 	candidates := []string{path}

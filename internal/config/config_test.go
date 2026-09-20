@@ -41,6 +41,10 @@ func TestDecodeValidAppliesDefaults(t *testing.T) {
 	if cfg.EffectiveTimeout(cfg.Lead()) != DefaultLeadTimeout {
 		t.Errorf("lead timeout")
 	}
+	// An ask uses every reviewer, like a plan.
+	if len(cfg.Respondents()) != 1 || !cfg.AskUsesLead() || cfg.Ask.Limits.MaxContextBytes != DefaultMaxContextBytes {
+		t.Errorf("ask defaults: %+v", cfg.Ask)
+	}
 	// A plan uses every reviewer by default, a triage only the first one.
 	if len(cfg.Planners()) != 1 || !cfg.PlanUsesLead() || cfg.Plan.Limits.MaxSteps != DefaultMaxPlanSteps {
 		t.Errorf("plan defaults: %+v", cfg.Plan)
@@ -62,6 +66,9 @@ func TestDecodeRejects(t *testing.T) {
 		"bad version":         {strings.Replace(validYAML, "version: 1", "version: 2", 1), "version"},
 		"file no placeholder": {strings.Replace(validYAML, "command: [echo]", "command: [echo]\n    input: file", 1), "placeholder"},
 		"unknown planner":     {strings.Replace(validYAML, "review:", "plan:\n  planners: [nope]\nreview:", 1), "plan.planners"},
+		"unknown respondent":  {strings.Replace(validYAML, "review:", "ask:\n  respondents: [nope]\nreview:", 1), "ask.respondents"},
+		"respondent twice":    {strings.Replace(validYAML, "review:", "ask:\n  respondents: [rev, rev]\nreview:", 1), `ask.respondents: "rev" is listed twice`},
+		"planner twice":       {strings.Replace(validYAML, "review:", "plan:\n  planners: [rev, rev]\nreview:", 1), `plan.planners: "rev" is listed twice`},
 		"empty":               {"", "empty document"},
 	}
 	for name, tc := range cases {

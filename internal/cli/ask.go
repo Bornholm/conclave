@@ -22,6 +22,7 @@ func runAsk(ctx context.Context, args []string, stdout, stderr io.Writer) error 
 	fs := newFlagSet("ask", stderr)
 	question := fs.String("question", "", "the question to ask (default: read from standard input)")
 	fs.StringVar(question, "q", "", "shorthand for --question")
+	contextPath := fs.String("context", "", "file holding the context to answer against, \"-\" for standard input")
 	project := fs.String("project", "", "path of the repository the question is about (\".\" for the current one)")
 	configPath := fs.String("config", config.DefaultFileName, "configuration file")
 	format := fs.String("format", "", "output format: markdown or json (default: configuration)")
@@ -33,7 +34,7 @@ func runAsk(ctx context.Context, args []string, stdout, stderr io.Writer) error 
 		return err
 	}
 	if len(positional) > 1 {
-		return errors.New("usage: conclave ask [question] [--question TEXT] [--project PATH]")
+		return errors.New("usage: conclave ask [question] [--question TEXT] [--context FILE] [--project PATH]")
 	}
 
 	text := strings.TrimSpace(*question)
@@ -43,18 +44,25 @@ func runAsk(ctx context.Context, args []string, stdout, stderr io.Writer) error 
 		}
 		text = strings.TrimSpace(positional[0])
 	}
-	piped, err := readStdin()
-	if err != nil {
-		return fmt.Errorf("read standard input: %w", err)
+	if text == "" && *contextPath == "-" {
+		return errors.New("standard input cannot be both the question and the context")
 	}
-	// Standard input is the question when nothing else gave one, and the
-	// context it must be answered against otherwise. That is what lets a
-	// large input be piped in under a short question.
-	var questionContext string
+	questionContext, err := readContext(*contextPath)
+	if err != nil {
+		return err
+	}
+	// Standard input is the question only when nothing else gave one. It is
+	// never read behind the user's back otherwise: a process started with an
+	// inherited pipe nobody closes would block here forever, before printing
+	// anything, although the question was already in hand.
 	if text == "" {
+		piped, err := readStdin()
+		if err != nil {
+			return fmt.Errorf("read standard input: %w", err)
+		}
 		text = strings.TrimSpace(string(piped))
-	} else {
-		questionContext = strings.TrimSpace(string(piped))
+	} else if *contextPath == "" && stdinIsRedirected() {
+		fmt.Fprintln(stderr, "note: standard input is not read when the question is given; pass --context - to use it")
 	}
 	if text == "" {
 		return errors.New("no question: pass it as an argument, with --question, or on standard input")
@@ -97,18 +105,50 @@ func runAsk(ctx context.Context, args []string, stdout, stderr io.Writer) error 
 	})
 }
 
-// readStdin returns what was piped into the process, and nothing when
-// standard input is a terminal: an interactive `conclave ask "..."` must not
-// hang waiting for a context nobody is going to type.
+// readContext loads the material the question must be answered against, from
+// a file or, for "-", from standard input. It is read only when asked for,
+// which is what keeps a question given on the command line from blocking on
+// an inherited pipe.
+func readContext(path string) (string, error) {
+	switch path {
+	case "":
+		return "", nil
+	case "-":
+		data, err := readStdin()
+		if err != nil {
+			return "", fmt.Errorf("read standard input: %w", err)
+		}
+		return strings.TrimSpace(string(data)), nil
+	default:
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return "", fmt.Errorf("read context: %w", err)
+		}
+		return strings.TrimSpace(string(data)), nil
+	}
+}
+
+// readStdin returns what standard input holds, and nothing when it is a
+// terminal: `conclave ask` with no question anywhere must fail rather than
+// wait for a question nobody is going to type.
 func readStdin() ([]byte, error) {
 	if stdinReader != nil {
 		return io.ReadAll(stdinReader)
 	}
-	st, err := os.Stdin.Stat()
-	if err != nil || st.Mode()&os.ModeCharDevice != 0 {
+	if !stdinIsRedirected() {
 		return nil, nil
 	}
 	return io.ReadAll(os.Stdin)
+}
+
+// stdinIsRedirected reports whether standard input is something other than a
+// terminal. It only stats the descriptor, so it never blocks.
+func stdinIsRedirected() bool {
+	if stdinReader != nil {
+		return true
+	}
+	st, err := os.Stdin.Stat()
+	return err == nil && st.Mode()&os.ModeCharDevice == 0
 }
 
 // resolveConfigPath finds the configuration of an ask run. A question needs

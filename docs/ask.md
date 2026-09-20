@@ -5,7 +5,8 @@
 ```bash
 conclave ask "What does a Go context cancellation actually interrupt?"
 conclave ask --project . "Where is the retry policy of the HTTP client?"
-kubectl logs deploy/api | conclave ask -q "What is crashing here, and why?"
+kubectl logs deploy/api | conclave ask -q "What is crashing here, and why?" --context -
+conclave ask -q "Is this migration reversible?" --context migration.sql
 conclave ask --project ../other-repo --rev origin/main < question.txt
 ```
 
@@ -13,17 +14,28 @@ Only the answer goes to `stdout`. Logs go to `stderr`.
 
 ## Where the question comes from
 
-Three ways, and they combine.
+| Form | The question is |
+|---|---|
+| `conclave ask "why?"` | the argument |
+| `conclave ask --question "why?"` | the flag |
+| `conclave ask < file` | standard input, read only because nothing else gave a question |
 
-| Form | The question is | Standard input is |
-|---|---|---|
-| `conclave ask "why?"` | the argument | the context, when something is piped |
-| `conclave ask --question "why?"` | the flag | the context, when something is piped |
-| `conclave ask < file` | standard input | — |
+The flag and the argument are the same thing, and giving both is an error rather than a guess.
 
-The flag and the argument are the same thing, and giving both is an error rather than a guess. Standard input becomes the *context* as soon as a question is given another way: that is what lets a log, a diff or a whole document be piped in under a short question without pasting it into a shell argument. Nothing is read from standard input when it is a terminal, so an interactive `conclave ask "..."` never hangs waiting for input nobody is typing.
+Standard input is never read behind your back. A question given on the command line is answered without touching it, and a process started with an inherited pipe that nobody ever closes would otherwise block in the read, before printing anything, with the question already in hand. That is not a rare shape: it is what a supervisor, a CI wrapper or another agent hands its children. When something is piped in and no `--context` asked for it, a note on `stderr` says it was ignored, so the input does not disappear silently.
 
-`ask.limits.max_question_bytes` and `ask.limits.max_context_bytes` bound both, at 32 KiB and 512 KiB by default. What is over the limit is cut, with a marker in the text.
+## Where the context comes from
+
+`--context FILE` reads the material the question must be answered against, and `--context -` reads it from standard input. This is what lets a log, a diff or a whole document travel with a short question instead of being pasted into a shell argument.
+
+```bash
+kubectl logs deploy/api | conclave ask -q "What is crashing here, and why?" --context -
+conclave ask -q "Is this migration reversible?" --context migration.sql
+```
+
+`--context -` with no question anywhere is an error: standard input cannot be both.
+
+`ask.limits.max_question_bytes` and `ask.limits.max_context_bytes` bound the two, at 32 KiB and 512 KiB by default. What is over the limit is cut, with a marker in the text.
 
 An agent configured with `input: argument` passes the whole prompt on its command line, which the kernel caps at around 128 KiB on Linux. A large context needs `input: stdin` or `input: file` for that agent.
 
@@ -39,7 +51,7 @@ Because a question needs no repository, the configuration is looked up in three 
 
 ## Several answers, one answer
 
-Every configured reviewer answers by default, and the lead consolidates. Asking one agent is asking one agent; the point of the command is the second and third opinion. Restrict who answers with `ask.respondents`, the same way `plan.planners` does, and turn the lead off with `ask.use_lead: false`.
+Every configured reviewer answers by default, and the lead consolidates. Asking one agent is asking one agent; the point of the command is the second and third opinion. Restrict who answers with `ask.respondents`, the same way `plan.planners` does, and turn the lead off with `ask.use_lead: false`. An id listed twice is rejected at validation: the two runs would share a working directory and overwrite each other's artifacts.
 
 The lead is told not to average the answers. Where the evidence lets it decide, it decides and says why. Where it does not, the split is published under `disagreements`, with each position and the agents that held it, and the confidence drops. An answer that quietly papers over two agents contradicting each other is the one output this command cannot afford: it costs three times a single agent and reads exactly like it.
 

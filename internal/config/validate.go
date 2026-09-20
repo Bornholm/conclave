@@ -183,19 +183,23 @@ func Validate(cfg *Config) error {
 			}
 		}
 	}
-	for _, id := range cfg.Triage.Reviewers {
-		if !reviewerIDs[id] {
-			add("triage.reviewers: %q is not a configured reviewer", id)
-		}
-	}
-	for _, id := range cfg.Plan.Planners {
-		if !reviewerIDs[id] {
-			add("plan.planners: %q is not a configured reviewer", id)
-		}
-	}
-	for _, id := range cfg.Ask.Respondents {
-		if !reviewerIDs[id] {
-			add("ask.respondents: %q is not a configured reviewer", id)
+	for field, ids := range map[string][]string{
+		"triage.reviewers": cfg.Triage.Reviewers,
+		"plan.planners":    cfg.Plan.Planners,
+		"ask.respondents":  cfg.Ask.Respondents,
+	} {
+		listed := map[string]bool{}
+		for _, id := range ids {
+			switch {
+			case !reviewerIDs[id]:
+				add("%s: %q is not a configured reviewer", field, id)
+			case listed[id]:
+				// The same agent twice is never what was meant, and it is
+				// worse than useless: the two runs share a working directory
+				// and overwrite each other's artifacts.
+				add("%s: %q is listed twice", field, id)
+			}
+			listed[id] = true
 		}
 	}
 	if reviewers == 0 {

@@ -42,10 +42,10 @@ They also answer questions. `conclave ask` puts one question to every agent, has
 ```bash
 conclave ask "What does a Go context cancellation actually interrupt?"
 conclave ask --project . "Where is the retry policy of the HTTP client?"
-kubectl logs deploy/api | conclave ask -q "What is crashing here, and why?"
+kubectl logs deploy/api | conclave ask -q "What is crashing here, and why?" --context -
 ```
 
-The question comes from an argument, from `--question` or from standard input. When it comes from one of the first two, standard input becomes the context it must be answered against: that is how a log, a diff or a whole document travels with a short question.
+The question comes from an argument, from `--question` or, when neither is given, from standard input. `--context` adds the material it must be answered against, from a file or from standard input with `-`: that is how a log, a diff or a whole document travels with a short question.
 
 ## Read more
 

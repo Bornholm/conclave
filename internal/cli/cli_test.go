@@ -87,38 +87,91 @@ func TestTriageUsage(t *testing.T) {
 	}
 }
 
+// askConfig writes a configuration that loads, so a case can reach the
+// checks that run after the configuration is read.
+func askConfig(t *testing.T) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "c.yaml")
+	if err := os.WriteFile(path, []byte(`
+version: 1
+forge:
+  provider: github
+agents:
+  - id: rev
+    role: reviewer
+    command: [echo]
+  - id: lead
+    role: lead
+    command: [echo]
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
 func TestAskQuestionSources(t *testing.T) {
 	var out, errb bytes.Buffer
 	// A configuration that cannot be loaded stops the run right after the
-	// question is read, which is exactly what these cases check.
+	// question is read, which is what the question cases check.
 	missing := []string{"--config", "/nonexistent.yaml"}
-	t.Run("argument", func(t *testing.T) {
-		stdinReader = strings.NewReader("")
+	run := func(t *testing.T, stdin string, args ...string) (int, string) {
+		t.Helper()
+		stdinReader = strings.NewReader(stdin)
 		defer func() { stdinReader = nil }()
+		out.Reset()
 		errb.Reset()
-		if code := Main(append([]string{"ask", "why?"}, missing...), &out, &errb); code != 1 || !strings.Contains(errb.String(), "nonexistent.yaml") {
-			t.Errorf("got %d %s", code, errb.String())
+		return Main(args, &out, &errb), errb.String()
+	}
+	t.Run("argument", func(t *testing.T) {
+		if code, err := run(t, "", append([]string{"ask", "why?"}, missing...)...); code != 1 || !strings.Contains(err, "nonexistent.yaml") {
+			t.Errorf("got %d %s", code, err)
 		}
 	})
-	t.Run("stdin", func(t *testing.T) {
-		stdinReader = strings.NewReader("why is it slow?")
-		defer func() { stdinReader = nil }()
-		errb.Reset()
-		if code := Main(append([]string{"ask"}, missing...), &out, &errb); code != 1 || !strings.Contains(errb.String(), "nonexistent.yaml") {
-			t.Errorf("got %d %s", code, errb.String())
+	t.Run("stdin is the question", func(t *testing.T) {
+		if code, err := run(t, "why is it slow?", append([]string{"ask"}, missing...)...); code != 1 || !strings.Contains(err, "nonexistent.yaml") {
+			t.Errorf("got %d %s", code, err)
+		}
+	})
+	t.Run("stdin is not read behind the question", func(t *testing.T) {
+		// The note is what tells the user their pipe was ignored, and the
+		// run must not have waited for that pipe to close.
+		_, err := run(t, "a log nobody asked for", append([]string{"ask", "why?"}, missing...)...)
+		if !strings.Contains(err, "--context -") {
+			t.Errorf("the ignored input must be reported: %s", err)
+		}
+	})
+	t.Run("context from a file", func(t *testing.T) {
+		file := filepath.Join(t.TempDir(), "ctx.txt")
+		os.WriteFile(file, []byte("the log"), 0o644)
+		code, err := run(t, "", "ask", "why?", "--context", file, "--config", "/nonexistent.yaml")
+		if code != 1 || !strings.Contains(err, "nonexistent.yaml") {
+			t.Errorf("got %d %s", code, err)
+		}
+		if strings.Contains(err, "--context -") {
+			t.Error("the note must not fire when a context was given")
+		}
+	})
+	t.Run("missing context file", func(t *testing.T) {
+		if code, err := run(t, "", "ask", "why?", "--context", "/nonexistent.ctx", "--config", "/nonexistent.yaml"); code == 0 || !strings.Contains(err, "read context") {
+			t.Errorf("got %d %s", code, err)
+		}
+	})
+	t.Run("bad format", func(t *testing.T) {
+		// This one needs a configuration that loads: the format is checked
+		// after the configuration is read, so a missing file would hide it.
+		code, err := run(t, "", "ask", "why?", "--format", "yaml", "--config", askConfig(t))
+		if code == 0 || !strings.Contains(err, `invalid --format "yaml"`) {
+			t.Errorf("got %d %s", code, err)
 		}
 	})
 	for name, args := range map[string][]string{
-		"no question":    {"ask"},
-		"question twice": {"ask", "why?", "--question", "how?"},
-		"two arguments":  {"ask", "why?", "how?"},
-		"bad format":     {"ask", "why?", "--format", "yaml"},
+		"no question":      {"ask"},
+		"question twice":   {"ask", "why?", "--question", "how?"},
+		"two arguments":    {"ask", "why?", "how?"},
+		"stdin used twice": {"ask", "--context", "-"},
 	} {
 		t.Run(name, func(t *testing.T) {
-			stdinReader = strings.NewReader("")
-			defer func() { stdinReader = nil }()
-			errb.Reset()
-			if code := Main(append(args, missing...), &out, &errb); code == 0 {
+			if code, _ := run(t, "", append(args, missing...)...); code == 0 {
 				t.Errorf("%v should fail", args)
 			}
 		})

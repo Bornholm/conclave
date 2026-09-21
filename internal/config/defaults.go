@@ -24,6 +24,13 @@ const (
 	DefaultMaxReferences     = 30
 	DefaultMaxLabels         = 4
 
+	DefaultAskMaxParallel    = 3
+	DefaultMaxQuestionBytes  = 32 << 10
+	DefaultMaxContextBytes   = 512 << 10
+	DefaultMaxAnswerBytes    = 64 << 10
+	DefaultMaxAnswerKeyPoint = 10
+	DefaultMaxAnswerRefs     = 50
+
 	DefaultPlanMaxParallel = 3
 	DefaultMaxPlanSteps    = 30
 	DefaultMaxPlanComments = 50
@@ -112,6 +119,24 @@ func applyDefaults(cfg *Config) {
 	}
 	if cfg.Plan.Limits.MaxReferences == 0 {
 		cfg.Plan.Limits.MaxReferences = DefaultMaxReferences
+	}
+	if cfg.Ask.MaxParallel == 0 {
+		cfg.Ask.MaxParallel = DefaultAskMaxParallel
+	}
+	if cfg.Ask.Limits.MaxQuestionBytes == 0 {
+		cfg.Ask.Limits.MaxQuestionBytes = DefaultMaxQuestionBytes
+	}
+	if cfg.Ask.Limits.MaxContextBytes == 0 {
+		cfg.Ask.Limits.MaxContextBytes = DefaultMaxContextBytes
+	}
+	if cfg.Ask.Limits.MaxAnswerBytes == 0 {
+		cfg.Ask.Limits.MaxAnswerBytes = DefaultMaxAnswerBytes
+	}
+	if cfg.Ask.Limits.MaxKeyPoints == 0 {
+		cfg.Ask.Limits.MaxKeyPoints = DefaultMaxAnswerKeyPoint
+	}
+	if cfg.Ask.Limits.MaxReferences == 0 {
+		cfg.Ask.Limits.MaxReferences = DefaultMaxAnswerRefs
 	}
 	if cfg.Output.Format == "" {
 		cfg.Output.Format = FormatMarkdown

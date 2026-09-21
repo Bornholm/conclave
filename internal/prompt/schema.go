@@ -176,3 +176,46 @@ const LeadPlanSchema = `{
     "reported_by": {"type": "array", "items": {"type": "string"}}
   }
 }`
+
+// AskSchema is the JSON Schema of the answer one agent gives to a question.
+const AskSchema = `{
+  "type": "object",
+  "required": ["schema_version", "reviewer", "answer", "confidence"],
+  "properties": {
+    "schema_version": {"type": "string", "const": "1"},
+    "reviewer": {"type": "object", "required": ["id"], "properties": {"id": {"type": "string"}, "model": {"type": "string"}}},
+    "answer": {"type": "string"},
+    "key_points": {"type": "array", "items": {"type": "string"}},
+    "references": {"type": "array", "items": {
+      "type": "object", "required": ["source"],
+      "properties": {"source": {"type": "string"}, "line": {"type": "integer", "minimum": 1}, "note": {"type": "string"}}}},
+    "caveats": {"type": "array", "items": {"type": "string"}},
+    "open_questions": {"type": "array", "items": {"type": "string"}},
+    "confidence": {"type": "number", "minimum": 0, "maximum": 1}
+  }
+}`
+
+// LeadAskSchema is the JSON Schema of the consolidated answer.
+const LeadAskSchema = `{
+  "type": "object",
+  "required": ["schema_version", "answer", "confidence", "reported_by"],
+  "properties": {
+    "schema_version": {"type": "string", "const": "1"},
+    "answer": {"type": "string"},
+    "key_points": {"type": "array", "items": {"type": "string"}},
+    "disagreements": {"type": "array", "items": {
+      "type": "object", "required": ["topic", "positions"],
+      "properties": {
+        "topic": {"type": "string"},
+        "positions": {"type": "array", "items": {
+          "type": "object", "required": ["by", "position"],
+          "properties": {"by": {"type": "array", "items": {"type": "string"}}, "position": {"type": "string"}}}}}}},
+    "references": {"type": "array", "items": {
+      "type": "object", "required": ["source"],
+      "properties": {"source": {"type": "string"}, "line": {"type": "integer", "minimum": 1}, "note": {"type": "string"}}}},
+    "caveats": {"type": "array", "items": {"type": "string"}},
+    "open_questions": {"type": "array", "items": {"type": "string"}},
+    "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+    "reported_by": {"type": "array", "items": {"type": "string"}}
+  }
+}`

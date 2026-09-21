@@ -261,11 +261,16 @@ func (a *App) execute(ctx context.Context, r *run, req ReviewRequest) (*domain.C
 	return review, nil
 }
 
+// TruncationMarker is appended to text conclave had to cut.
+const TruncationMarker = "\n[truncated by conclave]"
+
+// truncateBytes cuts s to max bytes on a rune boundary. It matters most to
+// `ask`, whose input is arbitrary text up to half a megabyte.
 func truncateBytes(s string, max int) string {
 	if max <= 0 || len(s) <= max {
 		return s
 	}
-	return s[:max] + "\n[truncated by conclave]"
+	return agent.CutRunes(s, max) + TruncationMarker
 }
 
 func outcomeErrors(outcomes []consolidation.ReviewerOutcome) []error {

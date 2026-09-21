@@ -7,6 +7,7 @@ import (
 	"path"
 	"sort"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/bornholm/conclave/internal/domain"
 )
@@ -141,7 +142,33 @@ func truncate(s string, max int) string {
 	if max <= 0 || len(s) <= max {
 		return s
 	}
-	return s[:max] + "…"
+	return CutRunes(s, max) + "…"
+}
+
+// CutRunes cuts s to at most max bytes without leaving a partial rune at the
+// end. Cutting mid-rune leaves invalid UTF-8 in the prompts and in the
+// artifacts, where the JSON encoder silently turns it into U+FFFD.
+//
+// It backs off by at most three bytes, the longest a trailing partial rune
+// can be. That bound is the whole point: walking back until the prefix is
+// valid would delete everything between an earlier bad byte and the cut,
+// which is far worse than the broken rune it repairs. A byte that is invalid
+// for some other reason is left where it is, as it was before any cutting.
+func CutRunes(s string, max int) string {
+	if max <= 0 || len(s) <= max {
+		return s
+	}
+	cut := s[:max]
+	for i := 0; i < utf8.UTFMax && len(cut) > 0; i++ {
+		// A complete rune at the end, valid or not, stops the back-off.
+		// Only the byte-by-byte remains of one that the cut split are
+		// dropped, and RuneError with a width of one byte is exactly that.
+		if r, size := utf8.DecodeLastRuneInString(cut); r != utf8.RuneError || size > 1 {
+			break
+		}
+		cut = cut[:len(cut)-1]
+	}
+	return cut
 }
 
 // ChangedSet builds the lookup of files touched by the pull request.

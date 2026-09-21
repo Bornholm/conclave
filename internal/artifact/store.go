@@ -32,6 +32,11 @@ func NewPlanRunID(now time.Time, issue int64) string {
 	return newID(now, fmt.Sprintf("plan-%d", issue))
 }
 
+// NewAskRunID builds an identifier such as 20260911T210100Z-ask-a1b2c3d4.
+func NewAskRunID(now time.Time) string {
+	return newID(now, "ask")
+}
+
 func newID(now time.Time, kind string) string {
 	var b [4]byte
 	_, _ = rand.Read(b[:])

@@ -37,11 +37,22 @@ And they plan the work. `conclave plan` reads an issue and the code, has each ag
 conclave plan 42 > plan.md
 ```
 
+They also answer questions. `conclave ask` puts one question to every agent, has the lead turn the answers into one, and publishes the points they disagreed on instead of averaging them. It needs no forge and no ticket, and the question only touches a repository when `--project` says so.
+
+```bash
+conclave ask "What does a Go context cancellation actually interrupt?"
+conclave ask --project . "Where is the retry policy of the HTTP client?"
+kubectl logs deploy/api | conclave ask -q "What is crashing here, and why?" --context -
+```
+
+The question comes from an argument, from `--question` or, when neither is given, from standard input. `--context` adds the material it must be answered against, from a file or from standard input with `-`: that is how a log, a diff or a whole document travels with a short question.
+
 ## Read more
 
 - [How a run works](docs/how-it-works.md), from the fetch to the artifacts, and what the prompts impose on the agents.
 - [Triage](docs/triage.md), what a status means and what it takes to earn it.
 - [Plan](docs/plan.md), why several agents plan and only one plan comes out.
+- [Ask](docs/ask.md), how a question is passed, and what happens when the agents disagree.
 - [Configuration](docs/configuration.md), the settings people get wrong and the contract an agent must honor.
 - [`.conclave.example.yaml`](.conclave.example.yaml), the full reference with the three agents.
 

@@ -2,11 +2,15 @@ package cli
 
 import (
 	"bytes"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/bornholm/conclave/internal/domain"
+	"github.com/bornholm/conclave/internal/testutil"
 )
 
 func TestMainCommands(t *testing.T) {
@@ -84,5 +88,239 @@ func TestTriageUsage(t *testing.T) {
 		if code := Main(args, &out, &errb); code == 0 {
 			t.Errorf("%v should fail", args)
 		}
+	}
+}
+
+// askConfig writes a configuration that loads, so a case can reach the
+// checks that run after the configuration is read.
+func askConfig(t *testing.T) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "c.yaml")
+	if err := os.WriteFile(path, []byte(`
+version: 1
+forge:
+  provider: github
+agents:
+  - id: rev
+    role: reviewer
+    command: [echo]
+  - id: lead
+    role: lead
+    command: [echo]
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+func TestAskQuestionSources(t *testing.T) {
+	var out, errb bytes.Buffer
+	// A configuration that cannot be loaded stops the run right after the
+	// question is read, which is what the question cases check.
+	missing := []string{"--config", "/nonexistent.yaml"}
+	run := func(t *testing.T, stdin string, args ...string) (int, string) {
+		t.Helper()
+		stdinReader = strings.NewReader(stdin)
+		defer func() { stdinReader = nil }()
+		out.Reset()
+		errb.Reset()
+		return Main(args, &out, &errb), errb.String()
+	}
+	t.Run("argument", func(t *testing.T) {
+		if code, err := run(t, "", append([]string{"ask", "why?"}, missing...)...); code != 1 || !strings.Contains(err, "nonexistent.yaml") {
+			t.Errorf("got %d %s", code, err)
+		}
+	})
+	t.Run("stdin is the question", func(t *testing.T) {
+		if code, err := run(t, "why is it slow?", append([]string{"ask"}, missing...)...); code != 1 || !strings.Contains(err, "nonexistent.yaml") {
+			t.Errorf("got %d %s", code, err)
+		}
+	})
+	t.Run("stdin is not read behind the question", func(t *testing.T) {
+		// The note is what tells the user their pipe was ignored. It is
+		// printed once the configuration is read, so the run needs one that
+		// loads; --project stops it before any agent runs.
+		_, err := run(t, "a log nobody asked for", "ask", "why?", "--config", askConfig(t), "--project", "/nonexistent")
+		if !strings.Contains(err, "--context -") {
+			t.Errorf("the ignored input must be reported: %s", err)
+		}
+	})
+	t.Run("a context file does not claim standard input", func(t *testing.T) {
+		// --context FILE names a file, not the pipe: what was piped in is
+		// still dropped, so the note still has to fire.
+		file := filepath.Join(t.TempDir(), "ctx.txt")
+		os.WriteFile(file, []byte("the log"), 0o644)
+		_, err := run(t, "a log nobody asked for", "ask", "why?", "--context", file, "--config", askConfig(t), "--project", "/nonexistent")
+		if !strings.Contains(err, "--context -") {
+			t.Errorf("the dropped input must be reported: %s", err)
+		}
+	})
+	t.Run("--context - silences the note", func(t *testing.T) {
+		_, err := run(t, "the log", "ask", "why?", "--context", "-", "--config", askConfig(t), "--project", "/nonexistent")
+		if strings.Contains(err, "--context -") {
+			t.Errorf("standard input was claimed, no note is due: %s", err)
+		}
+	})
+	t.Run("question given twice through the alias", func(t *testing.T) {
+		if code, err := run(t, "", "ask", "-q", "a", "--question", "b", "--config", "/nonexistent.yaml"); code == 0 || !strings.Contains(err, "same flag") {
+			t.Errorf("got %d %s", code, err)
+		}
+	})
+	t.Run("missing context file", func(t *testing.T) {
+		if code, err := run(t, "", "ask", "why?", "--context", "/nonexistent.ctx", "--config", askConfig(t)); code == 0 || !strings.Contains(err, "read context") {
+			t.Errorf("got %d %s", code, err)
+		}
+	})
+	t.Run("rev without project is reported", func(t *testing.T) {
+		_, err := run(t, "", "ask", "why?", "--rev", "abc", "--config", "/nonexistent.yaml")
+		if !strings.Contains(err, "--rev does nothing") {
+			t.Errorf("the ignored flag must be reported: %s", err)
+		}
+	})
+	t.Run("keep-worktrees without project is honoured", func(t *testing.T) {
+		// It keeps the scratch directories, which is what it promises, so
+		// nothing must claim it was ignored.
+		_, err := run(t, "", "ask", "why?", "--keep-worktrees", "--config", "/nonexistent.yaml")
+		if strings.Contains(err, "does nothing") {
+			t.Errorf("--keep-worktrees is honoured without a project: %s", err)
+		}
+	})
+	t.Run("bad format", func(t *testing.T) {
+		// This one needs a configuration that loads: the format is checked
+		// after the configuration is read, so a missing file would hide it.
+		code, err := run(t, "", "ask", "why?", "--format", "yaml", "--config", askConfig(t))
+		if code == 0 || !strings.Contains(err, `invalid --format "yaml"`) {
+			t.Errorf("got %d %s", code, err)
+		}
+	})
+	for name, args := range map[string][]string{
+		"no question":      {"ask"},
+		"question twice":   {"ask", "why?", "--question", "how?"},
+		"two arguments":    {"ask", "why?", "how?"},
+		"stdin used twice": {"ask", "--context", "-"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if code, _ := run(t, "", append(args, missing...)...); code == 0 {
+				t.Errorf("%v should fail", args)
+			}
+		})
+	}
+}
+
+// askAgentConfig writes a configuration whose single reviewer and lead are
+// the fake agent, so a run reaches the agents and comes back with an answer.
+func askAgentConfig(t *testing.T) string {
+	t.Helper()
+	agent := testutil.TestAgent(t)
+	path := filepath.Join(t.TempDir(), "c.yaml")
+	body := `
+version: 1
+forge:
+  provider: github
+ask:
+  use_lead: false
+agents:
+  - id: r1
+    role: reviewer
+    command: [` + agent + `]
+    environment: {CONCLAVE_TESTAGENT_MODE: ask, CONCLAVE_TESTAGENT_ID: r1}
+  - id: lead
+    role: lead
+    command: [` + agent + `]
+    environment: {CONCLAVE_TESTAGENT_MODE: ask-lead, CONCLAVE_TESTAGENT_ID: lead}
+`
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+// The question read from standard input has machinery of its own: the
+// terminal guard, the configured bound and the trim. This crosses all of it
+// in one run and reads the question back out of the answer.
+func TestAskQuestionFromStdinEndToEnd(t *testing.T) {
+	var out, errb bytes.Buffer
+	stdinReader = strings.NewReader("  why is it slow?  ")
+	defer func() { stdinReader = nil }()
+	code := Main([]string{"ask", "--config", askAgentConfig(t), "--format", "json"}, &out, &errb)
+	if code != 0 {
+		t.Fatalf("exit %d: %s", code, errb.String())
+	}
+	var answer domain.ConsolidatedAnswer
+	if err := json.Unmarshal(out.Bytes(), &answer); err != nil {
+		t.Fatalf("decode: %v\n%s", err, out.String())
+	}
+	if answer.Question != "why is it slow?" {
+		t.Errorf("the piped question must be the one answered: %q", answer.Question)
+	}
+	if answer.Answer == "" || len(answer.ReportedBy) != 1 {
+		t.Errorf("answer: %+v", answer)
+	}
+}
+
+func TestTrimReadMarksACutThatEndsInWhitespace(t *testing.T) {
+	// The bound is 10, the read brings back 11 bytes, and trimming the
+	// trailing newline would otherwise bring it back to 10 and hide the cut.
+	if got := trimRead([]byte("0123456789\n"), 10); !strings.HasSuffix(got, "[truncated by conclave]") {
+		t.Errorf("a cut must be announced: %q", got)
+	}
+	// An input that fits is left alone.
+	if got := trimRead([]byte(" abc "), 10); got != "abc" {
+		t.Errorf("untouched: %q", got)
+	}
+}
+
+func TestReadContext(t *testing.T) {
+	file := filepath.Join(t.TempDir(), "ctx.txt")
+	if err := os.WriteFile(file, []byte("  the log  "), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := readContext("", 0); got != "" || err != nil {
+		t.Errorf("no context: %q %v", got, err)
+	}
+	if got, err := readContext(file, 0); got != "the log" || err != nil {
+		t.Errorf("from a file: %q %v", got, err)
+	}
+	// "-" is read whatever standard input is, a terminal included: the
+	// terminal guard belongs to the implicit path only.
+	stdinReader = strings.NewReader("typed by hand")
+	defer func() { stdinReader = nil }()
+	if got, err := readContext("-", 0); got != "typed by hand" || err != nil {
+		t.Errorf("from standard input: %q %v", got, err)
+	}
+	// The limit bounds what is held in memory, plus the one byte that lets
+	// the app see the input was cut.
+	stdinReader = strings.NewReader(strings.Repeat("x", 100))
+	if got, err := readContext("-", 10); len(got) != 11 || err != nil {
+		t.Errorf("bounded read: %d bytes %v", len(got), err)
+	}
+}
+
+func TestResolveConfigPath(t *testing.T) {
+	dir := t.TempDir()
+	// Isolate the lookup from whatever the machine running the tests has.
+	t.Chdir(dir)
+	t.Setenv("HOME", dir)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(dir, "config"))
+	project := filepath.Join(dir, "repo")
+	if err := os.MkdirAll(project, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := resolveConfigPath(".conclave.yaml", project, false); err == nil {
+		t.Error("a missing configuration must be reported, not silently defaulted")
+	}
+	inProject := filepath.Join(project, ".conclave.yaml")
+	os.WriteFile(inProject, []byte("version: 1\n"), 0o644)
+	got, err := resolveConfigPath(".conclave.yaml", project, false)
+	if err != nil || got != inProject {
+		t.Errorf("got %q %v, want the project file", got, err)
+	}
+	if got, _ := resolveConfigPath("/explicit.yaml", project, true); got != "/explicit.yaml" {
+		t.Errorf("an explicit path must win: %q", got)
+	}
+	// A path spelled like the default, but typed, is taken as typed: the
+	// fallback chain would otherwise hand back a file nobody named.
+	if got, _ := resolveConfigPath(".conclave.yaml", project, true); got != ".conclave.yaml" {
+		t.Errorf("an explicitly named default must not fall back: %q", got)
 	}
 }

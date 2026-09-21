@@ -105,6 +105,14 @@ func Validate(cfg *Config) error {
 		add("plan.limits: all limits must be positive")
 	}
 
+	if cfg.Ask.MaxParallel < 1 {
+		add("ask.max_parallel: must be >= 1")
+	}
+	if cfg.Ask.Limits.MaxQuestionBytes <= 0 || cfg.Ask.Limits.MaxContextBytes <= 0 || cfg.Ask.Limits.MaxAnswerBytes <= 0 ||
+		cfg.Ask.Limits.MaxKeyPoints <= 0 || cfg.Ask.Limits.MaxReferences <= 0 {
+		add("ask.limits: all limits must be positive")
+	}
+
 	switch cfg.Output.Format {
 	case FormatMarkdown, FormatJSON:
 	default:
@@ -175,14 +183,29 @@ func Validate(cfg *Config) error {
 			}
 		}
 	}
-	for _, id := range cfg.Triage.Reviewers {
-		if !reviewerIDs[id] {
-			add("triage.reviewers: %q is not a configured reviewer", id)
-		}
-	}
-	for _, id := range cfg.Plan.Planners {
-		if !reviewerIDs[id] {
-			add("plan.planners: %q is not a configured reviewer", id)
+	// A slice, not a map: the messages are joined in the order they are
+	// added, and a map would reorder a multi-field failure on every run.
+	for _, list := range []struct {
+		field string
+		ids   []string
+	}{
+		{"triage.reviewers", cfg.Triage.Reviewers},
+		{"plan.planners", cfg.Plan.Planners},
+		{"ask.respondents", cfg.Ask.Respondents},
+	} {
+		field, ids := list.field, list.ids
+		listed := map[string]bool{}
+		for _, id := range ids {
+			switch {
+			case !reviewerIDs[id]:
+				add("%s: %q is not a configured reviewer", field, id)
+			case listed[id]:
+				// The same agent twice is never what was meant, and it is
+				// worse than useless: the two runs share a working directory
+				// and overwrite each other's artifacts.
+				add("%s: %q is listed twice", field, id)
+			}
+			listed[id] = true
 		}
 	}
 	if reviewers == 0 {

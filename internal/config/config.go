@@ -156,6 +156,15 @@ type ReviewConfig struct {
 	FailFast      bool          `yaml:"fail_fast"`
 	Include       IncludeConfig `yaml:"include"`
 	Limits        LimitsConfig  `yaml:"limits"`
+	// DiffExclude lists Git pathspec patterns left out of the diff given in
+	// the prompt, typically generated files: "*_templ.go", "*.min.css". The
+	// agents still have the whole worktree, and the changed-files list still
+	// names them. A "*" matches across directories, as in any Git pathspec.
+	DiffExclude []string `yaml:"diff_exclude"`
+	// ReportRetries is how many times a reviewer that exited normally but
+	// returned no usable report is run again, with its own last words and
+	// the output contract. Nil means DefaultReportRetries; 0 disables it.
+	ReportRetries *int `yaml:"report_retries"`
 }
 
 // IncludeConfig selects which context is given to agents.
@@ -335,6 +344,15 @@ func (c *Config) IncludeChangedFiles() bool { return boolValue(c.Review.Include.
 
 // IncludeDiff reports whether the diff is given to agents.
 func (c *Config) IncludeDiff() bool { return boolValue(c.Review.Include.Diff, true) }
+
+// ReviewReportRetries returns how many times a reviewer without a usable
+// report is run again.
+func (c *Config) ReviewReportRetries() int {
+	if c.Review.ReportRetries == nil {
+		return DefaultReportRetries
+	}
+	return *c.Review.ReportRetries
+}
 
 // ShowAttribution reports whether reviewer attribution is rendered.
 func (c *Config) ShowAttribution() bool { return boolValue(c.Output.ShowAttribution, true) }

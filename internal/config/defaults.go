@@ -17,6 +17,7 @@ const (
 	DefaultMaxIssues       = 10
 	DefaultMaxComments     = 200
 	DefaultMaxCommentBytes = 8 << 10
+	DefaultReportRetries   = 1
 
 	DefaultTriageMaxParallel = 3
 	DefaultMaxTriageIssues   = 50

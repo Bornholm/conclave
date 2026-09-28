@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"unicode/utf8"
 
 	"github.com/bornholm/conclave/internal/config"
 )
@@ -21,13 +22,21 @@ type Adapted struct {
 	Trace []byte
 	// ToolCalls counts the tool executions seen in the trace.
 	ToolCalls int
+	// Transcript is the end of what the agent wrote, reasoning included,
+	// bounded by MaxTranscriptBytes. A retry hands it back to the agent when
+	// no usable report came out of the run.
+	Transcript []byte
 }
+
+// MaxTranscriptBytes bounds the transcript kept for a retry: the end of a
+// run is where an agent concludes, and the retry prompt must stay small.
+const MaxTranscriptBytes = 64 << 10
 
 // Adapt processes raw stdout according to the agent's output format.
 func Adapt(format string, stdout []byte) (*Adapted, error) {
 	switch format {
 	case "", config.OutputAuto:
-		return &Adapted{Report: stdout, Model: detectClaudeModel(stdout)}, nil
+		return &Adapted{Report: stdout, Model: detectClaudeModel(stdout), Transcript: tail(stdout, MaxTranscriptBytes)}, nil
 	case config.OutputPiJSON:
 		return adaptPiJSON(stdout)
 	default:
@@ -80,17 +89,21 @@ type piEvent struct {
 		Model    string `json:"model"`
 		Provider string `json:"provider"`
 		Content  []struct {
-			Type string `json:"type"`
-			Text string `json:"text"`
-			Name string `json:"name"`
+			Type     string `json:"type"`
+			Text     string `json:"text"`
+			Thinking string `json:"thinking"`
+			Name     string `json:"name"`
 		} `json:"content"`
 	} `json:"message"`
 }
 
 // adaptPiJSON extracts the last assistant text from a Pi event stream and
-// builds a trace of tool executions and assistant turns.
+// builds a trace of tool executions and assistant turns. When no assistant
+// text is found, the returned Adapted still carries the transcript, so the
+// caller can retry the agent with what it wrote.
 func adaptPiJSON(stdout []byte) (*Adapted, error) {
 	ad := &Adapted{}
+	var transcript bytes.Buffer
 	var trace bytes.Buffer
 	enc := json.NewEncoder(&trace)
 	var lastText string
@@ -126,6 +139,12 @@ func adaptPiJSON(stdout []byte) (*Adapted, error) {
 				if c.Type == "text" && c.Text != "" {
 					text += c.Text
 				}
+				switch {
+				case c.Type == "thinking" && c.Thinking != "":
+					transcript.WriteString("[reasoning]\n" + c.Thinking + "\n\n")
+				case c.Type == "text" && c.Text != "":
+					transcript.WriteString(c.Text + "\n\n")
+				}
 			}
 			if text != "" {
 				lastText = text
@@ -137,10 +156,25 @@ func adaptPiJSON(stdout []byte) (*Adapted, error) {
 			_ = enc.Encode(entry)
 		}
 	}
+	ad.Trace = trace.Bytes()
+	ad.Transcript = tail(transcript.Bytes(), MaxTranscriptBytes)
 	if lastText == "" {
-		return nil, errors.New("pi-json: no assistant text message in output")
+		return ad, errors.New("pi-json: no assistant text message in output")
 	}
 	ad.Report = []byte(lastText)
-	ad.Trace = trace.Bytes()
 	return ad, nil
+}
+
+// tail keeps the last limit bytes of b, starting on a rune boundary.
+func tail(b []byte, limit int) []byte {
+	if len(b) <= limit {
+		return b
+	}
+	cut := b[len(b)-limit:]
+	for i := 0; i < len(cut) && i < 4; i++ {
+		if utf8.RuneStart(cut[i]) {
+			return cut[i:]
+		}
+	}
+	return cut
 }

@@ -98,6 +98,14 @@ func TestRepositoryOperations(t *testing.T) {
 	if _, truncated, _ := g.Diff(ctx, mb, head, 20); !truncated {
 		t.Error("expected truncation")
 	}
+	// Excluded paths leave the diff, the others stay.
+	excluded, _, err := g.Diff(ctx, mb, head, 0, "changed.*", "*deleted*")
+	if err != nil {
+		t.Fatalf("diff with exclusions: %v", err)
+	}
+	if strings.Contains(string(excluded), "+B") || strings.Contains(string(excluded), "deleted file") || !strings.Contains(string(excluded), "new.txt") {
+		t.Errorf("exclusions not applied:\n%s", excluded)
+	}
 	names, _ := g.DiffNames(ctx, mb, head)
 	if len(names) != 3 {
 		t.Errorf("names: %v", names)

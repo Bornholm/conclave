@@ -200,8 +200,17 @@ func (g *Git) MergeBase(ctx context.Context, baseSHA, headSHA string) (string, e
 
 // Diff returns the unified diff between two commits, truncated to limit bytes
 // (with a marker) when limit > 0.
-func (g *Git) Diff(ctx context.Context, baseSHA, headSHA string, limit int64) ([]byte, bool, error) {
-	out, err := g.run(ctx, "diff", "--find-renames", "--no-color", "--no-ext-diff", baseSHA, headSHA)
+func (g *Git) Diff(ctx context.Context, baseSHA, headSHA string, limit int64, exclude ...string) ([]byte, bool, error) {
+	args := []string{"diff", "--find-renames", "--no-color", "--no-ext-diff", baseSHA, headSHA}
+	if len(exclude) > 0 {
+		// Excluded paths are pathspecs, so a "*" matches across directories:
+		// "*_templ.go" drops every generated templ file of the tree.
+		args = append(args, "--", ".")
+		for _, pattern := range exclude {
+			args = append(args, ":(exclude)"+pattern)
+		}
+	}
+	out, err := g.run(ctx, args...)
 	if err != nil {
 		return nil, false, err
 	}

@@ -43,6 +43,8 @@ type AgentExecution struct {
 	ExitCode  int           `json:"exit_code"`
 	Duration  time.Duration `json:"duration"`
 	Succeeded bool          `json:"succeeded"`
-	Error     string        `json:"error,omitempty"`
-	Warnings  []string      `json:"warnings,omitempty"`
+	// ReportRetries counts the runs asking again for a missing report.
+	ReportRetries int      `json:"report_retries,omitempty"`
+	Error         string   `json:"error,omitempty"`
+	Warnings      []string `json:"warnings,omitempty"`
 }

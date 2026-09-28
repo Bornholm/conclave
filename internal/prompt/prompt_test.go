@@ -23,12 +23,12 @@ func TestReviewerPrompt(t *testing.T) {
 		Issues:       []domain.Issue{{Number: 1, Title: "I", Description: "body"}},
 		Discussion:   []domain.Comment{{Kind: "review", Author: "maint", CreatedAt: "t1", State: "changes_requested", Body: "No passthrough policy."}, {Kind: "inline", Author: "maint", CreatedAt: "t2", Path: "x.go", Line: 4, Body: "nil check"}}}
 	out, err := Reviewer(ReviewerInput{AgentID: "rev", Worktree: "/tmp/wt/rev", Specialties: []string{"security"}, PR: pr,
-		MergeBaseSHA: "mb", HeadSHA: "hd", IncludeFiles: true, Diff: "+x", DiffTruncated: true, MaxFindings: 5})
+		MergeBaseSHA: "mb", HeadSHA: "hd", IncludeFiles: true, Diff: "+x", DiffTruncated: true, DiffExcluded: []string{"*_templ.go"}, MaxFindings: 5})
 	if err != nil {
 		t.Fatal(err)
 	}
 	s := string(out)
-	for _, want := range []string{`named "rev"`, "WORKING DIRECTORY\n/tmp/wt/rev", "PRIORITY AREAS", "- security", "not a\nboundary", "UNTRUSTED PULL REQUEST DESCRIPTION", "modified x.go", "ISSUE #1", "TRUNCATED", "CONTEXT RULES", "DISCUSSION (2 entries", "review by maint at t1 [changes_requested]", "inline by maint at t2 on x.go:4", "No passthrough policy.", "+x", `"schema_version"`, "at most 5"} {
+	for _, want := range []string{`named "rev"`, "WORKING DIRECTORY\n/tmp/wt/rev", "PRIORITY AREAS", "- security", "not a\nboundary", "UNTRUSTED PULL REQUEST DESCRIPTION", "modified x.go", "ISSUE #1", "TRUNCATED", "CONTEXT RULES", "DISCUSSION (2 entries", "review by maint at t1 [changes_requested]", "inline by maint at t2 on x.go:4", "No passthrough policy.", "+x", "left out of the diff", "- *_templ.go", `"schema_version"`, "at most 5"} {
 		if !strings.Contains(s, want) {
 			t.Errorf("prompt lacks %q", want)
 		}
@@ -56,6 +56,20 @@ func TestLeadPrompt(t *testing.T) {
 	for _, want := range []string{"lead reviewer", "WORKING DIRECTORY\n/tmp/wt/lead", "- r1", "- r2: timeout", `"id": "r1"`, "PRE-COMPUTED GROUPS", "CONSERVATIVE POLICY", "VERDICT RULES", "out_of_scope", "CONTEXT RULES", "ISSUE #16", "comment by a", "decided"} {
 		if !strings.Contains(s, want) {
 			t.Errorf("prompt lacks %q", want)
+		}
+	}
+}
+
+func TestReviewerRetryPrompt(t *testing.T) {
+	out, err := ReviewerRetry(ReviewerRetryInput{AgentID: "rev", Worktree: "/tmp/wt/rev", PR: &domain.PullRequest{Number: 7, Title: "T"},
+		MergeBaseSHA: "mb", HeadSHA: "hd", Problem: "It ended on prose.", Transcript: "[reasoning]\nthree findings", MaxFindings: 5})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(out)
+	for _, want := range []string{`named "rev"`, "It ended on prose.", "three findings", "OUTPUT CONTRACT", `"schema_version"`, `"reviewer.id" must be "rev"`, "at most 5"} {
+		if !strings.Contains(s, want) {
+			t.Errorf("retry prompt lacks %q", want)
 		}
 	}
 }

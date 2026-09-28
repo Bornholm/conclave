@@ -26,7 +26,15 @@ Agents inherit your environment by default, so their credentials keep working. `
 
 ## Limits
 
-`review.limits` bounds what a run may cost. `max_diff_bytes` truncates the diff in the prompt, the agents still have the whole worktree. `max_files` refuses a pull request with more changed files than that. `max_findings` caps each report. `max_issues`, `max_comments` and `max_comment_bytes` bound the discussion and the referenced issues. When there are too many comments, the most recent ones are kept.
+`review.limits` bounds what a run may cost. `max_diff_bytes` truncates the diff in the prompt, the agents still have the whole worktree. It cuts wherever the limit falls, so generated files and real code go alike: to keep a large diff within a model's context, exclude the generated files instead. `max_files` refuses a pull request with more changed files than that. `max_findings` caps each report. `max_issues`, `max_comments` and `max_comment_bytes` bound the discussion and the referenced issues. When there are too many comments, the most recent ones are kept.
+
+## Diff exclusions
+
+`review.diff_exclude` lists Git pathspec patterns left out of the diff given in the prompt: generated templates, compiled CSS, lock files. A `*` matches across directories, so `*_templ.go` covers the whole tree. The excluded files stay in the changed-files list and in the worktree, and the prompt names the patterns, so a reviewer can still read them. The whole diff is inlined in every reviewer prompt: on a pull request with many generated files, it is what pushes a model past its context window, and a model at its limit compacts its history and tends to lose the output contract along the way.
+
+## Missing reports
+
+A reviewer that exits normally but leaves no usable report, because it stopped on "now let me write the JSON", answered in prose, or produced a report that fails validation, is run once more with a short prompt: the output contract and the end of what it wrote, reasoning included (the last 64 KiB). It keeps its tools to check a line number but is told not to start over. `review.report_retries` sets how many times, 1 by default, 0 disables it. A reviewer that timed out or crashed is not retried. The retry prompt and output are kept as `prompts/reviewer-<id>.retry<n>.txt` and `raw/<id>.retry<n>.stdout`, and the manifest records `report_retries`.
 
 ## Triage
 

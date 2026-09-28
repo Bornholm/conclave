@@ -326,3 +326,67 @@ func TestReviewRemoteMismatch(t *testing.T) {
 		t.Fatalf("got %v", err)
 	}
 }
+
+// TestReviewAsksAgainForAMissingReport: a reviewer that ends on prose is run
+// once more with its own words and the output contract, and its report is
+// kept; with retries disabled it fails as before.
+func TestReviewAsksAgainForAMissingReport(t *testing.T) {
+	a, _ := newApp(t,
+		agentCfg(t, "r1", config.RoleReviewer, "prose-then-report"),
+		agentCfg(t, "lead", config.RoleLead, "valid"))
+	res, err := a.Review(context.Background(), ReviewRequest{Number: 7})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Review.Meta.ReviewersSucceeded != 1 {
+		t.Fatalf("the retried reviewer must count as succeeded: %+v", res.Review.Meta)
+	}
+	var r1 domain.AgentExecution
+	for _, ex := range res.Manifest.Agents {
+		if ex.ID == "r1" {
+			r1 = ex
+		}
+	}
+	if !r1.Succeeded || r1.ReportRetries != 1 {
+		t.Errorf("manifest: %+v", r1)
+	}
+	retry, err := os.ReadFile(filepath.Join(res.RunDir, "prompts", "reviewer-r1.retry1.txt"))
+	if err != nil || !strings.Contains(string(retry), "B should stay lowercase") || !strings.Contains(string(retry), "OUTPUT CONTRACT") {
+		t.Errorf("retry prompt must hand back the first run and the contract: %v\n%s", err, retry)
+	}
+	for _, p := range []string{"raw/r1.stdout", "raw/r1.retry1.stdout", "reports/r1.json"} {
+		if _, err := os.Stat(filepath.Join(res.RunDir, p)); err != nil {
+			t.Errorf("artifact %s: %v", p, err)
+		}
+	}
+
+	none := 0
+	a, _ = newApp(t,
+		agentCfg(t, "r1", config.RoleReviewer, "prose-then-report"),
+		agentCfg(t, "lead", config.RoleLead, "valid"))
+	a.Config.Review.ReportRetries = &none
+	if _, err := a.Review(context.Background(), ReviewRequest{Number: 7}); err == nil || !strings.Contains(err.Error(), "no JSON object found") {
+		t.Fatalf("without retries the reviewer must fail as before: %v", err)
+	}
+}
+
+// TestReviewExcludesPathsFromTheDiff: excluded paths leave the diff given to
+// the reviewers, and the prompt says so.
+func TestReviewExcludesPathsFromTheDiff(t *testing.T) {
+	a, _ := newApp(t,
+		agentCfg(t, "r1", config.RoleReviewer, "valid"),
+		agentCfg(t, "lead", config.RoleLead, "valid"))
+	a.Config.Review.DiffExclude = []string{"changed.*"}
+	res, err := a.Review(context.Background(), ReviewRequest{Number: 7})
+	if err != nil {
+		t.Fatal(err)
+	}
+	diff, _ := os.ReadFile(filepath.Join(res.RunDir, "context", "diff.patch"))
+	if strings.Contains(string(diff), "+B") {
+		t.Errorf("excluded path left in the diff:\n%s", diff)
+	}
+	p, _ := os.ReadFile(filepath.Join(res.RunDir, "prompts", "reviewer-r1.txt"))
+	if !strings.Contains(string(p), "left out of the diff") || !strings.Contains(string(p), "- changed.*") || !strings.Contains(string(p), "modified changed.txt") {
+		t.Errorf("prompt must name the excluded patterns and keep the changed file listed")
+	}
+}

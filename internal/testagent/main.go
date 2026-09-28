@@ -38,6 +38,14 @@ func main() {
 		fmt.Printf(`{"type":"result","subtype":"success","is_error":false,"result":"Here is the review:\n\n`+"```json\\n"+`%s\n`+"```"+`"}`, inner)
 	case "invalid-json":
 		fmt.Print("{this is not json")
+	case "prose-then-report":
+		// Ends its first run on prose, like a model that forgot the output
+		// contract, and returns the report when asked for it alone.
+		if strings.Contains(prompt, "ended without the JSON report") {
+			fmt.Print(validReport(id))
+		} else {
+			fmt.Print("I reviewed the change: B should stay lowercase. Now let me write the JSON.")
+		}
 	case "empty":
 	case "stderr":
 		fmt.Fprintln(os.Stderr, "agent log line")

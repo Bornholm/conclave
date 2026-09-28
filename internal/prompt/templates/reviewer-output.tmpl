@@ -1,0 +1,22 @@
+{{define "reviewer-output"}}OUTPUT CONTRACT
+Return exactly one JSON object and nothing else on standard output. Do not
+wrap it in Markdown, do not add commentary before or after it. The object
+must match this schema:
+
+{{.Schema}}
+
+Rules:
+- Escape every backslash inside a JSON string as "\\": a namespace like
+  OA\Property or a regexp like \d otherwise makes the report unparsable.
+- "schema_version" must be "{{.SchemaVersion}}".
+- "reviewer.id" must be "{{.AgentID}}".
+- "file" is a path relative to the repository root, using forward slashes.
+  Findings in files the pull request does not change are accepted and will be
+  reported separately as out of scope; prefer findings in the changed files.
+- "start_line" and "end_line" refer to the file at HEAD_SHA; start_line >= 1.
+- "severity" is one of: {{join .Severities ", "}}.
+- "category" is one of: {{join .Categories ", "}}.
+- "confidence" is a number between 0 and 1.
+- "verdict" is one of: approve, comment, request_changes.
+- Report at most {{.MaxFindings}} findings, most important first.
+- An empty "findings" array with verdict "approve" is a valid answer.{{end}}

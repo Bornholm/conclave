@@ -36,6 +36,12 @@ review:
     max_issues: 10            # referenced issues loaded, in order of appearance
     max_comments: 200         # discussion entries kept (the most recent ones)
     max_comment_bytes: 8192   # per comment or issue body
+  # Git pathspec patterns left out of the diff in the prompt, typically
+  # generated files. "*" spans directories. Agents still have the worktree.
+  diff_exclude: []            # e.g. ["*_templ.go", "*.min.css", "package-lock.json"]
+  # How many times a reviewer that exited normally without a usable report is
+  # asked again for the report alone, with the end of what it wrote. 0 disables.
+  report_retries: 1
 
 # `conclave triage` reuses the agents above with another prompt: it labels an
 # issue and says whether it still describes something true about the code.

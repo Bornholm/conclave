@@ -69,6 +69,14 @@ func Validate(cfg *Config) error {
 			add("%s: must be positive", name)
 		}
 	}
+	if cfg.Review.ReportRetries != nil && *cfg.Review.ReportRetries < 0 {
+		add("review.report_retries: must be >= 0")
+	}
+	for i, pattern := range cfg.Review.DiffExclude {
+		if strings.TrimSpace(pattern) == "" || strings.HasPrefix(pattern, ":") {
+			add("review.diff_exclude[%d]: must be a non-empty path pattern without pathspec magic, got %q", i, pattern)
+		}
+	}
 	if cfg.Review.Limits.MaxOutputBytes <= 0 || cfg.Review.Limits.MaxDiffBytes <= 0 || cfg.Review.Limits.MaxFiles <= 0 || cfg.Review.Limits.MaxFindings <= 0 ||
 		cfg.Review.Limits.MaxIssues <= 0 || cfg.Review.Limits.MaxComments <= 0 || cfg.Review.Limits.MaxCommentBytes <= 0 {
 		add("review.limits: all limits must be positive")

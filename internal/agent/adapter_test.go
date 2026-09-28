@@ -33,8 +33,18 @@ func TestAdaptPiJSON(t *testing.T) {
 	if !strings.Contains(tr, `"tool":"read"`) || !strings.Contains(tr, `"type":"assistant"`) || strings.Contains(tr, "package a") {
 		t.Errorf("trace: %s", tr)
 	}
+	if !strings.Contains(string(ad.Transcript), "[reasoning]\nhmm") || !strings.Contains(string(ad.Transcript), "schema_version") {
+		t.Errorf("transcript: %s", ad.Transcript)
+	}
 	if _, err := Adapt(config.OutputPiJSON, []byte(`{"type":"agent_start"}`)); err == nil {
 		t.Error("expected error without assistant text")
+	}
+	// An agent that only reasoned before stopping still leaves a transcript
+	// for the retry to hand back.
+	thinkingOnly := `{"type":"message_end","message":{"role":"assistant","content":[{"type":"thinking","thinking":"three findings in pricing.go"}]}}`
+	ad, err = Adapt(config.OutputPiJSON, []byte(thinkingOnly))
+	if err == nil || ad == nil || !strings.Contains(string(ad.Transcript), "three findings in pricing.go") {
+		t.Errorf("a run without text must fail but keep its transcript: %v %+v", err, ad)
 	}
 	if _, err := Adapt("xml", nil); err == nil {
 		t.Error("expected unsupported format error")
@@ -50,5 +60,15 @@ func TestAdaptAutoDetectsClaudeModel(t *testing.T) {
 	ad, _ = Adapt("", []byte("plain"))
 	if ad.Model != "" {
 		t.Error("no model expected")
+	}
+}
+
+func TestTailKeepsTheEndOnARuneBoundary(t *testing.T) {
+	got := string(tail([]byte("aébc"), 3))
+	if got != "bc" {
+		t.Errorf("tail = %q, want the end cut on a rune boundary", got)
+	}
+	if got := string(tail([]byte("abc"), 10)); got != "abc" {
+		t.Errorf("tail = %q", got)
 	}
 }

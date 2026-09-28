@@ -30,7 +30,9 @@ type ReviewerInput struct {
 	IncludeFiles  bool
 	Diff          string
 	DiffTruncated bool
-	MaxFindings   int
+	// DiffExcluded lists the path patterns left out of the diff.
+	DiffExcluded []string
+	MaxFindings  int
 }
 
 // LeadInput feeds the lead template.
@@ -63,6 +65,35 @@ func commonFields(schema string) common {
 		c.Categories = append(c.Categories, string(s))
 	}
 	return c
+}
+
+// ReviewerRetryInput feeds the prompt of a reviewer run again because its
+// first run returned no usable report.
+type ReviewerRetryInput struct {
+	AgentID      string
+	Worktree     string
+	PR           *domain.PullRequest
+	MergeBaseSHA string
+	HeadSHA      string
+	// Problem says in one sentence what was wrong with the first run.
+	Problem string
+	// Transcript is the end of what the agent wrote in its first run.
+	Transcript  string
+	MaxFindings int
+}
+
+// ReviewerRetry renders the prompt asking a reviewer for the report its
+// previous run did not produce.
+func ReviewerRetry(in ReviewerRetryInput) ([]byte, error) {
+	data := struct {
+		ReviewerRetryInput
+		common
+	}{in, commonFields(ReviewerSchema)}
+	var buf bytes.Buffer
+	if err := tmpl.ExecuteTemplate(&buf, "reviewer-retry.tmpl", data); err != nil {
+		return nil, fmt.Errorf("render reviewer retry prompt: %w", err)
+	}
+	return buf.Bytes(), nil
 }
 
 // Reviewer renders the prompt given to a reviewer agent.

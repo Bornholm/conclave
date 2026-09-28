@@ -160,7 +160,7 @@ func (a *App) Review(ctx context.Context, req ReviewRequest) (*ReviewResult, err
 	_ = store.WriteJSON("context", "discussion.json", pr.Discussion)
 
 	if cfg.IncludeDiff() {
-		r.diff, r.diffTrunc, err = git.Diff(ctx, mergeBase, pr.Head.SHA, cfg.Review.Limits.MaxDiffBytes)
+		r.diff, r.diffTrunc, err = git.Diff(ctx, mergeBase, pr.Head.SHA, cfg.Review.Limits.MaxDiffBytes, cfg.Review.DiffExclude...)
 		if err != nil {
 			return nil, err
 		}
@@ -324,40 +324,92 @@ func (a *App) runReviewer(ctx context.Context, r *run, rv config.AgentConfig, wo
 		AgentID: rv.ID, Worktree: worktree, Specialties: rv.Specialties, PR: r.pr,
 		MergeBaseSHA: r.pr.MergeBaseSHA, HeadSHA: r.pr.Head.SHA,
 		IncludeFiles: r.cfg.IncludeChangedFiles(), Diff: string(r.diff), DiffTruncated: r.diffTrunc,
-		MaxFindings: r.cfg.Review.Limits.MaxFindings,
+		DiffExcluded: r.cfg.Review.DiffExclude, MaxFindings: r.cfg.Review.Limits.MaxFindings,
 	})
 	if err != nil {
 		ex.Error = err.Error()
 		return ex, nil, err
 	}
-	_ = r.store.Write("prompts", "reviewer-"+rv.ID+".txt", p)
-	res := r.runner.Run(ctx, r.cfg, rv, worktree, p)
-	ex.Duration = res.Duration
-	if res.Result != nil {
-		ex.ExitCode = res.Result.ExitCode
-		_ = r.store.Write("raw", rv.ID+".stdout", res.Result.Stdout)
-		_ = r.store.Write("raw", rv.ID+".stderr", res.Result.Stderr)
+	report, transcript, err := a.reviewerAttempt(ctx, r, rv, worktree, rv.ID, p, &ex)
+	// A reviewer that ran to its end but left no usable report is asked once
+	// more for the report alone, with what it wrote. Timeouts and crashes are
+	// not retried: they would most likely happen again.
+	for attempt := 1; isNoUsableReport(err) && attempt <= r.cfg.ReviewReportRetries() && ctx.Err() == nil; attempt++ {
+		name := fmt.Sprintf("%s.retry%d", rv.ID, attempt)
+		a.logger().Warn("reviewer returned no usable report, asking again", "agent", rv.ID, "attempt", attempt, "reason", ex.Error)
+		retry, perr := prompt.ReviewerRetry(prompt.ReviewerRetryInput{
+			AgentID: rv.ID, Worktree: worktree, PR: r.pr, MergeBaseSHA: r.pr.MergeBaseSHA, HeadSHA: r.pr.Head.SHA,
+			Problem: "Conclave could not use it: " + ex.Error + ".", Transcript: string(transcript),
+			MaxFindings: r.cfg.Review.Limits.MaxFindings,
+		})
+		if perr != nil {
+			break
+		}
+		ex.ReportRetries = attempt
+		ex.Error = ""
+		var more []byte
+		report, more, err = a.reviewerAttempt(ctx, r, rv, worktree, name, retry, &ex)
+		if len(more) > 0 {
+			transcript = more
+		}
 	}
-	if res.Err != nil {
-		ex.Error = res.Err.Error()
-		return ex, nil, res.Err
-	}
-	ad, err := a.adapt(r, rv, res.Result.Stdout, &ex)
 	if err != nil {
 		return ex, nil, err
 	}
-	exists := func(p string) bool { return r.git.PathExistsAt(ctx, r.pr.Head.SHA, p) }
-	report, warnings, err := agent.ParseReport(ad.Report, rv.ID, r.changed, exists, agent.Limits{MaxFindings: r.cfg.Review.Limits.MaxFindings, MaxFieldBytes: agent.DefaultLimits.MaxFieldBytes})
-	ex.Warnings = warnings
-	if err != nil {
-		ex.Error = err.Error()
-		return ex, nil, fmt.Errorf("invalid report: %w", err)
-	}
-	// The self-reported model is untrusted: prefer configuration, then detection.
-	report.Reviewer.Model = ex.Model
 	ex.Succeeded = true
 	_ = r.store.WriteJSON("reports", rv.ID+".json", report)
 	return ex, report, nil
+}
+
+// noUsableReport marks a run that ended normally but produced no report
+// Conclave can use: no text, no JSON, or a JSON that fails validation. It
+// keeps the message of the error it wraps, which the report shows.
+type noUsableReport struct{ err error }
+
+func (e noUsableReport) Error() string { return e.err.Error() }
+func (e noUsableReport) Unwrap() error { return e.err }
+
+func isNoUsableReport(err error) bool {
+	var target noUsableReport
+	return errors.As(err, &target)
+}
+
+// reviewerAttempt runs a reviewer once with the given prompt, storing its
+// prompt and raw output under name. It returns the report, or the agent's
+// transcript for a retry when the run produced no usable report.
+func (a *App) reviewerAttempt(ctx context.Context, r *run, rv config.AgentConfig, worktree, name string, p []byte, ex *domain.AgentExecution) (*domain.AgentReport, []byte, error) {
+	_ = r.store.Write("prompts", "reviewer-"+name+".txt", p)
+	res := r.runner.Run(ctx, r.cfg, rv, worktree, p)
+	ex.Duration += res.Duration
+	if res.Result != nil {
+		ex.ExitCode = res.Result.ExitCode
+		_ = r.store.Write("raw", name+".stdout", res.Result.Stdout)
+		_ = r.store.Write("raw", name+".stderr", res.Result.Stderr)
+	}
+	if res.Err != nil {
+		ex.Error = res.Err.Error()
+		return nil, nil, res.Err
+	}
+	stored := rv
+	stored.ID = name
+	ad, err := a.adapt(r, stored, res.Result.Stdout, ex)
+	if err != nil {
+		var transcript []byte
+		if ad != nil {
+			transcript = ad.Transcript
+		}
+		return nil, transcript, noUsableReport{err}
+	}
+	exists := func(p string) bool { return r.git.PathExistsAt(ctx, r.pr.Head.SHA, p) }
+	report, warnings, err := agent.ParseReport(ad.Report, rv.ID, r.changed, exists, agent.Limits{MaxFindings: r.cfg.Review.Limits.MaxFindings, MaxFieldBytes: agent.DefaultLimits.MaxFieldBytes})
+	ex.Warnings = append(ex.Warnings, warnings...)
+	if err != nil {
+		ex.Error = err.Error()
+		return nil, ad.Transcript, noUsableReport{fmt.Errorf("invalid report: %w", err)}
+	}
+	// The self-reported model is untrusted: prefer configuration, then detection.
+	report.Reviewer.Model = ex.Model
+	return report, nil, nil
 }
 
 func (a *App) runLead(ctx context.Context, r *run, lead config.AgentConfig, worktree string, outcomes []consolidation.ReviewerOutcome, succeeded []string, reports []domain.AgentReport, groups []domain.FindingGroup) (*domain.ConsolidatedReview, []string, error) {
@@ -409,12 +461,13 @@ func (a *App) runLead(ctx context.Context, r *run, lead config.AgentConfig, work
 // the model: the configured value wins, otherwise the one detected in the output.
 func (a *App) adapt(r *run, ag config.AgentConfig, stdout []byte, ex *domain.AgentExecution) (*agent.Adapted, error) {
 	ad, err := agent.Adapt(ag.Output, stdout)
+	if ad != nil && ad.Trace != nil {
+		_ = r.store.Write("raw", ag.ID+".trace.jsonl", ad.Trace)
+	}
 	if err != nil {
 		ex.Error = err.Error()
-		return nil, fmt.Errorf("invalid output: %w", err)
-	}
-	if ad.Trace != nil {
-		_ = r.store.Write("raw", ag.ID+".trace.jsonl", ad.Trace)
+		// The partial result still carries the transcript a retry needs.
+		return ad, fmt.Errorf("invalid output: %w", err)
 	}
 	ex.ToolCalls = ad.ToolCalls
 	ex.Model = ag.Model

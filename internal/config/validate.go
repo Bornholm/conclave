@@ -77,6 +77,9 @@ func Validate(cfg *Config) error {
 			add("review.diff_exclude[%d]: must be a non-empty path pattern without pathspec magic, got %q", i, pattern)
 		}
 	}
+	if cfg.Review.RunningLabel != "" && strings.TrimSpace(cfg.Review.RunningLabel) != cfg.Review.RunningLabel {
+		add("review.running_label: must not start or end with spaces, got %q", cfg.Review.RunningLabel)
+	}
 	if cfg.Review.Limits.MaxOutputBytes <= 0 || cfg.Review.Limits.MaxDiffBytes <= 0 || cfg.Review.Limits.MaxFiles <= 0 || cfg.Review.Limits.MaxFindings <= 0 ||
 		cfg.Review.Limits.MaxIssues <= 0 || cfg.Review.Limits.MaxComments <= 0 || cfg.Review.Limits.MaxCommentBytes <= 0 {
 		add("review.limits: all limits must be positive")

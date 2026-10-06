@@ -123,6 +123,41 @@ var ErrNotFound = errors.New("not found")
 // support attaching labels to issues.
 var ErrLabelsUnsupported = errors.New("labels are not supported on this forge")
 
+// PullRequestLabeler is implemented by the forges that can flag a pull
+// request while conclave reviews it. It is optional: a forge without labels
+// on pull requests does not implement it.
+type PullRequestLabeler interface {
+	// AddPullRequestLabel attaches the label to the pull request, creating
+	// it on the repository when it does not exist yet.
+	AddPullRequestLabel(ctx context.Context, repo domain.Repository, number int64, name string) error
+	// RemovePullRequestLabel detaches the label from the pull request. A
+	// label the pull request does not carry, or that the repository does
+	// not define, is not an error.
+	RemovePullRequestLabel(ctx context.Context, repo domain.Repository, number int64, name string) error
+}
+
+// AddPullRequestLabel attaches a label to a pull request. It returns
+// ErrLabelsUnsupported for a forge that does not implement
+// PullRequestLabeler.
+func AddPullRequestLabel(ctx context.Context, f Forge, repo domain.Repository, number int64, name string) error {
+	l, ok := f.(PullRequestLabeler)
+	if !ok {
+		return ErrLabelsUnsupported
+	}
+	return l.AddPullRequestLabel(ctx, repo, number, name)
+}
+
+// RemovePullRequestLabel detaches a label from a pull request. It returns
+// ErrLabelsUnsupported for a forge that does not implement
+// PullRequestLabeler.
+func RemovePullRequestLabel(ctx context.Context, f Forge, repo domain.Repository, number int64, name string) error {
+	l, ok := f.(PullRequestLabeler)
+	if !ok {
+		return ErrLabelsUnsupported
+	}
+	return l.RemovePullRequestLabel(ctx, repo, number, name)
+}
+
 // ErrNotFork is returned by ParentRepository when the repository exists but
 // was not forked from another one, or when the forge has no notion of forks.
 var ErrNotFork = errors.New("repository is not a fork")

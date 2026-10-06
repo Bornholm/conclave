@@ -205,6 +205,62 @@ func (c *Client) AddIssueLabels(ctx context.Context, repo domain.Repository, num
 	return err
 }
 
+// RunningLabelColor is the color given to a label conclave has to create.
+const RunningLabelColor = "#fbca04"
+
+// findLabel returns the repository or organization label of that name, or
+// ErrNotFound.
+func (c *Client) findLabel(ctx context.Context, repo domain.Repository, name string) (domain.Label, error) {
+	labels, err := c.ListLabels(ctx, repo)
+	if err != nil {
+		return domain.Label{}, err
+	}
+	for _, l := range labels {
+		if l.Name == name {
+			return l, nil
+		}
+	}
+	return domain.Label{}, fmt.Errorf("%w: label %q", forge.ErrNotFound, name)
+}
+
+// AddPullRequestLabel implements forge.PullRequestLabeler. Gitea attaches
+// labels by id, so a label the repository does not define is created first.
+func (c *Client) AddPullRequestLabel(ctx context.Context, repo domain.Repository, number int64, name string) error {
+	l, err := c.findLabel(ctx, repo, name)
+	if errors.Is(err, forge.ErrNotFound) {
+		resp, cerr := c.http.Do(ctx, http.MethodPost, c.http.Resolve(repoPath(repo)+"/labels", nil),
+			map[string]any{"name": name, "color": RunningLabelColor, "description": "Conclave is reviewing this pull request"}, "")
+		if cerr != nil {
+			return fmt.Errorf("create label %q: %w", name, cerr)
+		}
+		var raw label
+		if cerr := json.Unmarshal(resp.Body, &raw); cerr != nil || raw.ID == 0 {
+			return fmt.Errorf("create label %q: unexpected Gitea response", name)
+		}
+		l, err = domain.Label{ID: raw.ID, Name: raw.Name}, nil
+	}
+	if err != nil {
+		return err
+	}
+	return c.AddIssueLabels(ctx, repo, number, []domain.Label{l})
+}
+
+// RemovePullRequestLabel implements forge.PullRequestLabeler.
+func (c *Client) RemovePullRequestLabel(ctx context.Context, repo domain.Repository, number int64, name string) error {
+	l, err := c.findLabel(ctx, repo, name)
+	if errors.Is(err, forge.ErrNotFound) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	_, err = c.http.Do(ctx, http.MethodDelete, c.http.Resolve(fmt.Sprintf("%s/issues/%d/labels/%d", repoPath(repo), number, l.ID), nil), nil, "")
+	if httpx.IsStatus(err, http.StatusNotFound) {
+		return nil
+	}
+	return err
+}
+
 // ListIssues implements forge.Forge.
 func (c *Client) ListIssues(ctx context.Context, repo domain.Repository, q forge.IssueQuery) ([]domain.Issue, error) {
 	state := q.State

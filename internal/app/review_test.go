@@ -29,6 +29,10 @@ type fakeForge struct {
 	added  map[int64][]string
 	addErr error
 
+	// labelEvents records the running label calls, and whether the context
+	// they got was already done.
+	labelEvents []string
+
 	// parent, when set, makes the fake forge a ForkResolver whose repository
 	// is a fork of it.
 	parent *domain.Repository
@@ -97,6 +101,16 @@ func (f *fakeForge) AddIssueLabels(_ context.Context, _ domain.Repository, n int
 	for _, l := range labels {
 		f.added[n] = append(f.added[n], l.Name)
 	}
+	return nil
+}
+
+func (f *fakeForge) AddPullRequestLabel(ctx context.Context, _ domain.Repository, n int64, name string) error {
+	f.labelEvents = append(f.labelEvents, fmt.Sprintf("add #%d %s ctx=%v", n, name, ctx.Err()))
+	return nil
+}
+
+func (f *fakeForge) RemovePullRequestLabel(ctx context.Context, _ domain.Repository, n int64, name string) error {
+	f.labelEvents = append(f.labelEvents, fmt.Sprintf("remove #%d %s ctx=%v", n, name, ctx.Err()))
 	return nil
 }
 
@@ -388,5 +402,42 @@ func TestReviewExcludesPathsFromTheDiff(t *testing.T) {
 	p, _ := os.ReadFile(filepath.Join(res.RunDir, "prompts", "reviewer-r1.txt"))
 	if !strings.Contains(string(p), "left out of the diff") || !strings.Contains(string(p), "- changed.*") || !strings.Contains(string(p), "modified changed.txt") {
 		t.Errorf("prompt must name the excluded patterns and keep the changed file listed")
+	}
+}
+
+func TestReviewRunningLabel(t *testing.T) {
+	want := []string{"add #7 conclave/running ctx=<nil>", "remove #7 conclave/running ctx=<nil>"}
+	for _, tc := range []struct {
+		name, mode string
+		cancel     bool
+	}{
+		{name: "success", mode: "valid"},
+		{name: "failure", mode: "exit-1"},
+		{name: "interrupted", mode: "timeout", cancel: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			a, _ := newApp(t, agentCfg(t, "r1", config.RoleReviewer, tc.mode), agentCfg(t, "lead", config.RoleLead, "valid"))
+			a.Config.Review.RunningLabel = "conclave/running"
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			if tc.cancel {
+				go func() { time.Sleep(500 * time.Millisecond); cancel() }()
+			}
+			_, err := a.Review(ctx, ReviewRequest{Number: 7})
+			if (err == nil) != (tc.mode == "valid") {
+				t.Fatalf("unexpected outcome: %v", err)
+			}
+			if got := a.Forge.(*fakeForge).labelEvents; strings.Join(got, "\n") != strings.Join(want, "\n") {
+				t.Errorf("label calls: %q, want %q", got, want)
+			}
+		})
+	}
+
+	a, _ := newApp(t, agentCfg(t, "r1", config.RoleReviewer, "valid"), agentCfg(t, "lead", config.RoleLead, "valid"))
+	if _, err := a.Review(context.Background(), ReviewRequest{Number: 7}); err != nil {
+		t.Fatal(err)
+	}
+	if got := a.Forge.(*fakeForge).labelEvents; len(got) != 0 {
+		t.Errorf("no running label configured, yet: %q", got)
 	}
 }

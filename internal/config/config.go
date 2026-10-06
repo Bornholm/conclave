@@ -165,6 +165,10 @@ type ReviewConfig struct {
 	// returned no usable report is run again, with its own last words and
 	// the output contract. Nil means DefaultReportRetries; 0 disables it.
 	ReportRetries *int `yaml:"report_retries"`
+	// RunningLabel is put on the pull request while the review runs and
+	// taken off when it ends, whether it succeeded, failed or was
+	// interrupted. Empty disables it.
+	RunningLabel string `yaml:"running_label"`
 }
 
 // IncludeConfig selects which context is given to agents.

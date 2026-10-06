@@ -84,6 +84,9 @@ func (a *App) Review(ctx context.Context, req ReviewRequest) (*ReviewResult, err
 		}
 		return nil, fmt.Errorf("get pull request #%d: %w", req.Number, err)
 	}
+	if label := cfg.Review.RunningLabel; label != "" {
+		defer a.markRunning(ctx, f, repo, pr.Number, label)()
+	}
 	files, err := f.ListChangedFiles(ctx, repo, req.Number, cfg.Review.Limits.MaxFiles)
 	if err != nil {
 		return nil, fmt.Errorf("list changed files: %w", err)
@@ -186,6 +189,33 @@ func (a *App) Review(ctx context.Context, req ReviewRequest) (*ReviewResult, err
 		_ = store.Write("final", "review.md", md.Bytes())
 	}
 	return &ReviewResult{Review: review, RunDir: store.Root, Manifest: r.manifest}, nil
+}
+
+// runningLabelTimeout bounds the call that takes the running label off: it
+// runs once the review is over, possibly after an interruption.
+const runningLabelTimeout = 30 * time.Second
+
+// markRunning puts the label on the pull request and returns the function
+// that takes it off. Neither call fails the review: the label is a signal to
+// humans, not part of the result. The removal runs on a context detached from
+// ctx, which is already cancelled when the run was interrupted or timed out.
+func (a *App) markRunning(ctx context.Context, f forge.Forge, repo domain.Repository, number int64, label string) func() {
+	log := a.logger()
+	if err := forge.AddPullRequestLabel(ctx, f, repo, number, label); err != nil {
+		log.Warn("running label not added", "label", label, "error", err)
+		if errors.Is(err, forge.ErrLabelsUnsupported) {
+			return func() {}
+		}
+		// The label may have been attached before the error: removing it
+		// costs one call and leaves no stale flag behind.
+	}
+	return func() {
+		ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), runningLabelTimeout)
+		defer cancel()
+		if err := forge.RemovePullRequestLabel(ctx, f, repo, number, label); err != nil {
+			log.Warn("running label not removed", "label", label, "error", err)
+		}
+	}
 }
 
 func (a *App) execute(ctx context.Context, r *run, req ReviewRequest) (*domain.ConsolidatedReview, error) {

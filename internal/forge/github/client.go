@@ -199,6 +199,26 @@ func (c *Client) AddIssueLabels(ctx context.Context, repo domain.Repository, num
 	return err
 }
 
+// AddPullRequestLabel implements forge.PullRequestLabeler. A pull request is
+// an issue to GitHub, which creates a label it does not know yet.
+func (c *Client) AddPullRequestLabel(ctx context.Context, repo domain.Repository, number int64, name string) error {
+	return c.AddIssueLabels(ctx, repo, number, []domain.Label{{Name: name}})
+}
+
+// RemovePullRequestLabel implements forge.PullRequestLabeler. GitHub answers
+// 404 when the pull request does not carry the label.
+func (c *Client) RemovePullRequestLabel(ctx context.Context, repo domain.Repository, number int64, name string) error {
+	// The URL is built escaped by hand: Resolve would turn the %2F of a
+	// "conclave/running" label back into a path separator.
+	u := strings.TrimRight(c.http.BaseURL().String(), "/") +
+		fmt.Sprintf("/repos/%s/%s/issues/%d/labels/%s", url.PathEscape(repo.Owner), url.PathEscape(repo.Name), number, url.PathEscape(name))
+	_, err := c.http.Do(ctx, http.MethodDelete, u, nil, accept)
+	if httpx.IsStatus(err, http.StatusNotFound) {
+		return nil
+	}
+	return err
+}
+
 // ListIssues implements forge.Forge. GitHub returns pull requests from the
 // issues endpoint, so entries carrying a pull_request object are skipped.
 func (c *Client) ListIssues(ctx context.Context, repo domain.Repository, q forge.IssueQuery) ([]domain.Issue, error) {

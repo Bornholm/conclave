@@ -2,6 +2,7 @@ package gitea
 
 import (
 	"context"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -131,5 +132,62 @@ func TestGiteaIncompatibleResponse(t *testing.T) {
 	_, err := c.GetPullRequest(context.Background(), domain.Repository{Owner: "acme", Name: "proj"}, 42)
 	if err == nil || !strings.Contains(err.Error(), "unexpected Gitea response") {
 		t.Errorf("unexpected: %v", err)
+	}
+}
+
+func TestPullRequestLabel(t *testing.T) {
+	var calls []string
+	labels := `[]`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		calls = append(calls, r.Method+" "+r.URL.Path+" "+strings.TrimSpace(string(body)))
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/repos/acme/proj/labels":
+			w.Write([]byte(labels))
+		case r.Method == http.MethodGet:
+			w.WriteHeader(404)
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/repos/acme/proj/labels":
+			labels = `[{"id":9,"name":"conclave/running"}]`
+			w.WriteHeader(201)
+			w.Write([]byte(`{"id":9,"name":"conclave/running"}`))
+		case r.Method == http.MethodDelete:
+			w.WriteHeader(204)
+		default:
+			w.Write([]byte(`[]`))
+		}
+	}))
+	t.Cleanup(srv.Close)
+	c, err := New(srv.URL, "tok", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo := domain.Repository{Owner: "acme", Name: "proj"}
+	ctx := context.Background()
+	if err := c.RemovePullRequestLabel(ctx, repo, 42, "conclave/running"); err != nil {
+		t.Errorf("a label the repository does not define is not an error: %v", err)
+	}
+	if err := c.AddPullRequestLabel(ctx, repo, 42, "conclave/running"); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.AddPullRequestLabel(ctx, repo, 43, "conclave/running"); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.RemovePullRequestLabel(ctx, repo, 42, "conclave/running"); err != nil {
+		t.Fatal(err)
+	}
+	var writes []string
+	for _, call := range calls {
+		if !strings.HasPrefix(call, "GET ") {
+			writes = append(writes, call)
+		}
+	}
+	want := []string{
+		`POST /api/v1/repos/acme/proj/labels {"color":"#fbca04","description":"Conclave is reviewing this pull request","name":"conclave/running"}`,
+		`POST /api/v1/repos/acme/proj/issues/42/labels {"labels":[9]}`,
+		`POST /api/v1/repos/acme/proj/issues/43/labels {"labels":[9]}`,
+		`DELETE /api/v1/repos/acme/proj/issues/42/labels/9 `,
+	}
+	if strings.Join(writes, "\n") != strings.Join(want, "\n") {
+		t.Errorf("writes:\n%s\nwant:\n%s", strings.Join(writes, "\n"), strings.Join(want, "\n"))
 	}
 }

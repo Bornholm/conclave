@@ -42,6 +42,10 @@ review:
   # How many times a reviewer that exited normally without a usable report is
   # asked again for the report alone, with the end of what it wrote. 0 disables.
   report_retries: 1
+  # Label put on the pull request while a review runs, taken off when it ends,
+  # even on failure or interruption. Needs write access to the forge. Empty
+  # disables it.
+  running_label: ""           # e.g. "conclave/running"
 
 # `conclave triage` reuses the agents above with another prompt: it labels an
 # issue and says whether it still describes something true about the code.

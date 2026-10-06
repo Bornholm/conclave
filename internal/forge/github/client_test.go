@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -154,5 +155,43 @@ func TestParentRepository(t *testing.T) {
 	}
 	if _, err := c.ParentRepository(ctx, domain.Repository{Owner: "acme", Name: "proj"}); !errors.Is(err, forge.ErrNotFork) {
 		t.Errorf("expected ErrNotFork, got %v", err)
+	}
+}
+
+func TestPullRequestLabel(t *testing.T) {
+	var calls []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		calls = append(calls, r.Method+" "+r.URL.EscapedPath()+" "+strings.TrimSpace(string(body)))
+		if r.Method == http.MethodDelete && strings.HasSuffix(r.URL.EscapedPath(), "/124/labels/conclave%2Frunning") {
+			w.WriteHeader(404)
+			w.Write([]byte(`{"message":"Label does not exist"}`))
+			return
+		}
+		w.Write([]byte(`[]`))
+	}))
+	t.Cleanup(srv.Close)
+	c, err := New(srv.URL+"/api/v3", "tok", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo := domain.Repository{Owner: "acme", Name: "proj"}
+	ctx := context.Background()
+	if err := c.AddPullRequestLabel(ctx, repo, 123, "conclave/running"); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.RemovePullRequestLabel(ctx, repo, 123, "conclave/running"); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.RemovePullRequestLabel(ctx, repo, 124, "conclave/running"); err != nil {
+		t.Errorf("a label the pull request does not carry is not an error: %v", err)
+	}
+	want := []string{
+		`POST /api/v3/repos/acme/proj/issues/123/labels {"labels":["conclave/running"]}`,
+		`DELETE /api/v3/repos/acme/proj/issues/123/labels/conclave%2Frunning `,
+		`DELETE /api/v3/repos/acme/proj/issues/124/labels/conclave%2Frunning `,
+	}
+	if strings.Join(calls, "\n") != strings.Join(want, "\n") {
+		t.Errorf("calls:\n%s\nwant:\n%s", strings.Join(calls, "\n"), strings.Join(want, "\n"))
 	}
 }

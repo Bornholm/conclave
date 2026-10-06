@@ -36,6 +36,10 @@ Agents inherit your environment by default, so their credentials keep working. `
 
 A reviewer that exits normally but leaves no usable report, because it stopped on "now let me write the JSON", answered in prose, or produced a report that fails validation, is run once more with a short prompt: the output contract and the end of what it wrote, reasoning included (the last 64 KiB). It keeps its tools to check a line number but is told not to start over. `review.report_retries` sets how many times, 1 by default, 0 disables it. A reviewer that timed out or crashed is not retried. The retry prompt and output are kept as `prompts/reviewer-<id>.retry<n>.txt` and `raw/<id>.retry<n>.stdout`, and the manifest records `report_retries`.
 
+## Running label
+
+`review.running_label` names a label Conclave puts on the pull request once it has loaded it, and takes off when the review ends: on success, on failure, on timeout, and on interruption by Ctrl-C or SIGTERM, since the removal runs on a context of its own once the run is over. Something like `conclave/running` tells the team, or a CI job, that a review is under way. It is empty by default, which disables it. The token needs write access to the pull requests. GitHub creates the label on first use, and on Gitea Conclave creates it when the repository does not define it. Redmine has no pull requests to label, and the setting is ignored with a warning. A failure to add or remove the label is logged and never fails the review. A process killed with SIGKILL leaves the label behind, to be removed by hand.
+
 ## Triage
 
 `triage.labels.source` is `forge` by default, so the taxonomy is the one the repository defines, descriptions included. `include` and `exclude` are shell globs over label names, which is how you keep `type/*` and `area/*` and drop `wontfix` or `good first issue`. `describe` fills in or overrides a description the forge left empty, and an empty description is worth fixing: the name alone tells an agent very little. `source: list` uses `labels.list` instead, for a repository with no labels yet.

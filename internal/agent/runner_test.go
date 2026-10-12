@@ -32,7 +32,8 @@ func TestRunModes(t *testing.T) {
 		"valid": "", "envelope": "", "stderr": "",
 		"invalid-json": "", // runner does not parse
 		"exit-1":       "exited with code 1: boom", "empty": "empty output",
-		"timeout": "timed out",
+		"exit-1-stdout": "exited with code 1: You've hit your session limit",
+		"timeout":       "timed out",
 	}
 	for mode, wantErr := range cases {
 		t.Run(mode, func(t *testing.T) {

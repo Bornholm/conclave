@@ -42,7 +42,7 @@ Every prompt, for reviewers, the lead, and the `triage`, `plan` and `ask` agents
 
 ## Missing reports
 
-A reviewer that exits normally but leaves no usable report, because it stopped on "now let me write the JSON", answered in prose, or produced a report that fails validation, is run once more with a short prompt: the output contract and the end of what it wrote, reasoning included (the last 64 KiB). It keeps its tools to check a line number but is told not to start over. `review.report_retries` sets how many times, 1 by default, 0 disables it. A reviewer that timed out or crashed is not retried. The retry prompt and output are kept as `prompts/reviewer-<id>.retry<n>.txt` and `raw/<id>.retry<n>.stdout`, and the manifest records `report_retries`.
+A reviewer that exits normally but leaves no usable report, because it stopped on "now let me write the JSON", answered in prose, or produced a report that fails validation, is run once more with a short prompt: the output contract and the end of what it wrote, reasoning included (the last 64 KiB). It keeps its tools to check a line number but is told not to start over. `review.report_retries` sets how many times, 1 by default, 0 disables it. A reviewer that timed out or crashed is not retried, nor one that wrote almost nothing (under 64 bytes, as a model whose context window the prompt filled does before it stops): with no review to convert, it would make one up. The retry prompt and output are kept as `prompts/reviewer-<id>.retry<n>.txt` and `raw/<id>.retry<n>.stdout`, and the manifest records `report_retries`.
 
 ## Running label
 

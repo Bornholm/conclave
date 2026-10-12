@@ -387,6 +387,14 @@ func (a *App) runReviewer(ctx context.Context, r *run, rv config.AgentConfig, wo
 	// more for the report alone, with what it wrote. Timeouts and crashes are
 	// not retried: they would most likely happen again.
 	for attempt := 1; isNoUsableReport(err) && attempt <= r.cfg.ReviewReportRetries() && ctx.Err() == nil; attempt++ {
+		// A run that wrote almost nothing left no review to convert: asked
+		// again, the reviewer returns an empty report or starts over without
+		// the diff, and neither is the review Conclave asked for.
+		if n := len(bytes.TrimSpace(transcript)); n < minRecoverableTranscript {
+			err = fmt.Errorf("%w; the run wrote %d bytes, too little to recover a review from: the prompt may exceed the model's context window", err, n)
+			ex.Error = err.Error()
+			break
+		}
 		name := fmt.Sprintf("%s.retry%d", rv.ID, attempt)
 		a.logger().Warn("reviewer returned no usable report, asking again", "agent", rv.ID, "attempt", attempt, "reason", ex.Error)
 		retry, perr := prompt.ReviewerRetry(prompt.ReviewerRetryInput{
@@ -427,6 +435,11 @@ func writeDiffFile(path string, diff []byte) error {
 	}
 	return f.Close()
 }
+
+// minRecoverableTranscript is the transcript size under which a reviewer
+// without a usable report is not asked again: a word or two, as a model whose
+// context window the prompt filled writes before it stops.
+const minRecoverableTranscript = 64
 
 // noUsableReport marks a run that ended normally but produced no report
 // Conclave can use: no text, no JSON, or a JSON that fails validation. It

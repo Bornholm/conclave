@@ -99,8 +99,11 @@ func normalizeFinding(f domain.Finding, changed map[string]bool, exists FileChec
 		return f, err
 	}
 	f.File = p
+	// A finding about the file as a whole (a missing translation, an outdated
+	// page) has no line to point at: it is anchored on the first one rather
+	// than dropped.
 	if f.StartLine < 1 {
-		return f, fmt.Errorf("start_line %d must be >= 1", f.StartLine)
+		f.StartLine = 1
 	}
 	if f.EndLine < f.StartLine {
 		f.EndLine = f.StartLine

@@ -384,6 +384,32 @@ func TestReviewAsksAgainForAMissingReport(t *testing.T) {
 	}
 }
 
+// TestReviewDoesNotAskAgainAfterACutShortRun: a reviewer that stopped after
+// a word has no review to convert, so it fails instead of being asked for a
+// report it would make up.
+func TestReviewDoesNotAskAgainAfterACutShortRun(t *testing.T) {
+	a, _ := newApp(t,
+		agentCfg(t, "r1", config.RoleReviewer, "cut-short"),
+		agentCfg(t, "r2", config.RoleReviewer, "valid"),
+		agentCfg(t, "lead", config.RoleLead, "valid"))
+	res, err := a.Review(context.Background(), ReviewRequest{Number: 7})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var r1 domain.AgentExecution
+	for _, ex := range res.Manifest.Agents {
+		if ex.ID == "r1" {
+			r1 = ex
+		}
+	}
+	if r1.Succeeded || r1.ReportRetries != 0 || !strings.Contains(r1.Error, "context window") {
+		t.Errorf("manifest: %+v", r1)
+	}
+	if _, err := os.Stat(filepath.Join(res.RunDir, "prompts", "reviewer-r1.retry1.txt")); !os.IsNotExist(err) {
+		t.Errorf("the reviewer was asked again: %v", err)
+	}
+}
+
 // TestReviewGivesALargeDiffAsAFile: a diff over max_inline_diff_bytes is
 // written in the reviewer worktree and indexed in the prompt instead.
 func TestReviewGivesALargeDiffAsAFile(t *testing.T) {

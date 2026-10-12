@@ -46,6 +46,14 @@ func main() {
 		} else {
 			fmt.Print("I reviewed the change: B should stay lowercase. Now let me write the JSON.")
 		}
+	case "cut-short":
+		// Stops after a word, like a model whose context window the prompt
+		// filled, and would return a report if asked again.
+		if strings.Contains(prompt, "ended without the JSON report") {
+			fmt.Print(validReport(id))
+		} else {
+			fmt.Print("Let")
+		}
 	case "empty":
 	case "stderr":
 		fmt.Fprintln(os.Stderr, "agent log line")
@@ -54,6 +62,11 @@ func main() {
 		fmt.Print(strings.Repeat("x", 4<<20))
 	case "exit-1":
 		fmt.Fprintln(os.Stderr, "boom")
+		os.Exit(1)
+	case "exit-1-stdout":
+		// Fails like Claude Code at its usage limit: the reason is in the
+		// JSON envelope on standard output, standard error stays empty.
+		fmt.Print(`{"type":"result","subtype":"success","is_error":true,"result":"You've hit your session limit"}`)
 		os.Exit(1)
 	case "timeout":
 		time.Sleep(time.Minute)

@@ -26,17 +26,20 @@ func TestParseReport(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(rep.Findings) != 2 {
+	if len(rep.Findings) != 3 {
 		t.Fatalf("kept %d findings: %+v\n%v", len(rep.Findings), rep.Findings, warnings)
 	}
 	f := rep.Findings[0]
 	if f.Category != "correctness" || f.Severity != "high" || f.File != "src/a.go" || f.EndLine != 3 || f.OutOfScope {
 		t.Errorf("normalized: %+v", f)
 	}
-	if oos := rep.Findings[1]; !oos.OutOfScope || oos.File != "src/other.go" {
+	if whole := rep.Findings[1]; whole.ID != "e" || whole.StartLine != 1 || whole.EndLine != 1 {
+		t.Errorf("a finding without a line should be anchored on the first: %+v", whole)
+	}
+	if oos := rep.Findings[2]; !oos.OutOfScope || oos.File != "src/other.go" {
 		t.Errorf("out of scope finding should be kept and flagged: %+v", oos)
 	}
-	if len(warnings) != 6 {
+	if len(warnings) != 5 {
 		t.Errorf("warnings: %d %v", len(warnings), warnings)
 	}
 	if len(rep.Questions) != 1 || rep.Questions[0].File != "" {

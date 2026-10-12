@@ -1,7 +1,9 @@
 package agent
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -80,13 +82,30 @@ func (r *Runner) Run(ctx context.Context, cfg *config.Config, a config.AgentConf
 	case res.TimedOut:
 		ex.Err = fmt.Errorf("timed out after %s", cfg.EffectiveTimeout(a).Round(time.Second))
 	case res.ExitCode != 0:
-		ex.Err = fmt.Errorf("exited with code %d: %s", res.ExitCode, lastLine(res.Stderr))
+		ex.Err = fmt.Errorf("exited with code %d: %s", res.ExitCode, exitReason(res.Stderr, res.Stdout))
 	case res.StdoutTruncated:
 		ex.Err = fmt.Errorf("output exceeded %d bytes: raise max_output_bytes for agent %s", cfg.EffectiveMaxOutputBytes(a), a.ID)
 	case len(res.Stdout) == 0:
 		ex.Err = errors.New("empty output")
 	}
 	return ex
+}
+
+// exitReason explains a failed run from the last line of standard error. An
+// agent that reports errors on standard output, as Claude Code does in its
+// JSON envelope at its usage limit, leaves standard error empty: its "result"
+// field, or else the last line of standard output, is used instead.
+func exitReason(stderr, stdout []byte) string {
+	if len(bytes.TrimSpace(stderr)) > 0 {
+		return lastLine(stderr)
+	}
+	var env struct {
+		Result string `json:"result"`
+	}
+	if json.Unmarshal(bytes.TrimSpace(stdout), &env) == nil && strings.TrimSpace(env.Result) != "" {
+		return lastLine([]byte(env.Result))
+	}
+	return lastLine(stdout)
 }
 
 func lastLine(b []byte) string {

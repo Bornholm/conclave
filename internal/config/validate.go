@@ -85,6 +85,10 @@ func Validate(cfg *Config) error {
 		add("review.limits: all limits must be positive")
 	}
 
+	if cfg.Review.Limits.MaxInlineDiffBytes < 0 {
+		add("review.limits.max_inline_diff_bytes: must be >= 0")
+	}
+
 	switch cfg.Triage.Labels.Source {
 	case LabelSourceForge:
 	case LabelSourceList:

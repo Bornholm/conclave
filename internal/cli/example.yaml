@@ -29,6 +29,9 @@ review:
   limits:
     max_output_bytes: 1048576
     max_diff_bytes: 5242880
+    # Past this size the diff is written to .conclave-diff.patch in each
+    # reviewer worktree, with an index in the prompt, instead of inlined.
+    max_inline_diff_bytes: 65536
     max_files: 3000
     max_findings: 200
     max_issues: 10            # referenced issues loaded, in order of appearance

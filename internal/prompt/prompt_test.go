@@ -2,8 +2,10 @@ package prompt
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/bornholm/conclave/internal/domain"
 )
@@ -32,6 +34,53 @@ func TestReviewerPrompt(t *testing.T) {
 		if !strings.Contains(s, want) {
 			t.Errorf("prompt lacks %q", want)
 		}
+	}
+}
+
+func TestReviewerPromptWithDiffFile(t *testing.T) {
+	idx := IndexDiff([]byte("diff --git a/x.go b/x.go\n--- a/x.go\n+++ b/x.go\n@@ -1 +1 @@\n-a\n+b\ndiff --git a/my file.go b/my file.go\nnew file mode 100644\n"))
+	out, err := Reviewer(ReviewerInput{AgentID: "rev", PR: &domain.PullRequest{}, MergeBaseSHA: "mb", HeadSHA: "hd",
+		Diff: "+secret", DiffFile: ".conclave-diff.patch", DiffIndex: idx})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(out)
+	for _, want := range []string{"DIFF FILE (git diff mb hd)", "8 lines (", "in the file .conclave-diff.patch", "- x.go: 1-6 (6 lines)", "- my file.go: 7-8 (2 lines)", "git diff mb hd -- <path>"} {
+		if !strings.Contains(s, want) {
+			t.Errorf("prompt lacks %q:\n%s", want, s)
+		}
+	}
+	if strings.Contains(s, "+secret") {
+		t.Error("the diff is inlined alongside its file")
+	}
+}
+
+func TestIndexDiffCapsTheIndex(t *testing.T) {
+	var b strings.Builder
+	for i := range maxIndexedFiles + 3 {
+		fmt.Fprintf(&b, "diff --git a/f%d b/f%d\n+x\n", i, i)
+	}
+	idx := IndexDiff([]byte(b.String()))
+	if len(idx.Sections) != maxIndexedFiles || idx.Omitted != 3 || idx.Lines != 2*(maxIndexedFiles+3) {
+		t.Errorf("index: %d sections, %d omitted, %d lines", len(idx.Sections), idx.Omitted, idx.Lines)
+	}
+}
+
+func TestTimeBudget(t *testing.T) {
+	now := time.Date(2026, 10, 12, 14, 0, 0, 0, time.UTC)
+	out, err := Plan(PlanInput{AgentID: "p", Issue: &domain.Issue{}, Budget: NewTimeBudget(now, 15*time.Minute)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(out), "TIME BUDGET\nYou have 15 minutes of wall-clock time, until 14:15:00 UTC") {
+		t.Errorf("prompt lacks the budget:\n%s", out)
+	}
+	out, err = Plan(PlanInput{AgentID: "p", Issue: &domain.Issue{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(out), "TIME BUDGET") {
+		t.Error("a zero budget is rendered")
 	}
 }
 

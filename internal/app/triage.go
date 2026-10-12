@@ -393,6 +393,8 @@ func (a *App) runTriageAgent(ctx context.Context, t *triageRun, rv config.AgentC
 	p, err := prompt.Triage(prompt.TriageInput{
 		AgentID: rv.ID, Worktree: worktree, Branch: t.branch, HeadSHA: t.headSHA,
 		Issue: &issue, Labels: t.labels, MaxLabels: t.cfg.Triage.Labels.MaxLabels, OtherIssues: others,
+
+		Budget: timeBudget(ctx, t.cfg, rv),
 	})
 	if err != nil {
 		ex.Error = err.Error()
@@ -439,6 +441,8 @@ func (a *App) runTriageLead(ctx context.Context, t *triageRun, lead config.Agent
 		AgentID: lead.ID, Worktree: worktree, Branch: t.branch, HeadSHA: t.headSHA,
 		Labels: t.labels, MaxLabels: t.cfg.Triage.Labels.MaxLabels,
 		Issues: t.issues, Reports: reports, SucceededReviewers: succeeded,
+
+		Budget: timeBudget(ctx, t.cfg, lead),
 	})
 	if err != nil {
 		ex.Error = err.Error()

@@ -300,6 +300,8 @@ func (a *App) runPlanner(ctx context.Context, p *planRun, pl config.AgentConfig,
 	pr, err := prompt.Plan(prompt.PlanInput{
 		AgentID: pl.ID, Worktree: worktree, Branch: p.branch, HeadSHA: p.headSHA,
 		Issue: p.issue, Specialties: pl.Specialties, MaxSteps: p.cfg.Plan.Limits.MaxSteps,
+
+		Budget: timeBudget(ctx, p.cfg, pl),
 	})
 	if err != nil {
 		ex.Error = err.Error()
@@ -346,6 +348,8 @@ func (a *App) runPlanLead(ctx context.Context, p *planRun, lead config.AgentConf
 		AgentID: lead.ID, Worktree: worktree, Branch: p.branch, HeadSHA: p.headSHA,
 		Issue: p.issue, Reports: reports, SucceededPlanners: succeeded,
 		MaxSteps: p.cfg.Plan.Limits.MaxSteps,
+
+		Budget: timeBudget(ctx, p.cfg, lead),
 	})
 	if err != nil {
 		ex.Error = err.Error()

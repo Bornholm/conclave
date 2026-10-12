@@ -321,6 +321,8 @@ func (a *App) runRespondent(ctx context.Context, p *askRun, ag config.AgentConfi
 		AgentID: ag.ID, Worktree: worktree, Specialties: ag.Specialties,
 		HasProject: p.hasProject(), Branch: p.branch, HeadSHA: p.headSHA,
 		Question: p.question, Context: p.context,
+
+		Budget: timeBudget(ctx, p.cfg, ag),
 	})
 	if err != nil {
 		ex.Error = err.Error()
@@ -370,6 +372,8 @@ func (a *App) runAskLead(ctx context.Context, p *askRun, lead config.AgentConfig
 		AgentID: lead.ID, Worktree: worktree, HasProject: p.hasProject(),
 		Branch: p.branch, HeadSHA: p.headSHA, Question: p.question, Context: p.context,
 		Reports: reports, SucceededRespondents: succeeded,
+
+		Budget: timeBudget(ctx, p.cfg, lead),
 	})
 	if err != nil {
 		ex.Error = err.Error()

@@ -26,11 +26,19 @@ Agents inherit your environment by default, so their credentials keep working. `
 
 ## Limits
 
-`review.limits` bounds what a run may cost. `max_diff_bytes` truncates the diff in the prompt, the agents still have the whole worktree. It cuts wherever the limit falls, so generated files and real code go alike: to keep a large diff within a model's context, exclude the generated files instead. `max_files` refuses a pull request with more changed files than that. `max_findings` caps each report. `max_issues`, `max_comments` and `max_comment_bytes` bound the discussion and the referenced issues. When there are too many comments, the most recent ones are kept.
+`review.limits` bounds what a run may cost. `max_diff_bytes` truncates the diff given to the reviewers, the agents still have the whole worktree. It cuts wherever the limit falls, so generated files and real code go alike: to keep a large diff within a model's context, exclude the generated files instead. `max_files` refuses a pull request with more changed files than that. `max_findings` caps each report. `max_issues`, `max_comments` and `max_comment_bytes` bound the discussion and the referenced issues. When there are too many comments, the most recent ones are kept.
 
 ## Diff exclusions
 
-`review.diff_exclude` lists Git pathspec patterns left out of the diff given in the prompt: generated templates, compiled CSS, lock files. A `*` matches across directories, so `*_templ.go` covers the whole tree. The excluded files stay in the changed-files list and in the worktree, and the prompt names the patterns, so a reviewer can still read them. The whole diff is inlined in every reviewer prompt: on a pull request with many generated files, it is what pushes a model past its context window, and a model at its limit compacts its history and tends to lose the output contract along the way.
+`review.diff_exclude` lists Git pathspec patterns left out of the diff given in the prompt: generated templates, compiled CSS, lock files. A `*` matches across directories, so `*_templ.go` covers the whole tree. The excluded files stay in the changed-files list and in the worktree, and the prompt names the patterns, so a reviewer can still read them. Generated files are worth excluding even though a large diff is no longer inlined: every reviewer still reads what is in the diff, and time spent on a generated template is time not spent on the code.
+
+## Large diffs
+
+A diff larger than `review.limits.max_inline_diff_bytes`, 64 KiB by default or about 1500 lines, is not inlined in the reviewer prompt. Conclave writes it to `.conclave-diff.patch` at the root of each reviewer worktree, and the prompt gives its size and an index: for each changed file, the line range of its section in that file. The reviewer is told to read it section by section, the riskiest files first, or to run `git diff` on one path, rather than loading it whole. A model handed a diff of several thousand lines in its prompt starts with its context window half full, compacts its history early and tends to lose the output contract along the way. The file lives inside the worktree because an agent sandboxed to its working directory could not read it elsewhere; it shows up as untracked in `git status`, and the prompt says it is not part of the pull request. A repository that already has a file by that name makes the reviewer fail rather than be overwritten. The index lists at most 400 files. Set `max_inline_diff_bytes` to `max_diff_bytes` to always inline the diff. `diff_exclude` still applies first: a diff made small by excluding generated files stays inline.
+
+## Time budget
+
+Every prompt, for reviewers, the lead, and the `triage`, `plan` and `ask` agents, states how long the agent has and the UTC time at which it is stopped: its timeout (`agent_timeout`, `lead_timeout` or its own `timeout`), or less when `review.timeout` for the whole run comes first, as it does for a reviewer that waited for a slot under `max_parallel`. The agent is asked to read the important parts first, to batch its reads, and to write its JSON once about three quarters of the time is spent, since a run stopped before its report produces nothing.
 
 ## Missing reports
 

@@ -71,7 +71,7 @@ found in the code itself.
 {{if .OtherIssues}}OTHER ISSUES IN THIS BATCH (for duplicate-of only)
 {{range .OtherIssues}}- #{{.Number}}: {{.Title}}
 {{end}}{{end}}
-OUTPUT CONTRACT
+{{template "time-budget" .}}OUTPUT CONTRACT
 Return exactly one JSON object and nothing else on standard output. Do not
 wrap it in Markdown, do not add commentary before or after it.
 

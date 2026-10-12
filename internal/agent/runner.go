@@ -49,7 +49,7 @@ func (r *Runner) Run(ctx context.Context, cfg *config.Config, a config.AgentConf
 	case config.InputArgument:
 		if runtime.GOOS == "linux" && len(prompt) >= config.MaxArgBytes {
 			return Execution{Err: fmt.Errorf(
-				"prompt is %d bytes, over the %d-byte limit for a single argument: set input to stdin or file for agent %s, or lower max_diff_bytes",
+				"prompt is %d bytes, over the %d-byte limit for a single argument: set input to stdin or file for agent %s, or lower max_inline_diff_bytes",
 				len(prompt), config.MaxArgBytes, a.ID)}
 		}
 		req.Command = append(req.Command, string(prompt))

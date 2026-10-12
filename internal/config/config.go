@@ -181,13 +181,19 @@ type IncludeConfig struct {
 
 // LimitsConfig bounds sizes to keep the run safe.
 type LimitsConfig struct {
-	MaxOutputBytes  int64 `yaml:"max_output_bytes"`
-	MaxDiffBytes    int64 `yaml:"max_diff_bytes"`
-	MaxFiles        int   `yaml:"max_files"`
-	MaxFindings     int   `yaml:"max_findings"`
-	MaxIssues       int   `yaml:"max_issues"`
-	MaxComments     int   `yaml:"max_comments"`
-	MaxCommentBytes int   `yaml:"max_comment_bytes"`
+	MaxOutputBytes int64 `yaml:"max_output_bytes"`
+	MaxDiffBytes   int64 `yaml:"max_diff_bytes"`
+	// MaxInlineDiffBytes is the size up to which the diff is inlined in the
+	// reviewer prompt. A larger diff is written to a file in the worktree,
+	// which the prompt indexes, so the reviewer reads it in pieces instead
+	// of starting with its context window half full. 0 means
+	// DefaultMaxInlineDiffBytes.
+	MaxInlineDiffBytes int64 `yaml:"max_inline_diff_bytes"`
+	MaxFiles           int   `yaml:"max_files"`
+	MaxFindings        int   `yaml:"max_findings"`
+	MaxIssues          int   `yaml:"max_issues"`
+	MaxComments        int   `yaml:"max_comments"`
+	MaxCommentBytes    int   `yaml:"max_comment_bytes"`
 }
 
 // OutputConfig controls rendering.
@@ -348,6 +354,15 @@ func (c *Config) IncludeChangedFiles() bool { return boolValue(c.Review.Include.
 
 // IncludeDiff reports whether the diff is given to agents.
 func (c *Config) IncludeDiff() bool { return boolValue(c.Review.Include.Diff, true) }
+
+// InlineDiffBytes returns the size up to which the diff is inlined in the
+// reviewer prompt.
+func (c *Config) InlineDiffBytes() int64 {
+	if c.Review.Limits.MaxInlineDiffBytes <= 0 {
+		return DefaultMaxInlineDiffBytes
+	}
+	return c.Review.Limits.MaxInlineDiffBytes
+}
 
 // ReviewReportRetries returns how many times a reviewer without a usable
 // report is run again.

@@ -45,6 +45,9 @@ type run struct {
 	wtBase    string
 	diff      []byte
 	diffTrunc bool
+	// diffIndex is set when the diff is too large to inline: reviewers
+	// then read it from DiffFileName in their worktree.
+	diffIndex *prompt.DiffIndex
 	changed   map[string]bool
 	runner    *agent.Runner
 }
@@ -168,6 +171,11 @@ func (a *App) Review(ctx context.Context, req ReviewRequest) (*ReviewResult, err
 			return nil, err
 		}
 		_ = store.Write("context", "diff.patch", r.diff)
+		if int64(len(r.diff)) > cfg.InlineDiffBytes() {
+			idx := prompt.IndexDiff(r.diff)
+			r.diffIndex = &idx
+			log.Info("diff given as a file", "bytes", idx.Bytes, "lines", idx.Lines, "files", len(idx.Sections)+idx.Omitted)
+		}
 	}
 
 	review, runErr := a.execute(ctx, r, req)
@@ -348,14 +356,28 @@ func (a *App) runReviewers(ctx context.Context, r *run, reviewers []config.Agent
 	return outcomes, nil
 }
 
+// DiffFileName is where a diff too large to inline is written, at the root
+// of each reviewer worktree. Inside the worktree, because an agent sandboxed
+// to its working directory could not read it anywhere else.
+const DiffFileName = ".conclave-diff.patch"
+
 func (a *App) runReviewer(ctx context.Context, r *run, rv config.AgentConfig, worktree string) (domain.AgentExecution, *domain.AgentReport, error) {
 	ex := domain.AgentExecution{ID: rv.ID, Role: rv.Role, Worktree: worktree}
-	p, err := prompt.Reviewer(prompt.ReviewerInput{
+	in := prompt.ReviewerInput{
 		AgentID: rv.ID, Worktree: worktree, Specialties: rv.Specialties, PR: r.pr,
 		MergeBaseSHA: r.pr.MergeBaseSHA, HeadSHA: r.pr.Head.SHA,
 		IncludeFiles: r.cfg.IncludeChangedFiles(), Diff: string(r.diff), DiffTruncated: r.diffTrunc,
 		DiffExcluded: r.cfg.Review.DiffExclude, MaxFindings: r.cfg.Review.Limits.MaxFindings,
-	})
+		Budget: timeBudget(ctx, r.cfg, rv),
+	}
+	if r.diffIndex != nil {
+		if err := writeDiffFile(filepath.Join(worktree, DiffFileName), r.diff); err != nil {
+			ex.Error = err.Error()
+			return ex, nil, err
+		}
+		in.Diff, in.DiffFile, in.DiffIndex = "", DiffFileName, *r.diffIndex
+	}
+	p, err := prompt.Reviewer(in)
 	if err != nil {
 		ex.Error = err.Error()
 		return ex, nil, err
@@ -370,7 +392,7 @@ func (a *App) runReviewer(ctx context.Context, r *run, rv config.AgentConfig, wo
 		retry, perr := prompt.ReviewerRetry(prompt.ReviewerRetryInput{
 			AgentID: rv.ID, Worktree: worktree, PR: r.pr, MergeBaseSHA: r.pr.MergeBaseSHA, HeadSHA: r.pr.Head.SHA,
 			Problem: "Conclave could not use it: " + ex.Error + ".", Transcript: string(transcript),
-			MaxFindings: r.cfg.Review.Limits.MaxFindings,
+			MaxFindings: r.cfg.Review.Limits.MaxFindings, Budget: timeBudget(ctx, r.cfg, rv),
 		})
 		if perr != nil {
 			break
@@ -389,6 +411,21 @@ func (a *App) runReviewer(ctx context.Context, r *run, rv config.AgentConfig, wo
 	ex.Succeeded = true
 	_ = r.store.WriteJSON("reports", rv.ID+".json", report)
 	return ex, report, nil
+}
+
+// writeDiffFile writes the diff where a reviewer reads it. It refuses to
+// overwrite a file: one by that name in the repository is the pull request's
+// own, and replacing it would change what the reviewer sees.
+func writeDiffFile(path string, diff []byte) error {
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o444)
+	if err != nil {
+		return fmt.Errorf("write diff file: %w", err)
+	}
+	if _, err := f.Write(diff); err != nil {
+		f.Close()
+		return fmt.Errorf("write diff file: %w", err)
+	}
+	return f.Close()
 }
 
 // noUsableReport marks a run that ended normally but produced no report
@@ -453,6 +490,7 @@ func (a *App) runLead(ctx context.Context, r *run, lead config.AgentConfig, work
 		AgentID: lead.ID, Worktree: worktree, PR: r.pr, MergeBaseSHA: r.pr.MergeBaseSHA, HeadSHA: r.pr.Head.SHA,
 		SucceededReviewers: succeeded, FailedReviewers: consolidation.FailedReviewers(outcomes),
 		Reports: reports, Groups: groups, MaxFindings: r.cfg.Review.Limits.MaxFindings,
+		Budget: timeBudget(ctx, r.cfg, lead),
 	})
 	if err != nil {
 		ex.Error = err.Error()

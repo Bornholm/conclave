@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"strings"
 	"text/template"
+	"time"
 
 	"github.com/bornholm/conclave/internal/domain"
 )
@@ -16,8 +17,36 @@ import (
 var files embed.FS
 
 var tmpl = template.Must(template.New("").Funcs(template.FuncMap{
-	"join": strings.Join,
+	"join":    strings.Join,
+	"minutes": minutes,
 }).ParseFS(files, "templates/*.tmpl"))
+
+// TimeBudget is the wall-clock time an agent has before Conclave stops it.
+// The zero value leaves the budget out of the prompt.
+type TimeBudget struct {
+	Duration time.Duration
+	// Deadline is when the agent is stopped, in UTC.
+	Deadline time.Time
+}
+
+// NewTimeBudget starts a budget of d at now.
+func NewTimeBudget(now time.Time, d time.Duration) TimeBudget {
+	return TimeBudget{Duration: d, Deadline: now.Add(d).UTC().Truncate(time.Second)}
+}
+
+// minutes renders a budget the way a person would say it.
+func minutes(d time.Duration) string {
+	if d < time.Minute {
+		return fmt.Sprintf("%d seconds", int(d.Round(time.Second)/time.Second))
+	}
+	m := int(d.Round(time.Minute) / time.Minute)
+	switch {
+	case m == 1:
+		return "1 minute"
+	default:
+		return fmt.Sprintf("%d minutes", m)
+	}
+}
 
 // ReviewerInput feeds the reviewer template.
 type ReviewerInput struct {
@@ -32,7 +61,12 @@ type ReviewerInput struct {
 	DiffTruncated bool
 	// DiffExcluded lists the path patterns left out of the diff.
 	DiffExcluded []string
-	MaxFindings  int
+	// DiffFile, when set, is the path of the diff relative to the worktree:
+	// the diff is too large to inline and Diff is then left out.
+	DiffFile    string
+	DiffIndex   DiffIndex
+	MaxFindings int
+	Budget      TimeBudget
 }
 
 // LeadInput feeds the lead template.
@@ -47,6 +81,7 @@ type LeadInput struct {
 	Reports            []domain.AgentReport
 	Groups             []domain.FindingGroup
 	MaxFindings        int
+	Budget             TimeBudget
 }
 
 type common struct {
@@ -80,6 +115,7 @@ type ReviewerRetryInput struct {
 	// Transcript is the end of what the agent wrote in its first run.
 	Transcript  string
 	MaxFindings int
+	Budget      TimeBudget
 }
 
 // ReviewerRetry renders the prompt asking a reviewer for the report its
@@ -142,6 +178,7 @@ type TriageInput struct {
 	Labels      []domain.Label
 	MaxLabels   int
 	OtherIssues []domain.Issue
+	Budget      TimeBudget
 }
 
 // LeadTriageInput feeds the lead triage template for a whole batch.
@@ -155,6 +192,7 @@ type LeadTriageInput struct {
 	Issues             []domain.Issue
 	Reports            []domain.TriageReport
 	SucceededReviewers []string
+	Budget             TimeBudget
 }
 
 type triageCommon struct {
@@ -218,6 +256,7 @@ type PlanInput struct {
 	Issue       *domain.Issue
 	Specialties []string
 	MaxSteps    int
+	Budget      TimeBudget
 }
 
 // LeadPlanInput feeds the lead plan template.
@@ -230,6 +269,7 @@ type LeadPlanInput struct {
 	Reports           []domain.PlanReport
 	SucceededPlanners []string
 	MaxSteps          int
+	Budget            TimeBudget
 }
 
 type planCommon struct {
@@ -296,6 +336,7 @@ type AskInput struct {
 	HeadSHA    string
 	Question   string
 	Context    string
+	Budget     TimeBudget
 }
 
 // LeadAskInput feeds the lead ask template.
@@ -309,6 +350,7 @@ type LeadAskInput struct {
 	Context              string
 	Reports              []domain.AnswerReport
 	SucceededRespondents []string
+	Budget               TimeBudget
 }
 
 type askCommon struct {

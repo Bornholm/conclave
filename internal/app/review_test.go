@@ -223,7 +223,7 @@ func TestReviewEndToEnd(t *testing.T) {
 	}
 	// Prompt content and security boundary.
 	p, _ := os.ReadFile(filepath.Join(res.RunDir, "prompts", "reviewer-r1.txt"))
-	for _, want := range []string{"UNTRUSTED", "Fixes #3", "+B", "ISSUE #3", "ISSUE #9", "DISCUSSION (1 entries", "comment by maint", "modified changed.txt", "WORKING DIRECTORY\n" + filepath.Join(a.WorktreeBase, res.Manifest.ID, "r1")} {
+	for _, want := range []string{"UNTRUSTED", "Fixes #3", "+B", "TIME BUDGET\nYou have 10 seconds", "ISSUE #3", "ISSUE #9", "DISCUSSION (1 entries", "comment by maint", "modified changed.txt", "WORKING DIRECTORY\n" + filepath.Join(a.WorktreeBase, res.Manifest.ID, "r1")} {
 		if !strings.Contains(string(p), want) {
 			t.Errorf("prompt lacks %q", want)
 		}
@@ -381,6 +381,30 @@ func TestReviewAsksAgainForAMissingReport(t *testing.T) {
 	a.Config.Review.ReportRetries = &none
 	if _, err := a.Review(context.Background(), ReviewRequest{Number: 7}); err == nil || !strings.Contains(err.Error(), "no JSON object found") {
 		t.Fatalf("without retries the reviewer must fail as before: %v", err)
+	}
+}
+
+// TestReviewGivesALargeDiffAsAFile: a diff over max_inline_diff_bytes is
+// written in the reviewer worktree and indexed in the prompt instead.
+func TestReviewGivesALargeDiffAsAFile(t *testing.T) {
+	a, _ := newApp(t, agentCfg(t, "r1", config.RoleReviewer, "valid"), agentCfg(t, "lead", config.RoleLead, "valid"))
+	a.Config.Review.Limits.MaxInlineDiffBytes = 10
+	res, err := a.Review(context.Background(), ReviewRequest{Number: 7, KeepWorktrees: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, _ := os.ReadFile(filepath.Join(res.RunDir, "prompts", "reviewer-r1.txt"))
+	for _, want := range []string{"DIFF FILE (git diff", "in the file " + DiffFileName, "- changed.txt: 1-"} {
+		if !strings.Contains(string(p), want) {
+			t.Errorf("prompt lacks %q:\n%s", want, p)
+		}
+	}
+	if strings.Contains(string(p), "BEGIN UNTRUSTED DIFF") {
+		t.Error("the diff is still inlined")
+	}
+	diff, err := os.ReadFile(filepath.Join(a.WorktreeBase, res.Manifest.ID, "r1", DiffFileName))
+	if err != nil || !strings.Contains(string(diff), "+B") {
+		t.Errorf("diff file: %v\n%s", err, diff)
 	}
 }
 

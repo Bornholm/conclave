@@ -1,0 +1,14 @@
+{{define "time-budget"}}{{with .Budget}}{{if .Duration}}TIME BUDGET
+You have {{minutes .Duration}} of wall-clock time, until {{.Deadline.Format "15:04:05"}} UTC
+(run `date -u` to check the time). Conclave then stops you, and a run stopped
+before it prints its JSON object counts as failed: nothing you found reaches
+the result. Organize your work for that budget:
+- Start with what matters most and spend your time where problems are
+  likely; do not dwell on what you can judge at a glance.
+- Read each file once, by line ranges, and only the parts you need.
+- Run independent reads and searches together rather than one at a time.
+- Once about three quarters of the budget is spent, stop exploring and write
+  the JSON object with what you have verified by then. A shorter answer
+  delivered in time is worth more than a complete one that never arrives.
+
+{{end}}{{end}}{{end}}

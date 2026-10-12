@@ -4,20 +4,23 @@ import "time"
 
 // Default values applied when the YAML leaves a field empty.
 const (
-	DefaultRemote          = "origin"
-	DefaultGitHubBaseURL   = "https://api.github.com"
-	DefaultMaxParallel     = 3
-	DefaultTimeout         = 30 * time.Minute
-	DefaultAgentTimeout    = 15 * time.Minute
-	DefaultLeadTimeout     = 15 * time.Minute
-	DefaultMaxOutputBytes  = 1 << 20
-	DefaultMaxDiffBytes    = 5 << 20
-	DefaultMaxFiles        = 3000
-	DefaultMaxFindings     = 200
-	DefaultMaxIssues       = 10
-	DefaultMaxComments     = 200
-	DefaultMaxCommentBytes = 8 << 10
-	DefaultReportRetries   = 1
+	DefaultRemote         = "origin"
+	DefaultGitHubBaseURL  = "https://api.github.com"
+	DefaultMaxParallel    = 3
+	DefaultTimeout        = 30 * time.Minute
+	DefaultAgentTimeout   = 15 * time.Minute
+	DefaultLeadTimeout    = 15 * time.Minute
+	DefaultMaxOutputBytes = 1 << 20
+	DefaultMaxDiffBytes   = 5 << 20
+	// DefaultMaxInlineDiffBytes keeps about 1500 lines of diff in the
+	// prompt; past that, reviewers read it from a file.
+	DefaultMaxInlineDiffBytes = 64 << 10
+	DefaultMaxFiles           = 3000
+	DefaultMaxFindings        = 200
+	DefaultMaxIssues          = 10
+	DefaultMaxComments        = 200
+	DefaultMaxCommentBytes    = 8 << 10
+	DefaultReportRetries      = 1
 
 	DefaultTriageMaxParallel = 3
 	DefaultMaxTriageIssues   = 50
@@ -75,6 +78,9 @@ func applyDefaults(cfg *Config) {
 	}
 	if cfg.Review.Limits.MaxDiffBytes == 0 {
 		cfg.Review.Limits.MaxDiffBytes = DefaultMaxDiffBytes
+	}
+	if cfg.Review.Limits.MaxInlineDiffBytes == 0 {
+		cfg.Review.Limits.MaxInlineDiffBytes = DefaultMaxInlineDiffBytes
 	}
 	if cfg.Review.Limits.MaxFiles == 0 {
 		cfg.Review.Limits.MaxFiles = DefaultMaxFiles

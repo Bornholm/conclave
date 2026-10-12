@@ -15,13 +15,14 @@ func TestWarnings(t *testing.T) {
 			{ID: "arg", Command: []string{"opencode", "run"}, Input: InputArgument, Output: OutputAuto},
 		},
 	}
+	cfg.Review.Limits.MaxInlineDiffBytes = 1 << 20
 	applyDefaults(cfg)
 	got := strings.Join(Warnings(cfg), "\n")
 	for _, want := range []string{
 		`agent lead: command asks pi for the json event stream but output is "auto"`,
 		"agent lead: max_output_bytes is 1048576",
 		"agent equals: max_output_bytes is 1048576",
-		"agent arg: input is argument but max_diff_bytes is 5242880",
+		"agent arg: input is argument but the prompt may inline 1048576 bytes of diff",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("missing %q in:\n%s", want, got)

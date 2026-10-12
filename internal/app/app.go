@@ -6,12 +6,14 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"time"
 
 	"github.com/bornholm/conclave/internal/config"
 	"github.com/bornholm/conclave/internal/forge"
 	"github.com/bornholm/conclave/internal/forge/factory"
 	"github.com/bornholm/conclave/internal/gitrepo"
 	"github.com/bornholm/conclave/internal/process"
+	"github.com/bornholm/conclave/internal/prompt"
 )
 
 // App wires the components. Zero values fall back to production defaults.
@@ -60,4 +62,19 @@ func (a *App) OpenRepository(ctx context.Context) (*gitrepo.Git, error) {
 		dir = "."
 	}
 	return gitrepo.Open(ctx, dir)
+}
+
+// timeBudget is the time an agent started now has before it is stopped: its
+// own timeout, or less when the run's deadline comes first. Telling the agent
+// lets it pace itself instead of being killed with nothing to show.
+func timeBudget(ctx context.Context, cfg *config.Config, a config.AgentConfig) prompt.TimeBudget {
+	now := time.Now()
+	d := cfg.EffectiveTimeout(a)
+	if deadline, ok := ctx.Deadline(); ok && deadline.Sub(now) < d {
+		d = deadline.Sub(now)
+	}
+	if d <= 0 {
+		return prompt.TimeBudget{}
+	}
+	return prompt.NewTimeBudget(now, d)
 }

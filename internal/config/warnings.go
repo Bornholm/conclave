@@ -23,10 +23,12 @@ const MaxArgBytes = 128 << 10
 func Warnings(cfg *Config) []string {
 	var out []string
 	for _, a := range cfg.Agents {
-		if a.Input == InputArgument && cfg.Review.Limits.MaxDiffBytes >= MaxArgBytes {
+		// A diff over max_inline_diff_bytes goes to a file, so the prompt
+		// carries at most the smaller of the two limits.
+		if inline := min(cfg.Review.Limits.MaxDiffBytes, cfg.InlineDiffBytes()); a.Input == InputArgument && inline >= MaxArgBytes {
 			out = append(out, fmt.Sprintf(
-				"agent %s: input is argument but max_diff_bytes is %d, over the %d-byte limit for a single argument; a diff over that size fails the exec with \"argument list too long\" before the agent starts, set input: stdin or file, or lower max_diff_bytes",
-				a.ID, cfg.Review.Limits.MaxDiffBytes, MaxArgBytes))
+				"agent %s: input is argument but the prompt may inline %d bytes of diff (the smaller of max_diff_bytes and max_inline_diff_bytes), over the %d-byte limit for a single argument; a diff over that size fails the exec with \"argument list too long\" before the agent starts, set input: stdin or file, or lower max_inline_diff_bytes",
+				a.ID, inline, MaxArgBytes))
 		}
 		if a.Input == InputArgument {
 			// The lead is handed the question, the context and every answer

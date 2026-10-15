@@ -410,6 +410,33 @@ func TestReviewDoesNotAskAgainAfterACutShortRun(t *testing.T) {
 	}
 }
 
+// TestReviewDoesNotAskAgainAfterAModelAPIError: a reviewer whose provider
+// refused every call (quota, budget) exits 0 without a word; asking it again
+// would hit the same refusal, so it fails with the provider's message.
+func TestReviewDoesNotAskAgainAfterAModelAPIError(t *testing.T) {
+	r1cfg := agentCfg(t, "r1", config.RoleReviewer, "pi-api-error")
+	r1cfg.Output = config.OutputPiJSON
+	a, _ := newApp(t, r1cfg,
+		agentCfg(t, "r2", config.RoleReviewer, "valid"),
+		agentCfg(t, "lead", config.RoleLead, "valid"))
+	res, err := a.Review(context.Background(), ReviewRequest{Number: 7})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var r1 domain.AgentExecution
+	for _, ex := range res.Manifest.Agents {
+		if ex.ID == "r1" {
+			r1 = ex
+		}
+	}
+	if r1.Succeeded || r1.ReportRetries != 0 || !strings.Contains(r1.Error, "429: budget exceeded") || r1.Model != "p/m" {
+		t.Errorf("manifest: %+v", r1)
+	}
+	if _, err := os.Stat(filepath.Join(res.RunDir, "prompts", "reviewer-r1.retry1.txt")); !os.IsNotExist(err) {
+		t.Errorf("the reviewer was asked again: %v", err)
+	}
+}
+
 // TestReviewGivesALargeDiffAsAFile: a diff over max_inline_diff_bytes is
 // written in the reviewer worktree and indexed in the prompt instead.
 func TestReviewGivesALargeDiffAsAFile(t *testing.T) {

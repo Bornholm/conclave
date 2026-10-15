@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"errors"
 	"strings"
 	"testing"
 
@@ -45,6 +46,12 @@ func TestAdaptPiJSON(t *testing.T) {
 	ad, err = Adapt(config.OutputPiJSON, []byte(thinkingOnly))
 	if err == nil || ad == nil || !strings.Contains(string(ad.Transcript), "three findings in pricing.go") {
 		t.Errorf("a run without text must fail but keep its transcript: %v %+v", err, ad)
+	}
+	// A provider refusal is told apart from a run that wrote nothing.
+	refused := `{"type":"message_end","message":{"role":"assistant","content":[],"stopReason":"error","errorMessage":"429: over budget"}}
+{"type":"auto_retry_end","success":false,"attempt":3,"finalError":"429: over budget"}`
+	if _, err := Adapt(config.OutputPiJSON, []byte(refused)); !errors.Is(err, ErrModelAPI) || !strings.Contains(err.Error(), "429: over budget") {
+		t.Errorf("a refused run must report the API error: %v", err)
 	}
 	if _, err := Adapt("xml", nil); err == nil {
 		t.Error("expected unsupported format error")

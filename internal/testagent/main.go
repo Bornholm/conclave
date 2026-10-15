@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -53,6 +54,15 @@ func main() {
 			fmt.Print(validReport(id))
 		} else {
 			fmt.Print("Let")
+		}
+	case "pi-api-error":
+		// A Pi stream whose provider refused every call: Pi still exits 0,
+		// and would return a report if asked again.
+		if strings.Contains(prompt, "ended without the JSON report") {
+			fmt.Print(`{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":` + strconv.Quote(validReport(id)) + `}]}}` + "\n")
+		} else {
+			fmt.Print(`{"type":"message_end","message":{"role":"assistant","content":[],"provider":"p","model":"m","stopReason":"error","errorMessage":"429: budget exceeded"}}` + "\n" +
+				`{"type":"auto_retry_end","success":false,"attempt":3,"finalError":"429: budget exceeded"}` + "\n")
 		}
 	case "empty":
 	case "stderr":

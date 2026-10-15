@@ -11,6 +11,14 @@ import (
 	"github.com/bornholm/conclave/internal/config"
 )
 
+// ErrModelAPI marks a run whose model API call failed (quota, budget, rate
+// limit, provider outage) so that it produced no answer. The agent may still
+// exit 0: asking it again for its report would hit the same failure.
+var ErrModelAPI = errors.New("model API error")
+
+// maxAPIErrorBytes bounds the provider message kept in the error.
+const maxAPIErrorBytes = 300
+
 // Adapted is the agent output after format-specific processing.
 type Adapted struct {
 	// Report is the text in which the JSON report must be searched.
@@ -84,11 +92,15 @@ type piEvent struct {
 	ToolName string          `json:"toolName"`
 	Args     json.RawMessage `json:"args"`
 	Result   json.RawMessage `json:"result"`
-	Message  *struct {
-		Role     string `json:"role"`
-		Model    string `json:"model"`
-		Provider string `json:"provider"`
-		Content  []struct {
+	// FinalError is set on an auto_retry_end event that gave up.
+	FinalError string `json:"finalError"`
+	Message    *struct {
+		Role         string `json:"role"`
+		Model        string `json:"model"`
+		Provider     string `json:"provider"`
+		StopReason   string `json:"stopReason"`
+		ErrorMessage string `json:"errorMessage"`
+		Content      []struct {
 			Type     string `json:"type"`
 			Text     string `json:"text"`
 			Thinking string `json:"thinking"`
@@ -106,7 +118,7 @@ func adaptPiJSON(stdout []byte) (*Adapted, error) {
 	var transcript bytes.Buffer
 	var trace bytes.Buffer
 	enc := json.NewEncoder(&trace)
-	var lastText string
+	var lastText, apiErr string
 	for _, line := range bytes.Split(stdout, []byte("\n")) {
 		line = bytes.TrimSpace(line)
 		if len(line) == 0 || line[0] != '{' {
@@ -122,9 +134,16 @@ func adaptPiJSON(stdout []byte) (*Adapted, error) {
 			_ = enc.Encode(map[string]any{"type": "tool_call", "tool": ev.ToolName, "args": ev.Args})
 		case "tool_execution_end":
 			_ = enc.Encode(map[string]any{"type": "tool_result", "tool": ev.ToolName, "result_bytes": len(ev.Result)})
+		case "auto_retry_end":
+			if ev.FinalError != "" {
+				apiErr = ev.FinalError
+			}
 		case "message_end":
 			if ev.Message == nil || ev.Message.Role != "assistant" {
 				continue
+			}
+			if ev.Message.StopReason == "error" && ev.Message.ErrorMessage != "" {
+				apiErr = ev.Message.ErrorMessage
 			}
 			if ev.Message.Model != "" {
 				ad.Model = ev.Message.Model
@@ -159,6 +178,9 @@ func adaptPiJSON(stdout []byte) (*Adapted, error) {
 	ad.Trace = trace.Bytes()
 	ad.Transcript = tail(transcript.Bytes(), MaxTranscriptBytes)
 	if lastText == "" {
+		if apiErr != "" {
+			return ad, fmt.Errorf("pi-json: %w: %s", ErrModelAPI, truncate(apiErr, maxAPIErrorBytes))
+		}
 		return ad, errors.New("pi-json: no assistant text message in output")
 	}
 	ad.Report = []byte(lastText)

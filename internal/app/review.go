@@ -473,6 +473,10 @@ func (a *App) reviewerAttempt(ctx context.Context, r *run, rv config.AgentConfig
 	stored := rv
 	stored.ID = name
 	ad, err := a.adapt(r, stored, res.Result.Stdout, ex)
+	if errors.Is(err, agent.ErrModelAPI) {
+		// The model never answered: asking again would hit the same failure.
+		return nil, nil, err
+	}
 	if err != nil {
 		var transcript []byte
 		if ad != nil {
@@ -542,18 +546,22 @@ func (a *App) runLead(ctx context.Context, r *run, lead config.AgentConfig, work
 // the model: the configured value wins, otherwise the one detected in the output.
 func (a *App) adapt(r *run, ag config.AgentConfig, stdout []byte, ex *domain.AgentExecution) (*agent.Adapted, error) {
 	ad, err := agent.Adapt(ag.Output, stdout)
-	if ad != nil && ad.Trace != nil {
-		_ = r.store.Write("raw", ag.ID+".trace.jsonl", ad.Trace)
+	ex.Model = ag.Model
+	if ad != nil {
+		if ad.Trace != nil {
+			_ = r.store.Write("raw", ag.ID+".trace.jsonl", ad.Trace)
+		}
+		// Recorded for a failed run too: they tell which model failed and
+		// how far it got.
+		ex.ToolCalls += ad.ToolCalls
+		if ex.Model == "" {
+			ex.Model = ad.Model
+		}
 	}
 	if err != nil {
 		ex.Error = err.Error()
 		// The partial result still carries the transcript a retry needs.
 		return ad, fmt.Errorf("invalid output: %w", err)
-	}
-	ex.ToolCalls = ad.ToolCalls
-	ex.Model = ag.Model
-	if ex.Model == "" {
-		ex.Model = ad.Model
 	}
 	return ad, nil
 }

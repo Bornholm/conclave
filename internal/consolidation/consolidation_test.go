@@ -45,6 +45,40 @@ func TestGroup(t *testing.T) {
 	}
 }
 
+// TestGroupAcrossCategoriesAndWordings: reviewers file one problem under
+// different categories and word its title differently; the shared lines and
+// description still group it, while another problem on the same lines stays
+// apart.
+func TestGroupAcrossCategoriesAndWordings(t *testing.T) {
+	withDesc := func(f domain.NormalizedFinding, desc string) domain.NormalizedFinding {
+		f.Description = desc
+		return f
+	}
+	fs := []domain.NormalizedFinding{
+		nf("r1", "fill.test.ts", 135, 136, "correctness", "low", "Missing trailing newline at end of file", 0.9),
+		nf("r2", "fill.test.ts", 136, 136, "maintainability", "low", "Missing trailing newline at end of file", 0.9),
+		withDesc(nf("r1", "fill.test.ts", 457, 461, "testing", "high", "Contradictory assertions on TYPAGE_BM 'A' in the linked-patient test", 0.9),
+			"The loop expects every key, including A, to equal empty strings; the next line expects A to equal the alleles parsed from the comment, so the test cannot pass."),
+		withDesc(nf("r3", "fill.test.ts", 457, 460, "testing", "high", "The new linked-patient test asserts both an empty and a filled A group", 0.9),
+			"The loop over the expected keys asserts A is empty, then the test asserts A holds the alleles from the comment: one of the two assertions always fails, the test cannot pass."),
+		withDesc(nf("r2", "fill.test.ts", 455, 460, "performance", "low", "Fixture rebuilt for every key", 0.5),
+			"buildLinkedPatientHprim is called in the loop body and parses the HPRIM message thirteen times."),
+	}
+	SortFindings(fs)
+	groups := Group(fs)
+	if len(groups) != 3 {
+		for _, g := range groups {
+			t.Logf("%v: %s", g.ReportedBy, g.Findings[0].Title)
+		}
+		t.Fatalf("got %d groups, want 3", len(groups))
+	}
+	for _, g := range groups {
+		if g.Findings[0].Category == "performance" && len(g.ReportedBy) != 1 {
+			t.Errorf("another problem on the same lines was merged: %v", g.ReportedBy)
+		}
+	}
+}
+
 func TestFallbackAndFailed(t *testing.T) {
 	outcomes := []ReviewerOutcome{
 		{ID: "r1", Report: &domain.AgentReport{Verdict: domain.VerdictComment, Summary: "fine", Findings: []domain.Finding{

@@ -79,9 +79,9 @@ func SortFindings(fs []domain.NormalizedFinding) {
 	})
 }
 
-// Group clusters findings that describe the same problem: same file, same
-// category, overlapping line ranges and similar titles. Findings from the same
-// reviewer are never merged together.
+// Group clusters findings that describe the same problem: same file,
+// overlapping line ranges and similar titles or descriptions. Findings from
+// the same reviewer are never merged together.
 func Group(findings []domain.NormalizedFinding) []domain.FindingGroup {
 	var groups []domain.FindingGroup
 	for _, f := range findings {
@@ -121,8 +121,12 @@ func sameReviewer(g *domain.FindingGroup, id string) bool {
 	return false
 }
 
+// The category is not compared: models file the same problem under
+// correctness, maintainability or testing alike. A paraphrased title shares
+// few words, so the description is compared too, at a lower threshold since
+// longer texts share fewer words in proportion.
 func similar(a, b domain.NormalizedFinding) bool {
-	if a.File != b.File || a.Category != b.Category || a.OutOfScope != b.OutOfScope {
+	if a.File != b.File || a.OutOfScope != b.OutOfScope {
 		return false
 	}
 	if a.Fingerprint == b.Fingerprint {
@@ -131,7 +135,8 @@ func similar(a, b domain.NormalizedFinding) bool {
 	if !overlap(a.StartLine, a.EndLine, b.StartLine, b.EndLine, 3) {
 		return false
 	}
-	return TitleSimilarity(a.Title, b.Title) >= 0.4
+	return TitleSimilarity(a.Title, b.Title) >= 0.4 ||
+		TitleSimilarity(a.Title+" "+a.Description, b.Title+" "+b.Description) >= 0.2
 }
 
 func overlap(s1, e1, s2, e2, slack int) bool {

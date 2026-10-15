@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/bornholm/conclave/internal/domain"
 )
@@ -65,9 +66,11 @@ func (g *Git) runIn(ctx context.Context, dir string, args ...string) (string, er
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 	if err := cmd.Run(); err != nil {
-		msg := strings.TrimSpace(stderr.String())
-		if msg == "" {
-			msg = err.Error()
+		// Keep the exit status beside stderr: git may print only a progress
+		// line ("Preparing worktree") before failing, or be killed.
+		msg := err.Error()
+		if s := strings.TrimSpace(stderr.String()); s != "" {
+			msg = s + " (" + msg + ")"
 		}
 		return stdout.String(), fmt.Errorf("git %s: %s", strings.Join(redactArgs(args), " "), msg)
 	}
@@ -239,8 +242,15 @@ func (g *Git) CreateWorktree(ctx context.Context, path, sha string) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
-	_, err := g.run(ctx, "worktree", "add", "--detach", path, sha)
-	return err
+	if _, err := g.run(ctx, "worktree", "add", "--detach", path, sha); err != nil {
+		// git may have registered the worktree before failing (a failed
+		// checkout or post-checkout hook): remove it, or it stays listed.
+		cctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), time.Minute)
+		defer cancel()
+		_ = g.RemoveWorktree(cctx, path)
+		return err
+	}
+	return nil
 }
 
 // RemoveWorktree deletes a worktree and its administrative files.

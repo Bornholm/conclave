@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -192,5 +193,38 @@ func TestRedactArgs(t *testing.T) {
 	got := redactArgs([]string{"fetch", "https://user:tok@host/x.git"})
 	if got[1] != "https://***@host/x.git" {
 		t.Errorf("got %q", got[1])
+	}
+}
+
+// TestCreateWorktreeCleansUpAFailedAdd: git registers the worktree before a
+// failing post-checkout hook; the failure must not leave it listed, and the
+// error must say more than git's progress line.
+func TestCreateWorktreeCleansUpAFailedAdd(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell hook")
+	}
+	g, _, head := fixtureRepo(t)
+	ctx := context.Background()
+	hook := filepath.Join(g.CommonDir(), "hooks", "post-checkout")
+	if err := os.MkdirAll(filepath.Dir(hook), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(hook, []byte("#!/bin/sh\nexit 3\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	wt := filepath.Join(t.TempDir(), "wt", "r1")
+	err := g.CreateWorktree(ctx, wt, head)
+	if err == nil {
+		t.Fatal("expected the failing hook to fail the add")
+	}
+	if !strings.Contains(err.Error(), "exit status 3") {
+		t.Errorf("error lacks the exit status: %v", err)
+	}
+	if _, statErr := os.Stat(wt); !os.IsNotExist(statErr) {
+		t.Errorf("worktree directory left behind: %v", statErr)
+	}
+	out, _ := g.run(ctx, "worktree", "list", "--porcelain")
+	if strings.Contains(out, wt) {
+		t.Errorf("worktree still registered:\n%s", out)
 	}
 }

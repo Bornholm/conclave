@@ -38,7 +38,7 @@ A diff larger than `review.limits.max_inline_diff_bytes`, 64 KiB by default or a
 
 ## Time budget
 
-Every prompt, for reviewers, the lead, and the `triage`, `plan` and `ask` agents, states how long the agent has and the UTC time at which it is stopped: its timeout (`agent_timeout`, `lead_timeout` or its own `timeout`), or less when `review.timeout` for the whole run comes first, as it does for a reviewer that waited for a slot under `max_parallel`. The agent is asked to read the important parts first, to batch its reads, and to write its JSON once about three quarters of the time is spent, since a run stopped before its report produces nothing.
+Every prompt, for reviewers, the lead, and the `triage`, `plan` and `ask` agents, states how long the agent has and the UTC time at which it is stopped: its timeout (`agent_timeout`, `lead_timeout` or its own `timeout`), or less when `review.timeout` for the whole run comes first, as it does for a reviewer that waited for a slot under `max_parallel`. The agent is asked to read the important parts first, to batch its reads, and to write its JSON once about three quarters of the time is spent, since a run stopped before its report produces nothing. It is not asked to check the clock: a reviewer limited to read-only tools has no command that reads it, and would spend calls looking for one.
 
 ## Missing reports
 

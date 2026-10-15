@@ -72,7 +72,7 @@ func TestTimeBudget(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(out), "TIME BUDGET\nYou have 15 minutes of wall-clock time, until 14:15:00 UTC") {
+	if !strings.Contains(string(out), "TIME BUDGET\nYou have 15 minutes of wall-clock time, until 14:15:00 UTC.\n") {
 		t.Errorf("prompt lacks the budget:\n%s", out)
 	}
 	out, err = Plan(PlanInput{AgentID: "p", Issue: &domain.Issue{}})
@@ -81,6 +81,19 @@ func TestTimeBudget(t *testing.T) {
 	}
 	if strings.Contains(string(out), "TIME BUDGET") {
 		t.Error("a zero budget is rendered")
+	}
+}
+
+func TestTimeBudgetAsksForNoClock(t *testing.T) {
+	// Reviewers run with read-only tools: a prompt asking them to run a
+	// command sends them calling tools they do not have.
+	now := time.Date(2026, 10, 12, 14, 0, 0, 0, time.UTC)
+	out, err := Reviewer(ReviewerInput{AgentID: "rev", PR: &domain.PullRequest{}, Budget: NewTimeBudget(now, 30*time.Minute)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(out), "date -u") || !strings.Contains(string(out), "do not spend calls looking for the time") {
+		t.Errorf("budget asks for the clock:\n%s", out)
 	}
 }
 

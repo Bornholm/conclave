@@ -67,7 +67,7 @@ func TestAdaptPiJSON(t *testing.T) {
 // usually written its JSON by then, so the deltas are read as the report.
 func TestAdaptPiJSONStoppedMidMessage(t *testing.T) {
 	stream := strings.Join([]string{
-		`{"type":"turn_start"}`,
+		`{"type":"message_start","message":{"role":"assistant","content":[]}}`,
 		`{"type":"message_update","assistantMessageEvent":{"type":"thinking_delta","delta":"let me conclude. "}}`,
 		`{"type":"message_update","assistantMessageEvent":{"type":"text_delta","delta":"Here is the report: "}}`,
 		`{"type":"message_update","assistantMessageEvent":{"type":"text_delta","delta":` + strconv.Quote(reportJSON) + `}}`,
@@ -88,7 +88,7 @@ func TestAdaptPiJSONStoppedMidMessage(t *testing.T) {
 	}
 
 	// A completed message supersedes its deltas, and its report is not partial.
-	completed := `{"type":"turn_start"}
+	completed := `{"type":"message_start","message":{"role":"assistant","content":[]}}
 {"type":"message_update","assistantMessageEvent":{"type":"text_delta","delta":"half a senten"}}
 ` + piStream
 	ad, err = Adapt(config.OutputPiJSON, []byte(completed))
@@ -100,10 +100,10 @@ func TestAdaptPiJSONStoppedMidMessage(t *testing.T) {
 	}
 
 	// A tool call ends the message that asked for it: its deltas are gone.
-	newTurn := `{"type":"turn_start"}
+	newTurn := `{"type":"message_start","message":{"role":"assistant","content":[]}}
 {"type":"message_update","assistantMessageEvent":{"type":"text_delta","delta":"stale"}}
 {"type":"tool_execution_start","toolCallId":"t1","toolName":"read","args":{}}
-{"type":"turn_start"}
+{"type":"message_start","message":{"role":"assistant","content":[]}}
 {"type":"message_update","assistantMessageEvent":{"type":"text_delta","delta":"fresh"}}`
 	ad, err = Adapt(config.OutputPiJSON, []byte(newTurn))
 	if err != nil {

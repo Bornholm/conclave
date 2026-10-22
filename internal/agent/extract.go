@@ -73,6 +73,17 @@ func unescapeCutEnvelope(b []byte) ([]byte, bool) {
 	var out bytes.Buffer
 	found, inStr, key := false, false, false
 	start := 0
+	emit := func(end int) {
+		if key {
+			return
+		}
+		var val string
+		if json.Unmarshal(b[start:end], &val) == nil && strings.Contains(val, "{") {
+			out.WriteString(val)
+			out.WriteByte('\n')
+			found = true
+		}
+	}
 	for i := 0; i < len(b); i++ {
 		c := b[i]
 		if inStr {
@@ -80,14 +91,7 @@ func unescapeCutEnvelope(b []byte) ([]byte, bool) {
 			case c == '\\':
 				i++
 			case c == '"':
-				if !key {
-					var val string
-					if json.Unmarshal(b[start:i+1], &val) == nil && strings.Contains(val, "{") {
-						out.WriteString(val)
-						out.WriteByte('\n')
-						found = true
-					}
-				}
+				emit(i + 1)
 				inStr = false
 			}
 			continue
@@ -101,6 +105,21 @@ func unescapeCutEnvelope(b []byte) ([]byte, bool) {
 				// A key is a string followed by a colon, not a comma.
 				key = prev == '{' || prev == ','
 			}
+		}
+	}
+	if inStr && b[len(b)-1] != '\\' {
+		// The envelope itself was killed mid-value, which is exactly what a
+		// timeout on a streaming agent produces. The value still holds the report
+		// up to the cut, so it is decoded with the string closed: the repair
+		// applied afterwards is what closes the report itself.
+		closed := make([]byte, 0, len(b)-start+1)
+		closed = append(closed, b[start:]...)
+		closed = append(closed, '"')
+		var val string
+		if json.Unmarshal(closed, &val) == nil && strings.Contains(val, "{") {
+			out.WriteString(val)
+			out.WriteByte('\n')
+			found = true
 		}
 	}
 	return out.Bytes(), found
@@ -208,9 +227,13 @@ func closeUnterminated(b []byte) ([]byte, bool) {
 		return nil, false
 	}
 	if !inStr {
-		switch b[len(b)-1] {
-		case '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', '+', '-', '.', 'e', 'E':
-			return nil, false
+		// The last byte is judged after trailing whitespace: a newline appended
+		// by the caller must not hide a number the cut landed in.
+		if trimmed := bytes.TrimRight(b, " \t\r\n"); len(trimmed) > 0 {
+			switch trimmed[len(trimmed)-1] {
+			case '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', '+', '-', '.', 'e', 'E':
+				return nil, false
+			}
 		}
 	}
 	if !valueStarted {
@@ -237,6 +260,34 @@ func closeUnterminated(b []byte) ([]byte, bool) {
 		}
 	}
 	return out.Bytes(), true
+}
+
+// EnsureVerdict adds a conservative verdict to a report that has none, which is
+// what a report cut before its last members looks like: the schema puts the
+// verdict last, so a truncated one has lost it while keeping the findings.
+//
+// The verdict added is "comment", never "approve". A partial report must not be
+// able to approve a pull request: the findings that would have justified a
+// stricter verdict may be exactly the ones the cut destroyed. It returns the
+// document unchanged, and false, when it already carries a verdict.
+func EnsureVerdict(raw []byte) ([]byte, bool) {
+	obj, ok := asObject(bytes.TrimSpace(raw))
+	if !ok {
+		return raw, false
+	}
+	if _, has := obj["verdict"]; has {
+		return raw, false
+	}
+	var rep map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &rep); err != nil {
+		return raw, false
+	}
+	rep["verdict"] = json.RawMessage(`"comment"`)
+	out, err := json.Marshal(rep)
+	if err != nil {
+		return raw, false
+	}
+	return out, true
 }
 
 // ExtractJSON finds the JSON object produced by an agent in its raw stdout.

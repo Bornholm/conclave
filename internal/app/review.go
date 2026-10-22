@@ -417,19 +417,22 @@ func (a *App) runReviewer(ctx context.Context, r *run, rv config.AgentConfig, wo
 			retryCtx, cancel = withGrace(ctx, r.cfg.ReviewReportGrace())
 			budget = newTimeBudget(time.Now(), agent.EffectiveTimeout(retryCtx, r.cfg, rv))
 		}
-		defer cancel()
 		retry, perr := prompt.ReviewerRetry(prompt.ReviewerRetryInput{
 			AgentID: rv.ID, Worktree: worktree, PR: r.pr, MergeBaseSHA: r.pr.MergeBaseSHA, HeadSHA: r.pr.Head.SHA,
 			Problem: "Conclave could not use it: " + ex.Error + ".", Transcript: string(transcript),
 			MaxFindings: r.cfg.Review.Limits.MaxFindings, Budget: budget,
 		})
 		if perr != nil {
+			cancel()
 			break
 		}
 		ex.ReportRetries = attempt
 		ex.Error = ""
 		var more []byte
 		report, more, err = a.reviewerAttempt(retryCtx, r, rv, worktree, name, retry, &ex)
+		// Release this attempt's timer now, so a later iteration does not hold
+		// it until the reviewer returns.
+		cancel()
 		if len(more) > 0 {
 			transcript = more
 		}
@@ -502,10 +505,17 @@ func isRecoverable(err error) bool { return isNoUsableReport(err) || isCutShort(
 // reviewer retry runs on time set aside for it, so it is not cut short again
 // the moment it starts.
 func withGrace(ctx context.Context, d time.Duration) (context.Context, context.CancelFunc) {
-	if d <= 0 {
-		return context.WithCancel(ctx)
+	// WithoutCancel would drop the parent's signal along with its deadline, and
+	// a retry nothing can interrupt outlives Ctrl-C and review.timeout. The
+	// deadline is replaced; the cancellation is forwarded.
+	base, cancelBase := context.WithCancel(context.WithoutCancel(ctx))
+	stop := context.AfterFunc(ctx, cancelBase)
+	retry, cancelTimer := context.WithTimeout(base, d)
+	return retry, func() {
+		stop()
+		cancelTimer()
+		cancelBase()
 	}
-	return context.WithTimeout(context.WithoutCancel(ctx), d)
 }
 
 // salvageTimedOut keeps a report that an interrupted run had already written.
@@ -523,6 +533,7 @@ func (a *App) salvageTimedOut(ctx context.Context, r *run, rv config.AgentConfig
 		return nil, nil, cut
 	}
 	stored := rv
+	stored.ID = name
 	ad, err := a.adapt(r, stored, stdout, ex)
 	if err != nil {
 		if ad != nil {
@@ -657,6 +668,9 @@ func (a *App) runLead(ctx context.Context, r *run, lead config.AgentConfig, work
 // know the report is shorter than the work behind it.
 const cutOffReportWarning = "the report was cut off while being written; it was closed and parsed as far as it went, so anything after the cut is missing"
 
+// cutOffVerdictWarning explains the verdict a truncated report could not carry.
+const cutOffVerdictWarning = "the report was cut before its verdict, so the analysis reports it as comment rather than letting a partial report approve"
+
 // extractReport closes a report that a stopped run left unterminated, for the
 // callers that parse a report themselves. It returns nil when the report is not
 // truncated or cannot be closed honestly.
@@ -699,6 +713,18 @@ func (a *App) adapt(r *run, ag config.AgentConfig, stdout []byte, ex *domain.Age
 	// A report the model never finished writing is closed here, once, for every
 	// caller: review, ask, plan and triage all parse `ad.Report` and would
 	// otherwise each need to remember this step.
+	if closed := extractReport(ad); closed != nil {
+		// A report cut before its last members has lost its verdict, since the
+		// schema puts that field last. Add the conservative one; a partial
+		// report must never be able to approve.
+		var added bool
+		closed, added = agent.EnsureVerdict(closed)
+		ad.Report = closed
+		ex.Warnings = append(ex.Warnings, cutOffReportWarning)
+		if added {
+			ex.Warnings = append(ex.Warnings, cutOffVerdictWarning)
+		}
+	}
 	return ad, nil
 }
 

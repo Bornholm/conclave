@@ -160,13 +160,15 @@ func adaptPiJSON(stdout []byte) (*Adapted, error) {
 			if ev.FinalError != "" {
 				apiErr = ev.FinalError
 			}
-		case "turn_start":
+		case "message_start":
 			// Only the message being written when the run stopped matters, and
-			// a turn writes exactly one. `message_start` is not on the wire -
-			// the JSON stream carries the deltas and the ends - so the turn is
-			// what says a new message began.
-			partial.Reset()
-			turnOpen = true
+			// this is where one begins. Checking the role keeps the user and
+			// toolResult messages from wiping the deltas of the assistant
+			// message that is still open.
+			if ev.Message != nil && ev.Message.Role == "assistant" {
+				partial.Reset()
+				turnOpen = true
+			}
 		case "message_update":
 			if !turnOpen {
 				// A delta without an open turn belongs to a message whose end

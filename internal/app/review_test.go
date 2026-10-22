@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"os"
@@ -608,13 +609,49 @@ func TestReviewSalvagesAReportCutMidMessage(t *testing.T) {
 		t.Fatalf("manifest: %+v", r1)
 	}
 	warnings := strings.Join(r1.Warnings, "\n")
-	if !strings.Contains(warnings, "stopped while still writing") {
-		t.Errorf("the warning must say the run was stopped mid-message: %v", r1.Warnings)
+	for _, want := range []string{"stopped while still writing", "cut off while being written", "cut before its verdict"} {
+		if !strings.Contains(warnings, want) {
+			t.Errorf("the warning must mention %q: %v", want, r1.Warnings)
+		}
 	}
-	if !strings.Contains(warnings, "incomplete message") {
-		t.Errorf("the warning must say the report is incomplete: %v", r1.Warnings)
+	// The repair must be what made this usable, not a fixture that happened to
+	// emit a complete report: the cut loses the findings that came after it.
+	raw, err := os.ReadFile(filepath.Join(res.RunDir, "reports", "r1.json"))
+	if err != nil {
+		t.Fatalf("the salvaged report was not written: %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(res.RunDir, "reports", "r1.json")); err != nil {
-		t.Errorf("the salvaged report was not written: %v", err)
+	var rep domain.AgentReport
+	if err := json.Unmarshal(raw, &rep); err != nil {
+		t.Fatal(err)
+	}
+	if len(rep.Findings) != 1 {
+		t.Errorf("a report cut inside the first finding must keep exactly one, got %d", len(rep.Findings))
+	}
+	// A partial report must never be able to approve what it could not read.
+	if rep.Verdict != domain.VerdictComment {
+		t.Errorf("verdict = %q, want comment on a report cut before its verdict", rep.Verdict)
+	}
+}
+
+// TestWithGraceKeepsCancellation: the grace period replaces the reviewer's
+// deadline, not its cancellation. A retry nothing can interrupt would outlive
+// Ctrl-C and review.timeout, and the run could not finish before it did.
+func TestWithGraceKeepsCancellation(t *testing.T) {
+	parent, cancelParent := context.WithCancel(context.Background())
+	retry, cancelRetry := withGrace(parent, time.Minute)
+	defer cancelRetry()
+
+	if _, ok := retry.Deadline(); !ok {
+		t.Error("the grace period must set a later deadline")
+	}
+	if retry.Err() != nil {
+		t.Fatalf("a fresh retry context is already done: %v", retry.Err())
+	}
+	// The parent's cancellation still reaches the retry.
+	cancelParent()
+	select {
+	case <-retry.Done():
+	case <-time.After(2 * time.Second):
+		t.Error("cancelling the parent must cancel the retry")
 	}
 }

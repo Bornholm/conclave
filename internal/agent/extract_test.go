@@ -352,3 +352,71 @@ func TestExtractTruncatedJSONIsAgentAgnostic(t *testing.T) {
 		})
 	}
 }
+
+// TestEnsureVerdict: the schema puts the verdict last, so a report cut
+// mid-write has lost it while keeping its findings. A partial report must never
+// be able to approve, so the verdict added is the conservative one.
+func TestEnsureVerdict(t *testing.T) {
+	cut := []byte(`{"schema_version":"1","findings":[{"id":"f1"}]}`)
+	out, added := EnsureVerdict(cut)
+	if !added {
+		t.Fatal("a report without a verdict must get one")
+	}
+	var obj map[string]any
+	if err := json.Unmarshal(out, &obj); err != nil {
+		t.Fatalf("output does not parse: %v", err)
+	}
+	if obj["verdict"] != "comment" {
+		t.Errorf("verdict = %v, want comment: a partial report must not approve", obj["verdict"])
+	}
+	// The findings survive.
+	if _, ok := obj["findings"]; !ok {
+		t.Errorf("the repair dropped the findings: %s", out)
+	}
+
+	// A report that has one keeps it.
+	complete := []byte(`{"schema_version":"1","verdict":"request_changes"}`)
+	if _, added := EnsureVerdict(complete); added {
+		t.Error("an existing verdict must not be replaced")
+	}
+}
+
+// TestExtractTruncatedJSONKilledInsideAnEnvelope: Claude Code and opencode both
+// put the answer in a JSON string. A timeout kills the process mid-value, so
+// that string is itself unterminated - the case a real kill produces, unlike a
+// fixture that politely closes its envelope.
+func TestExtractTruncatedJSONKilledInsideAnEnvelope(t *testing.T) {
+	cases := map[string]string{
+		"claude result": `{"type":"result","subtype":"success","result":"{\"schema_version\":\"1\",\"summary\":\"hal`,
+		"opencode part": `{"type":"text","part":{"type":"text","text":"{\"schema_version\":\"1\",\"summary\":\"hal`,
+	}
+	for name, in := range cases {
+		t.Run(name, func(t *testing.T) {
+			out, err := ExtractTruncatedJSON([]byte(in), "schema_version")
+			if err != nil {
+				t.Fatalf("an envelope killed mid-value holds a report up to the cut: %v", err)
+			}
+			var obj map[string]any
+			if err := json.Unmarshal(out, &obj); err != nil {
+				t.Fatalf("recovered report does not parse: %v (%s)", err, out)
+			}
+			if obj["schema_version"] != "1" {
+				t.Errorf("marker lost: %s", out)
+			}
+		})
+	}
+}
+
+// TestExtractTruncatedJSONIgnoresTrailingSpaceWhenJudgingANumber: adapters append
+// a newline to what they keep, and a cut that landed inside a number must still
+// be refused once that byte is there.
+func TestExtractTruncatedJSONIgnoresTrailingSpaceWhenJudgingANumber(t *testing.T) {
+	for _, in := range []string{
+		`{"schema_version":"1","reviewer":{"id":"r"},"n":12`,
+		"{\"schema_version\":\"1\",\"reviewer\":{\"id\":\"r\"},\"n\":12\n",
+	} {
+		if out, err := ExtractTruncatedJSON([]byte(in), "schema_version"); err == nil {
+			t.Errorf("a number cut in half must be refused, got %s", out)
+		}
+	}
+}

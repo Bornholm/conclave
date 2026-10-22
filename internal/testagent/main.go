@@ -150,21 +150,27 @@ func main() {
 		// arrive as deltas, the object never closes, and no message_end ever
 		// comes. The cut falls inside a string, which is what a real stop
 		// produces.
-		// Cut inside the last finding, so the report carries its verdict and
-		// the fields before it, and loses only what came after. The verdict has
-		// to come first: a report without it is invalid whatever else it holds.
+		// Cut inside the description of the first finding, which leaves the
+		// verdict and the first finding's other fields readable: the report is
+		// then repairable, and shorter than the one a complete run writes.
 		rep := validReport(id)
-		const verdict = `"verdict": "request_changes"`
-		cut := len(rep) / 2
-		if i := strings.Index(rep, verdict); i >= 0 {
-			// Keep the verdict, then cut inside what follows it.
-			cut = i + len(verdict) + 5
+		marker := `"description": "Line changed without lock."`
+		i := strings.Index(rep, marker)
+		if i < 0 {
+			fmt.Fprint(os.Stderr, "pi-truncated: marker missing from validReport\n")
+			os.Exit(2)
 		}
-		if cut > len(rep) {
-			cut = len(rep)
+		cut := i + len(`"description": "Line changed`)
+		if cut >= len(rep) {
+			// Never silently emit a complete report: the test would pass
+			// without ever exercising the repair.
+			fmt.Fprint(os.Stderr, "pi-truncated: the cut does not truncate\n")
+			os.Exit(2)
 		}
 		fmt.Println(`{"type":"session","version":3}`)
-		fmt.Println(`{"type":"turn_start"}`)
+		// The real stream opens the message before its deltas; a fixture that
+		// skipped it would exercise a path the agent never produces.
+		fmt.Println(`{"type":"message_start","message":{"role":"assistant","content":[]}}`)
 		fmt.Println(`{"type":"message_update","assistantMessageEvent":{"type":"thinking_delta","delta":"thinking it over. "}}`)
 		fmt.Println(`{"type":"message_update","assistantMessageEvent":{"type":"text_delta","delta":` + strconv.Quote(rep[:cut]) + `}}`)
 		time.Sleep(time.Minute)

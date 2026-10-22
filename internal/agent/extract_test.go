@@ -243,3 +243,112 @@ func TestExtractJSONFromPiStream(t *testing.T) {
 		t.Errorf("fields after the unescaped quotes were lost: %+v", f)
 	}
 }
+
+// TestExtractTruncatedJSONClosesACutReport: a run stopped while the model was
+// writing ends mid-string. Closing it recovers what had been written, and only
+// when the text makes that unambiguous.
+func TestExtractTruncatedJSONClosesACutReport(t *testing.T) {
+	cases := []struct {
+		name string
+		in   string
+		ok   bool
+	}{
+		{"complete", `{"schema_version":"1","findings":[]}`, true},
+		{"cut in string", `{"schema_version":"1","summary":"half a senten`, true},
+		{"cut in nested array", `{"schema_version":"1","findings":[{"id":"f1","title":"hal`, true},
+		// The member being written is dropped, leaving what was complete.
+		{"cut in key", `{"schema_version":"1","summ`, true},
+		{"cut in escape", `{"schema_version":"1","summary":"a\`, false},
+		{"cut in number", `{"schema_version":"1","reviewer":{"id":"r"},"n":12`, false},
+		{"without the marker", `{"other":"x","summary":"half`, false},
+		{"no object at all", `just prose`, false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			out, err := ExtractTruncatedJSON([]byte(c.in), "schema_version")
+			if c.ok && err != nil {
+				t.Fatalf("expected a recovered report, got %v", err)
+			}
+			if !c.ok && err == nil {
+				t.Fatalf("expected a refusal, got %s", out)
+			}
+		})
+	}
+}
+
+// TestExtractTruncatedJSONDropsAnIncompleteMember: a report cut after a key and
+// its colon cannot be closed by adding brackets alone, since that would leave
+// `"note":}`. The incomplete member goes and the complete ones stay.
+func TestExtractTruncatedJSONDropsAnIncompleteMember(t *testing.T) {
+	in := `{"schema_version":"1","summary":"ok","references":[{"source":"main.go","line":1,"note":`
+	out, err := ExtractTruncatedJSON([]byte(in), "schema_version")
+	if err != nil {
+		t.Fatalf("expected a recovered report, got %v", err)
+	}
+	var obj map[string]any
+	if err := json.Unmarshal(out, &obj); err != nil {
+		t.Fatalf("recovered output does not parse: %v (%s)", err, out)
+	}
+	if obj["schema_version"] != "1" || obj["summary"] != "ok" {
+		t.Errorf("complete members were lost: %s", out)
+	}
+	// The reference keeps the fields it had finished; only the member cut in
+	// the middle is gone.
+	refs, ok := obj["references"].([]any)
+	if !ok || len(refs) != 1 {
+		t.Fatalf("the completed part of the reference should stay: %s", out)
+	}
+	ref := refs[0].(map[string]any)
+	if ref["source"] != "main.go" || ref["line"] != float64(1) {
+		t.Errorf("reference mangled: %v", ref)
+	}
+	if _, has := ref["note"]; has {
+		t.Errorf("the member cut mid-value must not appear: %v", ref)
+	}
+
+	// A member cut in the middle of its string keeps everything before it and
+	// closes the string it was writing.
+	out, err = ExtractTruncatedJSON([]byte(`{"schema_version":"1","summary":"a","note":"hal`), "schema_version")
+	if err != nil {
+		t.Fatalf("expected a recovered report, got %v", err)
+	}
+	if err := json.Unmarshal(out, &obj); err != nil {
+		t.Fatalf("recovered output does not parse: %v (%s)", err, out)
+	}
+	if obj["note"] != "hal" {
+		t.Errorf("the partially written value should be kept as far as it went: %s", out)
+	}
+}
+
+// TestExtractTruncatedJSONIsAgentAgnostic: a report printed by any agent and cut
+// short by the timeout is repairable, whatever produced it. Pi streams deltas,
+// opencode emits text parts, Claude Code wraps its answer in an envelope and
+// plain agents print one document. The repair only looks at the report.
+func TestExtractTruncatedJSONIsAgentAgnostic(t *testing.T) {
+	const cut = `{\"schema_version\":\"1\",\"reviewer\":{\"id\":\"r1\"},\"summary\":\"s\",\"findings\":[],\"verd`
+	cases := map[string]string{
+		// A bare document, as an agent printing its answer directly leaves it.
+		"plain stdout": `I reviewed the diff.
+
+{"schema_version":"1","reviewer":{"id":"r1"},"summary":"s","findings":[],"verd`,
+		// Claude Code --output-format json: the answer lives in "result".
+		"claude envelope": `{"type":"result","subtype":"success","result":"` + cut + `"}`,
+		// opencode run --format json: the answer is a text part in an event.
+		"opencode event": `{"type":"text","part":{"type":"text","text":"Here: ` + cut + `"}}`,
+	}
+	for name, in := range cases {
+		t.Run(name, func(t *testing.T) {
+			out, err := ExtractTruncatedJSON([]byte(in), "schema_version")
+			if err != nil {
+				t.Fatalf("a cut report must be repairable whatever wrote it: %v", err)
+			}
+			var obj map[string]any
+			if err := json.Unmarshal(out, &obj); err != nil {
+				t.Fatalf("repaired report does not parse: %v (%s)", err, out)
+			}
+			if obj["schema_version"] != "1" {
+				t.Errorf("marker lost: %s", out)
+			}
+		})
+	}
+}

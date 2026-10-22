@@ -17,6 +17,228 @@ var ErrNoJSON = errors.New("no JSON object found in agent output")
 // like any other text, so a nested object inside it is still found.
 var fenceRe = regexp.MustCompile("(?s)```(?:json)?[ \\t]*\\r?\\n(.*?)```")
 
+// ExtractTruncatedJSON closes a JSON object that was cut off mid-write and
+// parses it. It exists for one case only: a run stopped while the model was
+// still writing its report, where the beginning of the object is intact and
+// the end is simply missing.
+//
+// The repair is deliberately narrow, because a report is a claim about code and
+// a wrong claim is worse than none. An unterminated string is closed and the
+// containers left open are closed after it; the one member the cut fell in the
+// middle of is dropped, since closing around it would leave "note":}, which
+// does not parse. Nothing else is removed and nothing is invented. The result
+// is returned only when it parses strictly once closed and carries the marker,
+// so a candidate cut somewhere hopeless - inside a number, inside an escape
+// sequence, or in the middle of a key - still fails.
+//
+// It depends on no agent: the report is looked for wherever the run left it,
+// bare or inside an envelope, which is what lets the caller apply the same
+// repair to every configured agent.
+func ExtractTruncatedJSON(raw []byte, marker string) ([]byte, error) {
+	// The run stopped mid-message, so its reasoning came with it, and the first
+	// brace in that text is usually a code sample rather than the report. The
+	// report is the last object that opens with the marker key and never
+	// closes: it is the one the model was still writing.
+	for pos := len(raw); pos > 0; {
+		start := bytes.LastIndexByte(raw[:pos], '{')
+		if start < 0 {
+			break
+		}
+		if out, err := closeAt(raw[start:], marker); err == nil {
+			return out, nil
+		}
+		// The answer may sit inside an envelope: a "result" string for Claude
+		// Code, a text part for opencode. Those escape the report, so its braces
+		// arrive as \u007b or \" and the scan above finds the envelope, not the
+		// report. Unescaping the field when the envelope itself is cut short is
+		// what makes this repair independent of which agent wrote the answer.
+		if unescaped, ok := unescapeCutEnvelope(raw[start:]); ok {
+			if out, err := ExtractTruncatedJSON(unescaped, marker); err == nil {
+				return out, nil
+			}
+		}
+		pos = start
+	}
+	return nil, ErrNoJSON
+}
+
+// unescapeCutEnvelope decodes the JSON string values of a document that was
+// itself cut off, so an escaped report inside it can be repaired.
+//
+// Only the string values are decoded, and their order is kept: the report is
+// then found by the same scan that handles a bare one. A document with no
+// string value, or one whose escapes do not decode, produces nothing and the
+// caller moves on to the next brace.
+func unescapeCutEnvelope(b []byte) ([]byte, bool) {
+	var out bytes.Buffer
+	found, inStr, key := false, false, false
+	start := 0
+	for i := 0; i < len(b); i++ {
+		c := b[i]
+		if inStr {
+			switch {
+			case c == '\\':
+				i++
+			case c == '"':
+				if !key {
+					var val string
+					if json.Unmarshal(b[start:i+1], &val) == nil && strings.Contains(val, "{") {
+						out.WriteString(val)
+						out.WriteByte('\n')
+						found = true
+					}
+				}
+				inStr = false
+			}
+			continue
+		}
+		switch c {
+		case '"':
+			inStr, key = true, false
+			start = i
+			if n := len(bytes.TrimRight(b[:i], " \t\r\n")); n > 0 {
+				prev := b[n-1]
+				// A key is a string followed by a colon, not a comma.
+				key = prev == '{' || prev == ','
+			}
+		}
+	}
+	return out.Bytes(), found
+}
+
+// closeAt closes the object starting at b[0], which must carry the marker.
+func closeAt(candidate []byte, marker string) ([]byte, error) {
+	if end := matchBrace(candidate, 0); end >= 0 {
+		// Not truncated after all: it is an ordinary object to search.
+		return ExtractJSON(candidate, marker)
+	}
+	closed, ok := closeUnterminated(candidate)
+	if !ok {
+		return nil, ErrNoJSON
+	}
+	// Once closed, the document goes through the ordinary repair pass: a run
+	// that was cut mid-message is also a run that never got to fix its
+	// escaping, and the two problems arrive together.
+	obj, fixed, ok := parseObject(closed, true)
+	if !ok {
+		return nil, fmt.Errorf("malformed truncated JSON report: %w", ErrNoJSON)
+	}
+	closed = fixed
+	if _, has := obj[marker]; !has {
+		return nil, ErrNoJSON
+	}
+	return closed, nil
+}
+
+// closeUnterminated closes the strings and containers left open at the end of
+// a truncated JSON document, dropping the last member when the cut fell where
+// no bracket can repair it.
+//
+// A cut after `"note":` or after a comma leaves a document that closing alone
+// would turn into `"note":}`, which does not parse. The member being written is
+// the only incomplete thing in the document, so it goes, and everything already
+// complete is kept. That is the whole risk of this repair: a member the model
+// had finished but not yet separated from the next one is indistinguishable
+// from one it had not started, and both are dropped.
+//
+// It reports false for a document it cannot close honestly: one that ends
+// inside an escape sequence, where the missing character could turn out to be a
+// quote or a backslash, or after a number, where closing it would silently keep
+// a truncated value - and a start_line one digit short points at the wrong code.
+func closeUnterminated(b []byte) ([]byte, bool) {
+	var out bytes.Buffer
+	out.Grow(len(b) + 8)
+	// stack holds the open containers; members[i] is where the current member
+	// of stack[i] began, or -1 when it has none.
+	var stack []byte
+	var members []int
+	// valueStarted records that the member being written has a value, so a
+	// trailing comma is a separator rather than an unfinished value.
+	valueStarted := false
+	// inStr and esc track the string being read, if any.
+	inStr, esc := false, false
+	for i := 0; i < len(b); i++ {
+		c := b[i]
+		if inStr {
+			switch {
+			case esc:
+				esc = false
+			case c == '\\':
+				esc = true
+			case c == '"':
+				inStr = false
+			}
+			out.WriteByte(c)
+			continue
+		}
+		switch c {
+		case '"':
+			inStr = true
+			if n := len(stack); n > 0 && stack[n-1] == '{' {
+				trimmed := bytes.TrimRight(out.Bytes(), " \t\r\n")
+				if len(trimmed) > 0 && trimmed[len(trimmed)-1] != '{' && trimmed[len(trimmed)-1] != ',' {
+					valueStarted = true
+				}
+			} else {
+				valueStarted = true
+			}
+		case 't', 'f', 'n', '-', '0', '1', '2', '3', '4', '5', '6', '7', '8', '9':
+			valueStarted = true
+		case '{', '[':
+			stack = append(stack, c)
+			members = append(members, -1)
+			valueStarted = true
+		case '}', ']':
+			if len(stack) == 0 {
+				return nil, false
+			}
+			stack = stack[:len(stack)-1]
+			members = members[:len(members)-1]
+			valueStarted = true
+		case ',':
+			if n := len(stack); n > 0 {
+				members[n-1] = i + 1
+			}
+			valueStarted = false
+		}
+		out.WriteByte(c)
+	}
+	if esc {
+		// The last character was a backslash starting an escape.
+		return nil, false
+	}
+	if !inStr {
+		switch b[len(b)-1] {
+		case '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', '+', '-', '.', 'e', 'E':
+			return nil, false
+		}
+	}
+	if !valueStarted {
+		// The member being written was cut before its value: drop it, so the
+		// closing brackets attach to something that is complete.
+		if len(members) == 0 || members[len(members)-1] < 0 {
+			return nil, false
+		}
+		at := members[len(members)-1]
+		trimmed := bytes.TrimRight(b[:at], " \t\r\n")
+		if len(trimmed) > 0 && trimmed[len(trimmed)-1] == ',' {
+			trimmed = bytes.TrimRight(trimmed[:len(trimmed)-1], " \t\r\n")
+		}
+		out.Reset()
+		out.Write(trimmed)
+	} else if inStr {
+		out.WriteByte('"')
+	}
+	for i := len(stack) - 1; i >= 0; i-- {
+		if stack[i] == '{' {
+			out.WriteByte('}')
+		} else {
+			out.WriteByte(']')
+		}
+	}
+	return out.Bytes(), true
+}
+
 // ExtractJSON finds the JSON object produced by an agent in its raw stdout.
 // It accepts, in order: a raw object; a Claude Code envelope (object with a
 // "structured_output" object or a "result" string, itself processed

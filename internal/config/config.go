@@ -165,6 +165,11 @@ type ReviewConfig struct {
 	// returned no usable report is run again, with its own last words and
 	// the output contract. Nil means DefaultReportRetries; 0 disables it.
 	ReportRetries *int `yaml:"report_retries"`
+	// ReportGrace is how much time past its timeout a reviewer that ran out of
+	// time gets to turn what it wrote into a report, on a run of its own and
+	// with its tools. Nil means DefaultReportGrace; 0 disables it, which is
+	// what a run whose agents pace themselves needs.
+	ReportGrace *time.Duration `yaml:"report_grace"`
 	// RunningLabel is put on the pull request while the review runs and
 	// taken off when it ends, whether it succeeded, failed or was
 	// interrupted. Empty disables it.
@@ -362,6 +367,15 @@ func (c *Config) InlineDiffBytes() int64 {
 		return DefaultMaxInlineDiffBytes
 	}
 	return c.Review.Limits.MaxInlineDiffBytes
+}
+
+// ReviewReportGrace returns how long past its timeout a reviewer that ran out
+// of time is given to convert its transcript into a report.
+func (c *Config) ReviewReportGrace() time.Duration {
+	if c.Review.ReportGrace == nil {
+		return DefaultReportGrace
+	}
+	return *c.Review.ReportGrace
 }
 
 // ReviewReportRetries returns how many times a reviewer without a usable

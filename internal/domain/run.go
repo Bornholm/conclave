@@ -44,7 +44,10 @@ type AgentExecution struct {
 	Duration  time.Duration `json:"duration"`
 	Succeeded bool          `json:"succeeded"`
 	// ReportRetries counts the runs asking again for a missing report.
-	ReportRetries int      `json:"report_retries,omitempty"`
-	Error         string   `json:"error,omitempty"`
-	Warnings      []string `json:"warnings,omitempty"`
+	ReportRetries int `json:"report_retries,omitempty"`
+	// Salvaged marks a run stopped by its time budget whose report was usable
+	// anyway, so the end result is not silently a report about less work.
+	Salvaged bool     `json:"salvaged,omitempty"`
+	Error    string   `json:"error,omitempty"`
+	Warnings []string `json:"warnings,omitempty"`
 }

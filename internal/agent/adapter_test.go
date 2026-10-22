@@ -135,3 +135,29 @@ func TestTailKeepsTheEndOnARuneBoundary(t *testing.T) {
 		t.Errorf("tail = %q", got)
 	}
 }
+
+// TestAdaptPiJSONPrefersTheUnfinishedMessage: a run that finished one message
+// with prose and was then killed while writing its report must yield the
+// report, not the older prose. The deltas are by construction the newest
+// content, since every message_start resets them.
+func TestAdaptPiJSONPrefersTheUnfinishedMessage(t *testing.T) {
+	stream := strings.Join([]string{
+		`{"type":"message_start","message":{"role":"assistant","content":[]}}`,
+		`{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"I will start by reading the diff."}]}}`,
+		`{"type":"message_start","message":{"role":"assistant","content":[]}}`,
+		`{"type":"message_update","assistantMessageEvent":{"type":"text_delta","delta":"{\"schema_version\":\"1\",\"summ"}}`,
+	}, "\n")
+	ad, err := Adapt(config.OutputPiJSON, []byte(stream))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ad.Partial {
+		t.Error("the run was stopped mid-message")
+	}
+	if strings.Contains(string(ad.Report), "I will start by reading") {
+		t.Errorf("the report is the older prose, not the message being written: %s", ad.Report)
+	}
+	if !strings.Contains(string(ad.Report), "schema_version") {
+		t.Errorf("the report must be the unfinished message: %s", ad.Report)
+	}
+}

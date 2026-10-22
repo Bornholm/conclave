@@ -222,9 +222,11 @@ func adaptPiJSON(stdout []byte) (*Adapted, error) {
 		}
 	}
 	ad.Trace = trace.Bytes()
-	if lastText == "" && partial.Len() > 0 {
-		// A run stopped mid-message: keep what it had written, flagged so the
-		// caller can tell this report from a completed one.
+	if partial.Len() > 0 {
+		// A run stopped mid-message. What it was writing is newer than any text
+		// an earlier message left behind - partial is reset on every
+		// message_start - so it is the report, even when lastText holds prose
+		// from a message that had already finished.
 		lastText = partial.String()
 		ad.Partial = true
 		transcript.WriteString(lastText + "\n\n")

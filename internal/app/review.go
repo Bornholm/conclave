@@ -387,7 +387,12 @@ func (a *App) runReviewer(ctx context.Context, r *run, rv config.AgentConfig, wo
 		// The agent used its whole budget. With an agent that paces itself
 		// (the pi deadline extension), what it wrote before stopping is a
 		// report that was simply interrupted, not a run to throw away.
-		report, transcript, err = a.salvageTimedOut(ctx, r, rv, worktree, rv.ID, transcript, &ex)
+		// The salvage reads the output of a process that is already gone; the
+		// run's own deadline may expire while it queries git, which would make
+		// every existence check fail and drop every finding.
+		salvageCtx, cancelSalvage := context.WithTimeout(context.WithoutCancel(ctx), salvageTimeout)
+		report, transcript, err = a.salvageTimedOut(salvageCtx, r, rv, worktree, rv.ID, transcript, &ex)
+		cancelSalvage()
 	}
 	// A reviewer that ran to its end but left no usable report is asked once
 	// more for the report alone, with what it wrote. A timeout is retried too
@@ -414,8 +419,15 @@ func (a *App) runReviewer(ctx context.Context, r *run, rv config.AgentConfig, wo
 		// timeout has, by definition, already been spent.
 		retryCtx, cancel, budget := ctx, context.CancelFunc(func() {}), timeBudget(ctx, r.cfg, rv)
 		if isCutShort(err) {
-			retryCtx, cancel = withGrace(ctx, r.cfg.ReviewReportGrace())
-			budget = newTimeBudget(time.Now(), agent.EffectiveTimeout(retryCtx, r.cfg, rv))
+			if grace := r.cfg.ReviewReportGrace(); grace > 0 {
+				retryCtx, cancel = withGrace(ctx, grace)
+				budget = newTimeBudget(time.Now(), agent.EffectiveTimeout(retryCtx, r.cfg, rv))
+			} else {
+				// report_grace: 0 disables the retry of a run that ran out of
+				// time: there is no time left to give it.
+				a.logger().Warn("reviewer ran out of time and report_grace is 0, not asking again", "agent", rv.ID)
+				break
+			}
 		}
 		retry, perr := prompt.ReviewerRetry(prompt.ReviewerRetryInput{
 			AgentID: rv.ID, Worktree: worktree, PR: r.pr, MergeBaseSHA: r.pr.MergeBaseSHA, HeadSHA: r.pr.Head.SHA,
@@ -434,9 +446,13 @@ func (a *App) runReviewer(ctx context.Context, r *run, rv config.AgentConfig, wo
 			transcript = more
 		}
 		if isCutShort(err) {
-			// The salvage still queries git for each finding's path, so it runs
-			// before the context is released.
-			report, transcript, err = a.salvageTimedOut(retryCtx, r, rv, worktree, name, transcript, &ex)
+			// The salvage queries git for each finding's path. It must not run on
+			// the retry's expiring deadline: an expired context makes every
+			// existence check fail, and every finding is then dropped while the
+			// run is recorded as a success. Only the cancellation is inherited.
+			salvageCtx, cancelSalvage := context.WithTimeout(context.WithoutCancel(ctx), salvageTimeout)
+			report, transcript, err = a.salvageTimedOut(salvageCtx, r, rv, worktree, name, transcript, &ex)
+			cancelSalvage()
 		}
 		// Release this attempt's timer now, so a later iteration does not hold
 		// it until the reviewer returns.
@@ -503,6 +519,10 @@ func isCutShort(err error) bool {
 // without a usable report, or it ran out of time after writing one.
 func isRecoverable(err error) bool { return isNoUsableReport(err) || isCutShort(err) }
 
+// salvageTimeout bounds the work of reading a finished run's output. It is short
+// because nothing is being generated: the process is gone, only the files remain.
+const salvageTimeout = 2 * time.Minute
+
 // withGrace returns a context extended by d past the run's own deadline. A
 // reviewer retry runs on time set aside for it, so it is not cut short again
 // the moment it starts.
@@ -512,6 +532,13 @@ func withGrace(ctx context.Context, d time.Duration) (context.Context, context.C
 	// deadline is replaced; the cancellation is forwarded.
 	base, cancelBase := context.WithCancel(context.WithoutCancel(ctx))
 	stop := context.AfterFunc(ctx, cancelBase)
+	if d <= 0 {
+		// A zero grace period cannot host a retry: the caller is told so by a
+		// context that is already dead, rather than one that expires the moment
+		// the agent starts and turns a timeout into a confusing deadline error.
+		cancelBase()
+		return base, func() { stop() }
+	}
 	retry, cancelTimer := context.WithTimeout(base, d)
 	return retry, func() {
 		stop()

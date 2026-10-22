@@ -704,3 +704,38 @@ func TestAskDoesNotGainAVerdict(t *testing.T) {
 		}
 	}
 }
+
+// TestReviewReportGraceZeroDisablesTheRetry: report_grace: 0 is documented as
+// disabling the retry of a run that ran out of time. It must not launch one on a
+// context that expires immediately, which turned a timeout into a confusing
+// "context deadline exceeded" while still burning a prompt and a raw file.
+func TestReviewReportGraceZeroDisablesTheRetry(t *testing.T) {
+	zero := time.Duration(0)
+	cfg := agentCfg(t, "r1", config.RoleReviewer, "timeout-no-report")
+	cfg.Timeout = 700 * time.Millisecond
+	a, _ := newApp(t, cfg,
+		agentCfg(t, "r2", config.RoleReviewer, "valid"),
+		agentCfg(t, "lead", config.RoleLead, "valid"))
+	a.Config.Review.ReportGrace = &zero
+	res, err := a.Review(context.Background(), ReviewRequest{Number: 7})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(res.RunDir, "prompts", "reviewer-r1.retry1.txt")); !os.IsNotExist(err) {
+		t.Errorf("a zero grace period must not start a retry: %v", err)
+	}
+	var r1 domain.AgentExecution
+	for _, ex := range res.Manifest.Agents {
+		if ex.ID == "r1" {
+			r1 = ex
+		}
+	}
+	if strings.Contains(r1.Error, "context deadline exceeded") {
+		t.Errorf("a disabled retry must leave the timeout readable: %q", r1.Error)
+	}
+	// The first attempt was stopped with only prose written, so the reviewer is
+	// asked to convert it; with the retry disabled, that prose is what failed.
+	if r1.ReportRetries != 0 || !strings.Contains(r1.Error, "no JSON object") {
+		t.Errorf("manifest: %+v", r1)
+	}
+}

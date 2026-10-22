@@ -383,24 +383,45 @@ func (a *App) runReviewer(ctx context.Context, r *run, rv config.AgentConfig, wo
 		return ex, nil, err
 	}
 	report, transcript, err := a.reviewerAttempt(ctx, r, rv, worktree, rv.ID, p, &ex)
+	if isCutShort(err) {
+		// The agent used its whole budget. With an agent that paces itself
+		// (the pi deadline extension), what it wrote before stopping is a
+		// report that was simply interrupted, not a run to throw away.
+		report, transcript, err = a.salvageTimedOut(ctx, r, rv, worktree, rv.ID, transcript, &ex)
+	}
 	// A reviewer that ran to its end but left no usable report is asked once
-	// more for the report alone, with what it wrote. Timeouts and crashes are
-	// not retried: they would most likely happen again.
-	for attempt := 1; isNoUsableReport(err) && attempt <= r.cfg.ReviewReportRetries() && ctx.Err() == nil; attempt++ {
+	// more for the report alone, with what it wrote. A timeout is retried too
+	// when there is a transcript to convert, on time set aside for the purpose:
+	// within the agent timeout it would only happen again.
+	for attempt := 1; isRecoverable(err) && attempt <= r.cfg.ReviewReportRetries() && ctx.Err() == nil; attempt++ {
 		// A run that wrote almost nothing left no review to convert: asked
 		// again, the reviewer returns an empty report or starts over without
-		// the diff, and neither is the review Conclave asked for.
+		// the diff, and neither is the review Conclave asked for. The reason
+		// differs: a run that ended on its own most likely filled its context
+		// window, while one that was stopped simply had not written yet.
 		if n := len(bytes.TrimSpace(transcript)); n < minRecoverableTranscript {
-			err = fmt.Errorf("%w; the run wrote %d bytes, too little to recover a review from: the prompt may exceed the model's context window", err, n)
+			if isCutShort(err) {
+				err = fmt.Errorf("%w; the run wrote %d bytes before it was stopped, too little to recover a review from", err, n)
+			} else {
+				err = fmt.Errorf("%w; the run wrote %d bytes, too little to recover a review from: the prompt may exceed the model's context window", err, n)
+			}
 			ex.Error = err.Error()
 			break
 		}
 		name := fmt.Sprintf("%s.retry%d", rv.ID, attempt)
 		a.logger().Warn("reviewer returned no usable report, asking again", "agent", rv.ID, "attempt", attempt, "reason", ex.Error)
+		// A retry after a timeout runs on its own deadline: the run's own
+		// timeout has, by definition, already been spent.
+		retryCtx, cancel, budget := ctx, context.CancelFunc(func() {}), timeBudget(ctx, r.cfg, rv)
+		if isCutShort(err) {
+			retryCtx, cancel = withGrace(ctx, r.cfg.ReviewReportGrace())
+			budget = newTimeBudget(time.Now(), agent.EffectiveTimeout(retryCtx, r.cfg, rv))
+		}
+		defer cancel()
 		retry, perr := prompt.ReviewerRetry(prompt.ReviewerRetryInput{
 			AgentID: rv.ID, Worktree: worktree, PR: r.pr, MergeBaseSHA: r.pr.MergeBaseSHA, HeadSHA: r.pr.Head.SHA,
 			Problem: "Conclave could not use it: " + ex.Error + ".", Transcript: string(transcript),
-			MaxFindings: r.cfg.Review.Limits.MaxFindings, Budget: timeBudget(ctx, r.cfg, rv),
+			MaxFindings: r.cfg.Review.Limits.MaxFindings, Budget: budget,
 		})
 		if perr != nil {
 			break
@@ -408,9 +429,12 @@ func (a *App) runReviewer(ctx context.Context, r *run, rv config.AgentConfig, wo
 		ex.ReportRetries = attempt
 		ex.Error = ""
 		var more []byte
-		report, more, err = a.reviewerAttempt(ctx, r, rv, worktree, name, retry, &ex)
+		report, more, err = a.reviewerAttempt(retryCtx, r, rv, worktree, name, retry, &ex)
 		if len(more) > 0 {
 			transcript = more
+		}
+		if isCutShort(err) {
+			report, transcript, err = a.salvageTimedOut(retryCtx, r, rv, worktree, name, transcript, &ex)
 		}
 	}
 	if err != nil {
@@ -454,6 +478,80 @@ func isNoUsableReport(err error) bool {
 	return errors.As(err, &target)
 }
 
+// cutShort marks a run that used its whole time budget. Unlike a run that
+// failed, it left whatever it had written on standard output, and an agent
+// that paces itself usually wrote a usable report before stopping.
+type cutShort struct {
+	err        error
+	transcript []byte
+}
+
+func (e cutShort) Error() string { return e.err.Error() }
+func (e cutShort) Unwrap() error { return e.err }
+
+func isCutShort(err error) bool {
+	var target cutShort
+	return errors.As(err, &target)
+}
+
+// isRecoverable reports whether asking again can help: either the run ended
+// without a usable report, or it ran out of time after writing one.
+func isRecoverable(err error) bool { return isNoUsableReport(err) || isCutShort(err) }
+
+// withGrace returns a context extended by d past the run's own deadline. A
+// reviewer retry runs on time set aside for it, so it is not cut short again
+// the moment it starts.
+func withGrace(ctx context.Context, d time.Duration) (context.Context, context.CancelFunc) {
+	if d <= 0 {
+		return context.WithCancel(ctx)
+	}
+	return context.WithTimeout(context.WithoutCancel(ctx), d)
+}
+
+// salvageTimedOut keeps a report that an interrupted run had already written.
+//
+// An agent stopped by its own deadline has, most of the time, written its JSON
+// object: what it lost is the chance to say anything after it. Reading that
+// object is the difference between a usable review and none, so the output is
+// parsed exactly as a completed run's would be, and the run is only reported
+// as timed out when nothing usable came out of it.
+func (a *App) salvageTimedOut(ctx context.Context, r *run, rv config.AgentConfig, worktree, name string, stdout []byte, ex *domain.AgentExecution) (*domain.AgentReport, []byte, error) {
+	cut := cutShort{
+		err: fmt.Errorf("timed out after %s", agent.EffectiveTimeout(ctx, r.cfg, rv).Round(time.Second)),
+	}
+	if len(bytes.TrimSpace(stdout)) == 0 {
+		return nil, nil, cut
+	}
+	stored := rv
+	ad, err := a.adapt(r, stored, stdout, ex)
+	if err != nil {
+		if ad != nil {
+			cut.transcript = ad.Transcript
+		}
+		return nil, cut.transcript, cut
+	}
+	var warnings []string
+	exists := func(p string) bool { return r.git.PathExistsAt(ctx, r.pr.Head.SHA, p) }
+	report, warnings, err := agent.ParseReport(ad.Report, rv.ID, r.changed, exists,
+		agent.Limits{MaxFindings: r.cfg.Review.Limits.MaxFindings, MaxFieldBytes: agent.DefaultLimits.MaxFieldBytes})
+	ex.Warnings = append(ex.Warnings, warnings...)
+	if err != nil {
+		ex.Error = err.Error()
+		cut.transcript = ad.Transcript
+		return nil, cut.transcript, cut
+	}
+	report.Reviewer.Model = ex.Model
+	ex.Error = ""
+	ex.Salvaged = true
+	if ad.Partial {
+		ex.Warnings = append(ex.Warnings, "the agent was stopped while still writing: the report is the incomplete message it was in the middle of")
+	} else {
+		ex.Warnings = append(ex.Warnings, "the agent was stopped by its time budget; the report is the one it had already written")
+	}
+	a.logger().Warn("reviewer was stopped but its report was usable", "agent", rv.ID, "findings", len(report.Findings), "partial", ad.Partial)
+	return report, ad.Transcript, nil
+}
+
 // reviewerAttempt runs a reviewer once with the given prompt, storing its
 // prompt and raw output under name. It returns the report, or the agent's
 // transcript for a retry when the run produced no usable report.
@@ -468,6 +566,16 @@ func (a *App) reviewerAttempt(ctx context.Context, r *run, rv config.AgentConfig
 	}
 	if res.Err != nil {
 		ex.Error = res.Err.Error()
+		if res.TimedOut {
+			// The run was stopped, not broken: whatever it wrote is on
+			// standard output, and the caller decides whether a report can be
+			// made of it.
+			var transcript []byte
+			if res.Result != nil {
+				transcript = res.Result.Stdout
+			}
+			return nil, transcript, cutShort{err: res.Err, transcript: transcript}
+		}
 		return nil, nil, res.Err
 	}
 	stored := rv
@@ -544,6 +652,31 @@ func (a *App) runLead(ctx context.Context, r *run, lead config.AgentConfig, work
 
 // adapt applies the agent's output format, stores the tool trace and records
 // the model: the configured value wins, otherwise the one detected in the output.
+// cutOffReportWarning labels a report recovered from a message a stopped run
+// never finished. Findings after the cut are missing, and the reader has to
+// know the report is shorter than the work behind it.
+const cutOffReportWarning = "the report was cut off while being written; it was closed and parsed as far as it went, so anything after the cut is missing"
+
+// extractReport closes a report that a stopped run left unterminated, for the
+// callers that parse a report themselves. It returns nil when the report is not
+// truncated or cannot be closed honestly.
+//
+// It depends on neither the agent nor its output format, only on the report
+// being incomplete: an agent that streams its answer in deltas (Pi, opencode,
+// Claude with --include-partial-messages) leaves a message that never ended,
+// and an agent that prints one document before exiting leaves that same
+// document cut short. Both are the same problem, so both take the same repair.
+func extractReport(ad *agent.Adapted) []byte {
+	if ad == nil || len(ad.Report) == 0 {
+		return nil
+	}
+	closed, err := agent.ExtractTruncatedJSON(ad.Report, "schema_version")
+	if err != nil {
+		return nil
+	}
+	return closed
+}
+
 func (a *App) adapt(r *run, ag config.AgentConfig, stdout []byte, ex *domain.AgentExecution) (*agent.Adapted, error) {
 	ad, err := agent.Adapt(ag.Output, stdout)
 	ex.Model = ag.Model
@@ -563,6 +696,9 @@ func (a *App) adapt(r *run, ag config.AgentConfig, stdout []byte, ex *domain.Age
 		// The partial result still carries the transcript a retry needs.
 		return ad, fmt.Errorf("invalid output: %w", err)
 	}
+	// A report the model never finished writing is closed here, once, for every
+	// caller: review, ask, plan and triage all parse `ad.Report` and would
+	// otherwise each need to remember this step.
 	return ad, nil
 }
 

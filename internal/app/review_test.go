@@ -387,9 +387,14 @@ func TestReviewAsksAgainForAMissingReport(t *testing.T) {
 // TestReviewDoesNotAskAgainAfterACutShortRun: a reviewer that stopped after
 // a word has no review to convert, so it fails instead of being asked for a
 // report it would make up.
-func TestReviewDoesNotAskAgainAfterACutShortRun(t *testing.T) {
-	a, _ := newApp(t,
-		agentCfg(t, "r1", config.RoleReviewer, "cut-short"),
+// TestReviewDoesNotAskAgainAfterACutShortRun: a reviewer stopped by its
+// timeout that wrote nothing usable is not asked again. It did not end without
+// a report through its own fault, and the context window explanation does not
+// apply: the run was stopped.
+func TestReviewDoesNotAskAgainAfterAPointlessCutShortRun(t *testing.T) {
+	cfg := agentCfg(t, "r1", config.RoleReviewer, "timeout-silent")
+	cfg.Timeout = 700 * time.Millisecond
+	a, _ := newApp(t, cfg,
 		agentCfg(t, "r2", config.RoleReviewer, "valid"),
 		agentCfg(t, "lead", config.RoleLead, "valid"))
 	res, err := a.Review(context.Background(), ReviewRequest{Number: 7})
@@ -402,11 +407,72 @@ func TestReviewDoesNotAskAgainAfterACutShortRun(t *testing.T) {
 			r1 = ex
 		}
 	}
-	if r1.Succeeded || r1.ReportRetries != 0 || !strings.Contains(r1.Error, "context window") {
+	if r1.Succeeded || r1.Salvaged || !strings.Contains(r1.Error, "timed out") {
 		t.Errorf("manifest: %+v", r1)
 	}
-	if _, err := os.Stat(filepath.Join(res.RunDir, "prompts", "reviewer-r1.retry1.txt")); !os.IsNotExist(err) {
-		t.Errorf("the reviewer was asked again: %v", err)
+	if r1.ReportRetries != 0 {
+		t.Errorf("a run that wrote nothing to convert must not be asked again: %+v", r1)
+	}
+}
+
+// TestReviewSalvagesAReportFromACutShortRun: the agent wrote its report, then
+// kept going until it was stopped. The report is usable, and the run is a
+// success with a warning rather than a lost review.
+func TestReviewSalvagesAReportFromACutShortRun(t *testing.T) {
+	cfg := agentCfg(t, "r1", config.RoleReviewer, "timeout-with-report")
+	cfg.Output = config.OutputPiJSON
+	cfg.Timeout = 700 * time.Millisecond
+	a, _ := newApp(t, cfg,
+		agentCfg(t, "r2", config.RoleReviewer, "valid"),
+		agentCfg(t, "lead", config.RoleLead, "valid"))
+	res, err := a.Review(context.Background(), ReviewRequest{Number: 7})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var r1 domain.AgentExecution
+	for _, ex := range res.Manifest.Agents {
+		if ex.ID == "r1" {
+			r1 = ex
+		}
+	}
+	if !r1.Succeeded || !r1.Salvaged {
+		t.Errorf("manifest: %+v", r1)
+	}
+	if r1.Error != "" {
+		t.Errorf("a salvaged run must not report an error: %q", r1.Error)
+	}
+	if !strings.Contains(strings.Join(r1.Warnings, "\n"), "time budget") {
+		t.Errorf("the warning must say the report was interrupted: %v", r1.Warnings)
+	}
+	if _, err := os.Stat(filepath.Join(res.RunDir, "reports", "r1.json")); err != nil {
+		t.Errorf("the salvaged report was not written: %v", err)
+	}
+	if res.Review.Meta.ReviewersSucceeded != 2 {
+		t.Errorf("reviewers succeeded = %d, want 2", res.Review.Meta.ReviewersSucceeded)
+	}
+}
+
+// TestReviewAsksAgainForACutShortRunWithATranscript: the agent wrote prose but
+// no report before it was stopped. A retry on its own deadline, with what it
+// wrote, can still turn that into a report.
+func TestReviewAsksAgainForACutShortRunWithATranscript(t *testing.T) {
+	cfg := agentCfg(t, "r1", config.RoleReviewer, "timeout-no-report")
+	cfg.Timeout = 700 * time.Millisecond
+	a, _ := newApp(t, cfg,
+		agentCfg(t, "r2", config.RoleReviewer, "valid"),
+		agentCfg(t, "lead", config.RoleLead, "valid"))
+	res, err := a.Review(context.Background(), ReviewRequest{Number: 7})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The retry asks for the report and the test agent answers it, so the
+	// reviewer ends up with a usable report after being stopped once.
+	if _, err := os.Stat(filepath.Join(res.RunDir, "prompts", "reviewer-r1.retry1.txt")); err != nil {
+		t.Errorf("the reviewer was not asked again: %v", err)
+	}
+	p, _ := os.ReadFile(filepath.Join(res.RunDir, "prompts", "reviewer-r1.retry1.txt"))
+	if !strings.Contains(string(p), "still reading the changed files") {
+		t.Errorf("the retry prompt lacks the transcript: %s", p)
 	}
 }
 
@@ -516,5 +582,39 @@ func TestReviewRunningLabel(t *testing.T) {
 	}
 	if got := a.Forge.(*fakeForge).labelEvents; len(got) != 0 {
 		t.Errorf("no running label configured, yet: %q", got)
+	}
+}
+
+// TestReviewSalvagesAReportCutMidMessage: the run was stopped while the model
+// was still writing its report, so the JSON has no end. It is closed and used,
+// and the run carries the warning that says findings after the cut are missing.
+func TestReviewSalvagesAReportCutMidMessage(t *testing.T) {
+	cfg := agentCfg(t, "r1", config.RoleReviewer, "pi-truncated")
+	cfg.Output = config.OutputPiJSON
+	a, _ := newApp(t, cfg,
+		agentCfg(t, "r2", config.RoleReviewer, "valid"),
+		agentCfg(t, "lead", config.RoleLead, "valid"))
+	res, err := a.Review(context.Background(), ReviewRequest{Number: 7})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var r1 domain.AgentExecution
+	for _, ex := range res.Manifest.Agents {
+		if ex.ID == "r1" {
+			r1 = ex
+		}
+	}
+	if !r1.Succeeded || !r1.Salvaged {
+		t.Fatalf("manifest: %+v", r1)
+	}
+	warnings := strings.Join(r1.Warnings, "\n")
+	if !strings.Contains(warnings, "stopped while still writing") {
+		t.Errorf("the warning must say the run was stopped mid-message: %v", r1.Warnings)
+	}
+	if !strings.Contains(warnings, "incomplete message") {
+		t.Errorf("the warning must say the report is incomplete: %v", r1.Warnings)
+	}
+	if _, err := os.Stat(filepath.Join(res.RunDir, "reports", "r1.json")); err != nil {
+		t.Errorf("the salvaged report was not written: %v", err)
 	}
 }

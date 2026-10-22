@@ -80,6 +80,23 @@ func main() {
 		os.Exit(1)
 	case "timeout":
 		time.Sleep(time.Minute)
+	case "timeout-with-report":
+		// An agent that paced itself: it wrote its report in time, then kept
+		// going and was stopped. The report is on standard output already.
+		if strings.Contains(prompt, "ended without the JSON report") {
+			fmt.Print(`{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":` + strconv.Quote(validReport(id)) + `}]}}` + "\n")
+			return
+		}
+		fmt.Print(`{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":` + strconv.Quote(validReport(id)) + `}]}}` + "\n")
+		fmt.Fprint(os.Stderr, "still exploring\n")
+		time.Sleep(time.Minute)
+	case "timeout-no-report":
+		// Stopped in the middle of its work, with prose rather than a report.
+		fmt.Print(`{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"I am still reading the changed files and have not written the report yet."}]}}` + "\n")
+		time.Sleep(time.Minute)
+	case "timeout-silent":
+		// Stopped before it wrote anything at all.
+		time.Sleep(time.Minute)
 	case "wrong-reviewer":
 		fmt.Print(validReport("impostor"))
 	case "echo-prompt":
@@ -128,6 +145,29 @@ func main() {
 		fmt.Println(`{"type":"tool_execution_start","toolCallId":"t0","toolName":"read","args":{"path":"changed.txt"}}`)
 		fmt.Println(`{"type":"tool_execution_end","toolCallId":"t0","toolName":"read","result":{"content":[]}}`)
 		fmt.Println(`{"type":"message_end","message":{"role":"assistant","provider":"openrouter","model":"fake/model","content":[{"type":"text","text":"` + rep + `"}]}}`)
+	case "pi-truncated":
+		// A run stopped while the model was writing its report: the halves
+		// arrive as deltas, the object never closes, and no message_end ever
+		// comes. The cut falls inside a string, which is what a real stop
+		// produces.
+		// Cut inside the last finding, so the report carries its verdict and
+		// the fields before it, and loses only what came after. The verdict has
+		// to come first: a report without it is invalid whatever else it holds.
+		rep := validReport(id)
+		const verdict = `"verdict": "request_changes"`
+		cut := len(rep) / 2
+		if i := strings.Index(rep, verdict); i >= 0 {
+			// Keep the verdict, then cut inside what follows it.
+			cut = i + len(verdict) + 5
+		}
+		if cut > len(rep) {
+			cut = len(rep)
+		}
+		fmt.Println(`{"type":"session","version":3}`)
+		fmt.Println(`{"type":"turn_start"}`)
+		fmt.Println(`{"type":"message_update","assistantMessageEvent":{"type":"thinking_delta","delta":"thinking it over. "}}`)
+		fmt.Println(`{"type":"message_update","assistantMessageEvent":{"type":"text_delta","delta":` + strconv.Quote(rep[:cut]) + `}}`)
+		time.Sleep(time.Minute)
 	case "lead-impostor":
 		fmt.Print(strings.Replace(leadReport(), `"reported_by": ["r1"]`, `"reported_by": ["ghost"]`, 1))
 	default:

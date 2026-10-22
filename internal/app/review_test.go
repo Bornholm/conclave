@@ -739,3 +739,34 @@ func TestReviewReportGraceZeroDisablesTheRetry(t *testing.T) {
 		t.Errorf("manifest: %+v", r1)
 	}
 }
+
+// TestSalvageRefusesToReportAnUnvalidatedReport: a finding whose path cannot be
+// checked is dropped, so a context that died while git was being queried leaves
+// an empty report that reads like a clean review. The salvage must fail instead
+// of returning success with nothing in it.
+func TestSalvageRefusesToReportAnUnvalidatedReport(t *testing.T) {
+	a, _ := newApp(t, agentCfg(t, "r1", config.RoleReviewer, "valid"), agentCfg(t, "lead", config.RoleLead, "valid"))
+	dead, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	var ex domain.AgentExecution
+	report, _, err := a.salvageTimedOut(dead, &run{cfg: a.Config, git: nil, changed: nil, store: nil},
+		a.Config.Agents[0], t.TempDir(), "r1", []byte(validPiStreamFor("r1")), &ex)
+	if err == nil {
+		t.Errorf("a report that could not be validated must not be reported as salvaged: %+v", report)
+	}
+	if ex.Salvaged {
+		t.Error("the run must not be marked salvaged when its findings were dropped")
+	}
+}
+
+// validPiStreamFor renders a pi stream carrying one finding on changed.txt.
+func validPiStreamFor(id string) string {
+	rep := `{"schema_version":"1","reviewer":{"id":"` + id + `"},"summary":"s",` +
+		`"findings":[{"id":"f1","category":"correctness","severity":"high","confidence":0.9,` +
+		`"file":"changed.txt","start_line":1,"end_line":1,"title":"t","description":"d"}],` +
+		`"verdict":"comment"}`
+	b, _ := json.Marshal(rep)
+	return `{"type":"message_start","message":{"role":"assistant","content":[]}}` + "\n" +
+		`{"type":"message_update","assistantMessageEvent":{"type":"text_delta","delta":` + string(b) + `}}` + "\n"
+}

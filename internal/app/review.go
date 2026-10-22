@@ -580,6 +580,15 @@ func (a *App) salvageTimedOut(ctx context.Context, r *run, rv config.AgentConfig
 		cut.transcript = ad.Transcript
 		return nil, cut.transcript, cut
 	}
+	// A finding whose path cannot be checked is dropped, so a context that died
+	// during validation would leave an empty report that reads like a clean
+	// review. Say so instead.
+	if err := ctx.Err(); err != nil {
+		err = fmt.Errorf("%w; the report could not be validated, so it was not used", err)
+		ex.Error = err.Error()
+		cut.transcript = ad.Transcript
+		return nil, cut.transcript, cut
+	}
 	report.Reviewer.Model = ex.Model
 	ex.Error = ""
 	ex.Salvaged = true

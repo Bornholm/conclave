@@ -655,3 +655,52 @@ func TestWithGraceKeepsCancellation(t *testing.T) {
 		t.Error("cancelling the parent must cancel the retry")
 	}
 }
+
+// TestReviewSalvagedReportKeepsItsFindings: the salvage queries git for each
+// finding's path, so it must run while its context is still live. Releasing the
+// retry's context first made every PathExistsAt call fail, and the run was then
+// recorded as succeeded with a salvaged report holding no findings at all -
+// a clean-looking review of nothing.
+func TestReviewSalvagedReportKeepsItsFindings(t *testing.T) {
+	cfg := agentCfg(t, "r1", config.RoleReviewer, "pi-truncated")
+	cfg.Output = config.OutputPiJSON
+	a, _ := newApp(t, cfg,
+		agentCfg(t, "r2", config.RoleReviewer, "valid"),
+		agentCfg(t, "lead", config.RoleLead, "valid"))
+	res, err := a.Review(context.Background(), ReviewRequest{Number: 7})
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(filepath.Join(res.RunDir, "reports", "r1.json"))
+	if err != nil {
+		t.Fatalf("the salvaged report was not written: %v", err)
+	}
+	var rep domain.AgentReport
+	if err := json.Unmarshal(raw, &rep); err != nil {
+		t.Fatal(err)
+	}
+	if len(rep.Findings) == 0 {
+		t.Error("a salvaged report whose findings all vanished reads like a clean review: the context was released before the salvage")
+	}
+	for _, f := range rep.Findings {
+		if strings.Contains(strings.ToUpper(f.File), "DOES NOT EXIST") {
+			t.Errorf("a finding survived with an unresolved path: %+v", f)
+		}
+	}
+}
+
+// TestAskDoesNotGainAVerdict: ask, plan and triage reports have no verdict in
+// their schema. Adding one on a truncated report invents a field their contract
+// does not allow.
+func TestAskDoesNotGainAVerdict(t *testing.T) {
+	for _, role := range []string{config.RoleReviewer, config.RoleLead} {
+		if !expectsVerdict(config.AgentConfig{Role: role}) {
+			t.Errorf("%s reports do carry a verdict", role)
+		}
+	}
+	for _, role := range []string{"respondent", "planner"} {
+		if expectsVerdict(config.AgentConfig{Role: role}) {
+			t.Errorf("role %q is neither a reviewer nor the lead: no verdict belongs in its report", role)
+		}
+	}
+}

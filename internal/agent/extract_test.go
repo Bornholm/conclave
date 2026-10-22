@@ -253,7 +253,9 @@ func TestExtractTruncatedJSONClosesACutReport(t *testing.T) {
 		in   string
 		ok   bool
 	}{
-		{"complete", `{"schema_version":"1","findings":[]}`, true},
+		// A document that already closes is not a truncation: reporting it as
+		// repaired is what labelled every complete report as cut off.
+		{"complete", `{"schema_version":"1","findings":[]}`, false},
 		{"cut in string", `{"schema_version":"1","summary":"half a senten`, true},
 		{"cut in nested array", `{"schema_version":"1","findings":[{"id":"f1","title":"hal`, true},
 		// The member being written is dropped, leaving what was complete.
@@ -418,5 +420,20 @@ func TestExtractTruncatedJSONIgnoresTrailingSpaceWhenJudgingANumber(t *testing.T
 		if out, err := ExtractTruncatedJSON([]byte(in), "schema_version"); err == nil {
 			t.Errorf("a number cut in half must be refused, got %s", out)
 		}
+	}
+}
+
+// TestExtractTruncatedJSONLeavesACompleteReportAlone: returning a complete
+// document as "repaired" made every successful run warn that its report had been
+// cut off. Only a document that does not close is a truncation.
+func TestExtractTruncatedJSONLeavesACompleteReportAlone(t *testing.T) {
+	complete := []byte(`{"schema_version":"1","summary":"s","findings":[],"verdict":"approve"}`)
+	if out, err := ExtractTruncatedJSON(complete, "schema_version"); err == nil {
+		t.Errorf("a complete report must not be reported as repaired, got %s", out)
+	}
+	// A complete report inside a complete envelope is not one either.
+	env := []byte(`{"type":"result","result":"{\"schema_version\":\"1\",\"summary\":\"s\"}"}`)
+	if out, err := ExtractTruncatedJSON(env, "schema_version"); err == nil {
+		t.Errorf("a complete envelope must not be reported as repaired, got %s", out)
 	}
 }

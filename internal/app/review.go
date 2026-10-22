@@ -430,15 +430,17 @@ func (a *App) runReviewer(ctx context.Context, r *run, rv config.AgentConfig, wo
 		ex.Error = ""
 		var more []byte
 		report, more, err = a.reviewerAttempt(retryCtx, r, rv, worktree, name, retry, &ex)
-		// Release this attempt's timer now, so a later iteration does not hold
-		// it until the reviewer returns.
-		cancel()
 		if len(more) > 0 {
 			transcript = more
 		}
 		if isCutShort(err) {
+			// The salvage still queries git for each finding's path, so it runs
+			// before the context is released.
 			report, transcript, err = a.salvageTimedOut(retryCtx, r, rv, worktree, name, transcript, &ex)
 		}
+		// Release this attempt's timer now, so a later iteration does not hold
+		// it until the reviewer returns.
+		cancel()
 	}
 	if err != nil {
 		return ex, nil, err
@@ -668,6 +670,12 @@ func (a *App) runLead(ctx context.Context, r *run, lead config.AgentConfig, work
 // know the report is shorter than the work behind it.
 const cutOffReportWarning = "the report was cut off while being written; it was closed and parsed as far as it went, so anything after the cut is missing"
 
+// expectsVerdict reports whether the agent's report schema carries a verdict,
+// which is the case for reviewers and the lead only.
+func expectsVerdict(ag config.AgentConfig) bool {
+	return ag.Role == config.RoleReviewer || ag.Role == config.RoleLead
+}
+
 // cutOffVerdictWarning explains the verdict a truncated report could not carry.
 const cutOffVerdictWarning = "the report was cut before its verdict, so the analysis reports it as comment rather than letting a partial report approve"
 
@@ -714,15 +722,17 @@ func (a *App) adapt(r *run, ag config.AgentConfig, stdout []byte, ex *domain.Age
 	// caller: review, ask, plan and triage all parse `ad.Report` and would
 	// otherwise each need to remember this step.
 	if closed := extractReport(ad); closed != nil {
-		// A report cut before its last members has lost its verdict, since the
-		// schema puts that field last. Add the conservative one; a partial
-		// report must never be able to approve.
-		var added bool
-		closed, added = agent.EnsureVerdict(closed)
 		ad.Report = closed
 		ex.Warnings = append(ex.Warnings, cutOffReportWarning)
-		if added {
-			ex.Warnings = append(ex.Warnings, cutOffVerdictWarning)
+		// The verdict is a field of the reviewer and lead schemas only; ask,
+		// plan and triage reports have none, and inventing one for them would
+		// add a field their contract does not allow.
+		if expectsVerdict(ag) {
+			var added bool
+			ad.Report, added = agent.EnsureVerdict(ad.Report)
+			if added {
+				ex.Warnings = append(ex.Warnings, cutOffVerdictWarning)
+			}
 		}
 	}
 	return ad, nil

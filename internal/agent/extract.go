@@ -126,10 +126,13 @@ func unescapeCutEnvelope(b []byte) ([]byte, bool) {
 }
 
 // closeAt closes the object starting at b[0], which must carry the marker.
+//
+// A candidate that already closes is not a truncation, and says so: returning
+// it as repaired would label every complete report as cut off, which is the
+// opposite of what the caller needs to know.
 func closeAt(candidate []byte, marker string) ([]byte, error) {
 	if end := matchBrace(candidate, 0); end >= 0 {
-		// Not truncated after all: it is an ordinary object to search.
-		return ExtractJSON(candidate, marker)
+		return nil, ErrNoJSON
 	}
 	closed, ok := closeUnterminated(candidate)
 	if !ok {

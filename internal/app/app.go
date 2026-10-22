@@ -8,6 +8,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/bornholm/conclave/internal/agent"
 	"github.com/bornholm/conclave/internal/config"
 	"github.com/bornholm/conclave/internal/forge"
 	"github.com/bornholm/conclave/internal/forge/factory"
@@ -68,11 +69,12 @@ func (a *App) OpenRepository(ctx context.Context) (*gitrepo.Git, error) {
 // own timeout, or less when the run's deadline comes first. Telling the agent
 // lets it pace itself instead of being killed with nothing to show.
 func timeBudget(ctx context.Context, cfg *config.Config, a config.AgentConfig) prompt.TimeBudget {
-	now := time.Now()
-	d := cfg.EffectiveTimeout(a)
-	if deadline, ok := ctx.Deadline(); ok && deadline.Sub(now) < d {
-		d = deadline.Sub(now)
-	}
+	return newTimeBudget(time.Now(), agent.EffectiveTimeout(ctx, cfg, a))
+}
+
+// newTimeBudget renders a duration as a prompt budget, leaving it out when
+// there is none left to state.
+func newTimeBudget(now time.Time, d time.Duration) prompt.TimeBudget {
 	if d <= 0 {
 		return prompt.TimeBudget{}
 	}

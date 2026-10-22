@@ -2,11 +2,15 @@ package agent
 
 import (
 	"errors"
+	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/bornholm/conclave/internal/config"
 )
+
+// reportJSON is a minimal valid reviewer report.
+const reportJSON = `{"schema_version":"1","reviewer":{"id":"r1"},"summary":"s","findings":[],"verdict":"approve"}`
 
 const piStream = `{"type":"session","version":3,"id":"x"}
 {"type":"agent_start"}
@@ -55,6 +59,58 @@ func TestAdaptPiJSON(t *testing.T) {
 	}
 	if _, err := Adapt("xml", nil); err == nil {
 		t.Error("expected unsupported format error")
+	}
+}
+
+// TestAdaptPiJSONStoppedMidMessage: a run killed while the model was still
+// writing leaves no message_end, only deltas. An agent told to conclude has
+// usually written its JSON by then, so the deltas are read as the report.
+func TestAdaptPiJSONStoppedMidMessage(t *testing.T) {
+	stream := strings.Join([]string{
+		`{"type":"turn_start"}`,
+		`{"type":"message_update","assistantMessageEvent":{"type":"thinking_delta","delta":"let me conclude. "}}`,
+		`{"type":"message_update","assistantMessageEvent":{"type":"text_delta","delta":"Here is the report: "}}`,
+		`{"type":"message_update","assistantMessageEvent":{"type":"text_delta","delta":` + strconv.Quote(reportJSON) + `}}`,
+	}, "\n")
+	ad, err := Adapt(config.OutputPiJSON, []byte(stream))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ad.Partial {
+		t.Error("a report recovered from deltas must be marked partial")
+	}
+	if !strings.Contains(string(ad.Report), "Here is the report") || !strings.Contains(string(ad.Report), "schema_version") {
+		t.Errorf("report: %s", ad.Report)
+	}
+	rep, _, err := ParseReport(ad.Report, "r1", nil, nil, Limits{})
+	if err != nil || rep.Verdict != "approve" {
+		t.Errorf("report: %v %+v", err, rep)
+	}
+
+	// A completed message supersedes its deltas, and its report is not partial.
+	completed := `{"type":"turn_start"}
+{"type":"message_update","assistantMessageEvent":{"type":"text_delta","delta":"half a senten"}}
+` + piStream
+	ad, err = Adapt(config.OutputPiJSON, []byte(completed))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ad.Partial || strings.Contains(string(ad.Report), "half a senten") {
+		t.Errorf("a completed message must win: partial=%v report=%s", ad.Partial, ad.Report)
+	}
+
+	// A tool call ends the message that asked for it: its deltas are gone.
+	newTurn := `{"type":"turn_start"}
+{"type":"message_update","assistantMessageEvent":{"type":"text_delta","delta":"stale"}}
+{"type":"tool_execution_start","toolCallId":"t1","toolName":"read","args":{}}
+{"type":"turn_start"}
+{"type":"message_update","assistantMessageEvent":{"type":"text_delta","delta":"fresh"}}`
+	ad, err = Adapt(config.OutputPiJSON, []byte(newTurn))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(ad.Report) != "fresh" {
+		t.Errorf("report = %q, want only the text after the tool call", ad.Report)
 	}
 }
 

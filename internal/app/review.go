@@ -759,7 +759,7 @@ const cutOffReportWarning = "the report was cut off while being written; it was 
 // reviewer and lead agents with a different output schema, so the report's own
 // shape decides.
 func expectsVerdict(report []byte) bool {
-	return agent.CarriesFindings(report)
+	return agent.IsReviewerReport(report)
 }
 
 // cutOffVerdictWarning explains the verdict a truncated report could not carry.

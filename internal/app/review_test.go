@@ -698,6 +698,13 @@ func TestVerdictIsAddedOnlyToAReviewerReport(t *testing.T) {
 	if !expectsVerdict([]byte(reviewerReport)) {
 		t.Error("a report with findings is a reviewer report and carries a verdict")
 	}
+	// A reviewer report cut before its findings kept only reviewer fields: it is
+	// still one, and rejecting it for a missing verdict would lose a review that
+	// had already reached a conclusion in its summary.
+	cutEarly := `{"schema_version":"1","reviewer":{"id":"r"},"summary":"the timeout path is never taken"}`
+	if !expectsVerdict([]byte(cutEarly)) {
+		t.Error("a reviewer report cut before its findings must still get a verdict")
+	}
 	// The shapes the same agents produce for the other commands.
 	for name, doc := range map[string]string{
 		"answer": `{"schema_version":"1","reviewer":{"id":"r"},"answer":"a","key_points":[]}`,

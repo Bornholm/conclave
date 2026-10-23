@@ -281,18 +281,33 @@ func closeUnterminated(b []byte) ([]byte, bool) {
 	return out.Bytes(), true
 }
 
-// CarriesFindings reports whether a document is shaped like a reviewer report,
+// IsReviewerReport reports whether a document is shaped like a reviewer report,
 // which is the only report whose contract has a verdict. Ask, plan and triage
 // reports are produced by the same agents - Planners, Respondents and
 // TriageReviewers all return the reviewer role - so the role cannot decide it;
 // the shape can.
-func CarriesFindings(raw []byte) bool {
+//
+// A cut before "findings" is still a reviewer report: the fields it kept are the
+// ones a reviewer opens with, none of which belong to an answer, a plan or a
+// triage. Telling the two apart matters, since a reviewer report without a
+// verdict is rejected outright while an invented verdict in an answer breaks its
+// contract.
+func IsReviewerReport(raw []byte) bool {
 	obj, ok := asObject(bytes.TrimSpace(raw))
 	if !ok {
 		return false
 	}
-	_, hasFindings := obj["findings"]
-	return hasFindings
+	if _, has := obj["findings"]; has {
+		return true
+	}
+	// Without findings, the document is a reviewer report only if every field it
+	// still has belongs to that shape.
+	for _, k := range []string{"answer", "key_points", "steps", "approach", "understanding", "labels", "status", "number"} {
+		if _, has := obj[k]; has {
+			return false
+		}
+	}
+	return true
 }
 
 // EnsureVerdict adds a conservative verdict to a report that has none, which is

@@ -37,7 +37,12 @@ type ReviewResult struct {
 }
 
 type run struct {
-	cfg       *config.Config
+	cfg *config.Config
+	// verdicts is set by `conclave review`, the one command whose reports, the
+	// reviewers' and the lead's, all carry a verdict. Ask, plan and triage run
+	// the same agents with other schemas, and a cut report of theirs can have
+	// exactly the fields a cut review keeps, so the shape cannot decide it.
+	verdicts  bool
 	git       *gitrepo.Git
 	pr        *domain.PullRequest
 	store     *artifact.Store
@@ -148,7 +153,7 @@ func (a *App) Review(ctx context.Context, req ReviewRequest) (*ReviewResult, err
 		return nil, fmt.Errorf("create temporary directory: %w", err)
 	}
 	r := &run{
-		cfg: cfg, git: git, pr: pr, store: store,
+		cfg: cfg, git: git, pr: pr, store: store, verdicts: true,
 		wtBase:  filepath.Join(wtBase, runID),
 		changed: agent.ChangedSet(pr.ChangedFiles),
 		runner:  &agent.Runner{Process: a.process(), TempDir: runTmp},
@@ -247,7 +252,13 @@ func (a *App) execute(ctx context.Context, r *run, req ReviewRequest) (*domain.C
 	defer a.cleanupWorktrees(r, worktrees, keep)
 
 	outcomes, err := a.runReviewers(ctx, r, reviewers, worktrees)
-	if err != nil {
+	// review.timeout expired while the reviewers ran. The ones it stopped had
+	// their reports salvaged, and failing the review here would throw away the
+	// very reports the salvage exists to keep. There is no time left for the
+	// lead, so the consolidation is the deterministic one. A Ctrl-C and a
+	// fail_fast error are not covered: both mean stop.
+	outOfTime := err != nil && err == ctx.Err() && isStopped(err) && hasReport(outcomes)
+	if err != nil && !outOfTime {
 		return nil, err
 	}
 	var succeeded []string
@@ -282,6 +293,14 @@ func (a *App) execute(ctx context.Context, r *run, req ReviewRequest) (*domain.C
 		}
 	}
 
+	if outOfTime {
+		log.Warn("review timed out before the lead, using deterministic consolidation", "lead", lead.ID, "reviewers", len(succeeded))
+		warnings = append(warnings, fmt.Sprintf("review.timeout expired before lead %s could run: the consolidation is the deterministic one, built from the reports the reviewers had written", lead.ID))
+		review := consolidation.Fallback(groups, outcomes)
+		review.Meta = meta
+		review.Warnings = warnings
+		return review, nil
+	}
 	review, leadWarnings, err := a.runLead(ctx, r, lead, worktrees[lead.ID], outcomes, succeeded, reports, groups)
 	warnings = append(warnings, leadWarnings...)
 	if err != nil {
@@ -309,6 +328,16 @@ func truncateBytes(s string, max int) string {
 		return s
 	}
 	return agent.CutRunes(s, max) + TruncationMarker
+}
+
+// hasReport reports whether at least one reviewer produced a usable report.
+func hasReport(outcomes []consolidation.ReviewerOutcome) bool {
+	for _, o := range outcomes {
+		if o.Report != nil {
+			return true
+		}
+	}
+	return false
 }
 
 func outcomeErrors(outcomes []consolidation.ReviewerOutcome) []error {
@@ -800,14 +829,6 @@ func (a *App) runLead(ctx context.Context, r *run, lead config.AgentConfig, work
 // know the report is shorter than the work behind it.
 const cutOffReportWarning = "the report was cut off while being written; it was closed and parsed as far as it went, so anything after the cut is missing"
 
-// expectsVerdict reports whether this report's contract carries a verdict. The
-// agent role cannot answer it: `conclave ask`, `plan` and `triage` run the same
-// reviewer and lead agents with a different output schema, so the report's own
-// shape decides.
-func expectsVerdict(report []byte) bool {
-	return agent.IsReviewerReport(report)
-}
-
 // cutOffVerdictWarning explains the verdict a truncated report could not carry.
 const cutOffVerdictWarning = "the report was cut before its verdict, so the analysis reports it as comment rather than letting a partial report approve"
 
@@ -859,7 +880,7 @@ func (a *App) adapt(r *run, ag config.AgentConfig, stdout []byte, ex *domain.Age
 		// The verdict is a field of the reviewer and lead schemas only; ask,
 		// plan and triage reports have none, and inventing one for them would
 		// add a field their contract does not allow.
-		if expectsVerdict(ad.Report) {
+		if r.verdicts {
 			var added bool
 			ad.Report, added = agent.EnsureVerdict(ad.Report)
 			if added {

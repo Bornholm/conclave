@@ -28,8 +28,9 @@ var fenceRe = regexp.MustCompile("(?s)```(?:json)?[ \\t]*\\r?\\n(.*?)```")
 // middle of is dropped, since closing around it would leave "note":}, which
 // does not parse. Nothing else is removed and nothing is invented. The result
 // is returned only when it parses strictly once closed and carries the marker,
-// so a candidate cut somewhere hopeless - inside a number, inside an escape
-// sequence, or in the middle of a key - still fails.
+// so a candidate cut somewhere hopeless - inside a number or inside an escape
+// sequence - still fails. A cut in the middle of a key is not one of them: the
+// key is the member the cut fell in, so it is dropped like any other.
 //
 // It depends on no agent: the report is looked for wherever the run left it,
 // bare or inside an envelope, which is what lets the caller apply the same
@@ -46,6 +47,7 @@ func ExtractTruncatedJSON(raw []byte, marker string) ([]byte, error) {
 	// stream holding no report at all is therefore read in linear time. Walking
 	// every brace in full took minutes on 12 MB.
 	key := []byte(`"` + marker + `"`)
+	first := bytes.IndexByte(raw, '{')
 	for pos := len(raw); pos > 0; {
 		start := bytes.LastIndexByte(raw[:pos], '{')
 		if start < 0 {
@@ -68,7 +70,7 @@ func ExtractTruncatedJSON(raw []byte, marker string) ([]byte, error) {
 		}
 		// An envelope holds the report escaped, so its braces never carry the
 		// marker. Only the outermost object can be one.
-		if start == bytes.IndexByte(raw, '{') {
+		if start == first {
 			if out, err := closeTruncated(raw[start:], marker); err == nil {
 				return out, nil
 			}
@@ -331,46 +333,6 @@ func closeUnterminated(b []byte) ([]byte, bool) {
 		}
 	}
 	return out.Bytes(), true
-}
-
-// IsReviewerReport reports whether a document is shaped like a reviewer report,
-// which is the only report whose contract has a verdict. Ask, plan and triage
-// reports are produced by the same agents - Planners, Respondents and
-// TriageReviewers all return the reviewer role - so the role cannot decide it;
-// the shape can.
-//
-// A cut before "findings" is still a reviewer report: the fields it kept are the
-// ones a reviewer opens with, none of which belong to an answer, a plan or a
-// triage. Telling the two apart matters, since a reviewer report without a
-// verdict is rejected outright while an invented verdict in an answer breaks its
-// contract.
-func IsReviewerReport(raw []byte) bool {
-	obj, ok := asObject(bytes.TrimSpace(raw))
-	if !ok {
-		return false
-	}
-	if _, has := obj["findings"]; has {
-		return true
-	}
-	// Without findings, a document is a reviewer report only if every field it
-	// still carries belongs to that shape. The test is positive on purpose: a
-	// blocklist of the fields of the other reports was one field away from
-	// injecting a verdict into a triage consolidation, or an answer.
-	//
-	// The fields allowed here are the ones a reviewer writes before its findings:
-	// its identity and its summary. A verdict already present is allowed too, so
-	// a cut that kept it is not mistaken for another shape.
-	// "questions" is deliberately absent: an answer report carries it too, so a
-	// document with it is not provably a reviewer report.
-	allowed := map[string]bool{
-		"schema_version": true, "reviewer": true, "summary": true, "verdict": true,
-	}
-	for k := range obj {
-		if !allowed[k] {
-			return false
-		}
-	}
-	return true
 }
 
 // EnsureVerdict adds a conservative verdict to a report that has none, which is

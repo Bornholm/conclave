@@ -9,10 +9,12 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/bornholm/conclave/internal/artifact"
 	"github.com/bornholm/conclave/internal/config"
 	"github.com/bornholm/conclave/internal/domain"
 	"github.com/bornholm/conclave/internal/forge"
@@ -691,30 +693,37 @@ func TestReviewSalvagedReportKeepsItsFindings(t *testing.T) {
 }
 
 // TestVerdictIsAddedOnlyToAReviewerReport: ask, plan and triage run the same
-// reviewer and lead agents, so the role cannot decide whether a verdict belongs
-// in the report. The shape does: only a report carrying findings has a verdict in
-// its contract.
+// reviewer and lead agents with other schemas, and a triage consolidation cut
+// after its summary keeps exactly the fields a cut lead review keeps. The shape
+// cannot tell them apart, so the command decides: only a review adds a verdict.
 func TestVerdictIsAddedOnlyToAReviewerReport(t *testing.T) {
-	reviewerReport := `{"schema_version":"1","reviewer":{"id":"r"},"summary":"s","findings":[],"comment":"c"}`
-	if !expectsVerdict([]byte(reviewerReport)) {
-		t.Error("a report with findings is a reviewer report and carries a verdict")
-	}
-	// A reviewer report cut before its findings kept only reviewer fields: it is
-	// still one, and rejecting it for a missing verdict would lose a review that
-	// had already reached a conclusion in its summary.
-	cutEarly := `{"schema_version":"1","reviewer":{"id":"r"},"summary":"the timeout path is never taken"}`
-	if !expectsVerdict([]byte(cutEarly)) {
-		t.Error("a reviewer report cut before its findings must still get a verdict")
-	}
-	// The shapes the same agents produce for the other commands.
-	for name, doc := range map[string]string{
-		"answer": `{"schema_version":"1","reviewer":{"id":"r"},"answer":"a","key_points":[]}`,
-		"plan":   `{"schema_version":"1","reviewer":{"id":"r"},"number":1,"understanding":"u","approach":"a","steps":[]}`,
-		"triage": `{"schema_version":"1","reviewer":{"id":"r"},"number":1,"labels":[],"status":"fixed"}`,
-	} {
-		if expectsVerdict([]byte(doc)) {
-			t.Errorf("an %s report has no verdict in its schema, so none must be added", name)
-		}
+	cut := []byte(`{"schema_version":"1","summary":"the timeout path is never taken`)
+	ag := config.AgentConfig{ID: "r", Output: config.OutputAuto}
+	for _, tc := range []struct {
+		name     string
+		verdicts bool
+	}{{"review", true}, {"triage", false}} {
+		t.Run(tc.name, func(t *testing.T) {
+			store, err := artifact.Open(t.TempDir(), "run")
+			if err != nil {
+				t.Fatal(err)
+			}
+			var ex domain.AgentExecution
+			ad, err := (&App{}).adapt(&run{store: store, verdicts: tc.verdicts}, ag, cut, &ex)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var obj map[string]any
+			if err := json.Unmarshal(ad.Report, &obj); err != nil {
+				t.Fatalf("the cut report must be closed: %v: %s", err, ad.Report)
+			}
+			if _, has := obj["verdict"]; has != tc.verdicts {
+				t.Errorf("verdict added = %v, want %v: %s", has, tc.verdicts, ad.Report)
+			}
+			if slices.Contains(ex.Warnings, cutOffVerdictWarning) != tc.verdicts {
+				t.Errorf("the verdict warning must follow the verdict: %v", ex.Warnings)
+			}
+		})
 	}
 }
 
@@ -807,8 +816,9 @@ func TestSalvageReportsTheConfiguredTimeout(t *testing.T) {
 }
 
 // TestReviewSalvagesARunStoppedByTheReviewTimeout: a reviewer killed because
-// review.timeout expired produces a plain context error, not a TimedOut result,
-// and its output used to be discarded - the same loss this PR exists to prevent.
+// review.timeout expired produces a plain context error, not a TimedOut result.
+// Its output used to be discarded, then salvaged only to be thrown away with the
+// whole review: the published review is what must carry its findings.
 func TestReviewSalvagesARunStoppedByTheReviewTimeout(t *testing.T) {
 	cfg := agentCfg(t, "r1", config.RoleReviewer, "timeout-with-report")
 	cfg.Output = config.OutputPiJSON
@@ -818,23 +828,50 @@ func TestReviewSalvagesARunStoppedByTheReviewTimeout(t *testing.T) {
 		agentCfg(t, "r2", config.RoleReviewer, "valid"),
 		agentCfg(t, "lead", config.RoleLead, "valid"))
 	a.Config.Review.Timeout = 2 * time.Second
-	// The review itself is interrupted, so Review reports that; what matters is
-	// that the reviewer's output was read before it ended.
 	res, err := a.Review(context.Background(), ReviewRequest{Number: 7})
-	if err == nil {
-		t.Fatal("a review stopped by its own timeout must report it")
-	}
-	if res == nil {
-		t.Fatal("the manifest is still written for an interrupted review")
+	if err != nil {
+		t.Fatalf("a review whose reviewers left reports must be published: %v", err)
 	}
 	var r1 domain.AgentExecution
 	for _, ex := range res.Manifest.Agents {
 		if ex.ID == "r1" {
 			r1 = ex
 		}
+		if ex.ID == "lead" {
+			t.Errorf("no lead can run once review.timeout has expired: %+v", ex)
+		}
 	}
 	if !r1.Salvaged {
 		t.Errorf("a run stopped by review.timeout must be salvageable too: %+v", r1)
+	}
+	if res.Review.Meta.ReviewersSucceeded != 2 || res.Review.Meta.LeadUsed {
+		t.Errorf("both reports, no lead: %+v", res.Review.Meta)
+	}
+	var reportedByR1 bool
+	for _, f := range res.Review.Findings {
+		reportedByR1 = reportedByR1 || slices.Contains(f.ReportedBy, "r1")
+	}
+	if !reportedByR1 {
+		t.Errorf("the salvaged report must reach the review: %+v", res.Review.Findings)
+	}
+	if !slices.ContainsFunc(res.Review.Warnings, func(w string) bool { return strings.Contains(w, "review.timeout expired before lead") }) {
+		t.Errorf("the review must say why the lead did not run: %v", res.Review.Warnings)
+	}
+}
+
+// TestReviewTimeoutWithoutReportFails: the salvage only rescues reports that
+// exist. A review.timeout that left none is still a failed review.
+func TestReviewTimeoutWithoutReportFails(t *testing.T) {
+	r1 := agentCfg(t, "r1", config.RoleReviewer, "timeout-silent")
+	r2 := agentCfg(t, "r2", config.RoleReviewer, "timeout-silent")
+	for _, c := range []*config.AgentConfig{&r1, &r2} {
+		c.Output = config.OutputPiJSON
+		c.Timeout = time.Minute
+	}
+	a, _ := newApp(t, r1, r2, agentCfg(t, "lead", config.RoleLead, "valid"))
+	a.Config.Review.Timeout = 2 * time.Second
+	if _, err := a.Review(context.Background(), ReviewRequest{Number: 7}); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("a review.timeout with no report must fail on the deadline, got %v", err)
 	}
 }
 

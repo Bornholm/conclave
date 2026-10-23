@@ -316,10 +316,20 @@ func IsReviewerReport(raw []byte) bool {
 	if _, has := obj["findings"]; has {
 		return true
 	}
-	// Without findings, the document is a reviewer report only if every field it
-	// still has belongs to that shape.
-	for _, k := range []string{"answer", "key_points", "steps", "approach", "understanding", "labels", "status", "number"} {
-		if _, has := obj[k]; has {
+	// Without findings, a document is a reviewer report only if every field it
+	// still carries belongs to that shape. The test is positive on purpose: a
+	// blocklist of the fields of the other reports was one field away from
+	// injecting a verdict into a triage consolidation, or an answer.
+	//
+	// The fields allowed here are the ones a reviewer writes before its findings:
+	// its identity and its summary. A verdict already present is allowed too, so
+	// a cut that kept it is not mistaken for another shape.
+	allowed := map[string]bool{
+		"schema_version": true, "reviewer": true, "summary": true,
+		"verdict": true, "questions": true,
+	}
+	for k := range obj {
+		if !allowed[k] {
 			return false
 		}
 	}
@@ -339,7 +349,19 @@ func EnsureVerdict(raw []byte) ([]byte, bool) {
 	if !ok {
 		return raw, false
 	}
-	if _, has := obj["verdict"]; has {
+	if v, has := obj["verdict"]; has {
+		// A repaired report that says "approve" is downgraded: the findings that
+		// would have justified a stricter verdict may be exactly the ones the cut
+		// destroyed, and a partial review must never be able to approve.
+		var verdict string
+		if json.Unmarshal(v, &verdict) == nil && verdict == "approve" {
+			obj["verdict"] = json.RawMessage(`"comment"`)
+			out, err := json.Marshal(obj)
+			if err != nil {
+				return raw, false
+			}
+			return out, true
+		}
 		return raw, false
 	}
 	var rep map[string]json.RawMessage

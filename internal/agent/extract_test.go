@@ -488,3 +488,55 @@ func TestExtractTruncatedJSONDropsACutMemberAfterAColon(t *testing.T) {
 		})
 	}
 }
+
+// TestIsReviewerReportIsPositive: the check used to list the fields of the other
+// reports and give up on the ones it forgot, which is how a truncated triage
+// consolidation or an answer could gain a verdict its contract forbids.
+func TestIsReviewerReportIsPositive(t *testing.T) {
+	reviewer := []string{
+		`{"schema_version":"1","findings":[]}`,
+		`{"schema_version":"1","reviewer":{"id":"r"},"summary":"s"}`,
+		`{"schema_version":"1","reviewer":{"id":"r"},"summary":"s","verdict":"comment"}`,
+	}
+	for _, doc := range reviewer {
+		if !IsReviewerReport([]byte(doc)) {
+			t.Errorf("a reviewer report must be recognised: %s", doc)
+		}
+	}
+	// Every other shape, including the ones a blocklist would miss.
+	others := map[string]string{
+		"answer":        `{"schema_version":"1","reviewer":{"id":"r"},"answer":"a"}`,
+		"answer caveat": `{"schema_version":"1","reviewer":{"id":"r"},"answer":"a","caveats":[],"open_questions":[]}`,
+		"lead triage":   `{"schema_version":"1","summary":"s","issues":[]}`,
+		"plan":          `{"schema_version":"1","reviewer":{"id":"r"},"steps":[]}`,
+		"triage":        `{"schema_version":"1","number":1,"labels":[],"status":"fixed"}`,
+	}
+	for name, doc := range others {
+		if IsReviewerReport([]byte(doc)) {
+			t.Errorf("an %s report must not gain a verdict: %s", name, doc)
+		}
+	}
+}
+
+// TestEnsureVerdictDowngradesAnApproval: a report cut mid-write lost the findings
+// that came after the cut, so an "approve" it did manage to write is not a
+// judgement on the whole change.
+func TestEnsureVerdictDowngradesAnApproval(t *testing.T) {
+	out, changed := EnsureVerdict([]byte(`{"schema_version":"1","verdict":"approve"}`))
+	if !changed {
+		t.Fatal("an approval inside a repaired report must be downgraded")
+	}
+	var obj map[string]any
+	if err := json.Unmarshal(out, &obj); err != nil {
+		t.Fatal(err)
+	}
+	if obj["verdict"] != "comment" {
+		t.Errorf("verdict = %v, want comment", obj["verdict"])
+	}
+	// A stricter verdict is kept: the cut can only have removed findings, and
+	// removing findings cannot make a change safer.
+	out, changed = EnsureVerdict([]byte(`{"schema_version":"1","verdict":"request_changes"}`))
+	if changed {
+		t.Errorf("a request_changes verdict must be kept: %s", out)
+	}
+}

@@ -395,7 +395,15 @@ func (a *App) runReviewer(ctx context.Context, r *run, rv config.AgentConfig, wo
 		// the context's deadline has passed, so EffectiveTimeout on it returns a
 		// negative duration and the message would claim the reviewer died before
 		// it started.
-		report, transcript, err = a.salvageTimedOut(salvageCtx, r, rv, worktree, rv.ID, r.cfg.EffectiveTimeout(rv), transcript, &ex)
+		// The budget the run actually had: the whole review may have stopped it
+		// long before its own timeout, and naming the configured one would blame
+		// the agent for a deadline it never reached.
+		timeout := r.cfg.EffectiveTimeout(rv)
+		var stopped cutShort
+		if errors.As(err, &stopped) && stopped.timeout > 0 {
+			timeout = stopped.timeout
+		}
+		report, transcript, err = a.salvageTimedOut(salvageCtx, r, rv, worktree, rv.ID, timeout, transcript, &ex)
 		cancelSalvage()
 	}
 	// A reviewer that ran to its end but left no usable report is asked once
@@ -515,6 +523,10 @@ func isNoUsableReport(err error) bool {
 type cutShort struct {
 	err        error
 	transcript []byte
+	// timeout is the budget actually applied to the run, which is what the
+	// report must name: recomputing it from the configuration claims 30 minutes
+	// for a reviewer the whole review stopped after 2.
+	timeout time.Duration
 }
 
 func (e cutShort) Error() string { return e.err.Error() }
@@ -652,7 +664,7 @@ func (a *App) reviewerAttempt(ctx context.Context, r *run, rv config.AgentConfig
 			if res.Result != nil {
 				transcript = res.Result.Stdout
 			}
-			return nil, transcript, cutShort{err: res.Err, transcript: transcript}
+			return nil, transcript, cutShort{err: res.Err, transcript: transcript, timeout: res.Timeout}
 		}
 		return nil, nil, res.Err
 	}
@@ -732,7 +744,10 @@ func (a *App) runLead(ctx context.Context, r *run, lead config.AgentConfig, work
 		ex.Error = ""
 		ex.Salvaged = true
 		ex.Succeeded = true
-		ex.Warnings = append(warnings, "the lead was stopped by its time budget; the consolidation is the one it had already written")
+		// The warnings adapt() added about a truncated report stay: overwriting
+		// them published a cut consolidation as a complete one.
+		ex.Warnings = append(ex.Warnings, warnings...)
+		ex.Warnings = append(ex.Warnings, "the lead was stopped by its time budget; the consolidation is the one it had already written")
 		log.Warn("lead was stopped but its consolidation was usable", "lead", lead.ID, "findings", len(review.Findings))
 		return review, ex.Warnings, nil
 	}
@@ -742,7 +757,7 @@ func (a *App) runLead(ctx context.Context, r *run, lead config.AgentConfig, work
 	}
 	exists := func(p string) bool { return r.git.PathExistsAt(ctx, r.pr.Head.SHA, p) }
 	review, warnings, err := consolidation.ParseLeadReview(ad.Report, succeeded, outcomes, r.changed, exists, r.cfg.Review.Limits.MaxFindings)
-	ex.Warnings = warnings
+	ex.Warnings = append(ex.Warnings, warnings...)
 	if err != nil {
 		ex.Error = err.Error()
 		return nil, warnings, fmt.Errorf("invalid lead review: %w", err)

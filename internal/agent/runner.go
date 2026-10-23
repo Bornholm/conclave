@@ -26,6 +26,8 @@ type Execution struct {
 	// TimedOut reports that the run used its whole budget and was stopped.
 	// What it wrote is still in Result, unlike a run that failed.
 	TimedOut bool
+	// Timeout is the budget that was applied, after clamping to the context.
+	Timeout time.Duration
 }
 
 // Runner executes configured agents inside their worktree.
@@ -80,7 +82,7 @@ func (r *Runner) Run(ctx context.Context, cfg *config.Config, a config.AgentConf
 	}
 	start := time.Now()
 	res, err := r.Process.Run(ctx, req)
-	ex := Execution{Result: res, Duration: time.Since(start)}
+	ex := Execution{Result: res, Duration: time.Since(start), Timeout: timeout}
 	ex.TimedOut = res != nil && res.TimedOut
 	switch {
 	case err != nil:

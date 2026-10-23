@@ -288,9 +288,16 @@ export default function conclave(pi: ExtensionAPI) {
 			}
 			track(
 				setTimeout(() => {
-					reach(ctx, next);
-					// Later stages still need their own timer.
-					schedule(ctx);
+					// Outside any handler: a throw here, from a context a session
+					// replacement invalidated for instance, would end the process
+					// and lose the very answer this stage is meant to secure.
+					try {
+						reach(ctx, next);
+						// Later stages still need their own timer.
+						schedule(ctx);
+					} catch (error) {
+						log(`stage ${next} failed: ${error instanceof Error ? error.message : String(error)}`);
+					}
 				}, delay),
 			);
 		}

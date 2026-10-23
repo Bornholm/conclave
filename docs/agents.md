@@ -23,7 +23,7 @@ The files are embedded in the binary. What is installed is always the version th
 
 ## Where
 
-By default, in the user's configuration: `~/.pi/agent`, or the directory named by `PI_CODING_AGENT_DIR`. This is what Conclave's own runs use: Pi loads every extension of that directory, so the reviewers configured in `.conclave.yaml` need nothing on their command line.
+By default, in the user's configuration: `~/.pi/agent`, or the directory named by `PI_CODING_AGENT_DIR`. An agent configured with `inherit_env: false` does not receive that variable and reads `~/.pi/agent`: pass it in the agent's `environment` in that case. This is what Conclave's own runs use: Pi loads every extension of that directory, so the reviewers configured in `.conclave.yaml` need nothing on their command line.
 
 `--project PATH` installs into `.pi/` at the root of that repository instead. Two things limit it. Pi loads a project's extensions and skills only once the project is trusted. And Conclave runs each agent in a fresh worktree at the revision under review, where only committed files exist: a project install reaches Conclave's runs only once it is committed, and is otherwise for the people working in the repository.
 
@@ -36,7 +36,7 @@ Two warnings name files that compete with the installed ones, without touching t
 - a skill of the same name under `~/.agents/skills`, or `.agents/skills` for a project, which Pi also reads: with two skills of one name it loads only one;
 - an `extensions/deadline.ts`, the standalone extension `conclave.ts` comes from, in the directory installed into or, for a project install, in the user's: with both, two extensions steer the same run.
 
-An extension passed explicitly with `--extension` in `.conclave.yaml` is not seen by the command. Remove it once `conclave.ts` is installed.
+An extension passed in an agent's `command` in `.conclave.yaml` (`pi --extension …/deadline.ts`) is not seen by the command. Remove it once `conclave.ts` is installed, along with the `--deadline-env-prefix CONCLAVE` that Conclave 0.9.0 documented for it: Pi rejects that flag once the standalone extension is gone.
 
 ## The Pi extension
 

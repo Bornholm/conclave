@@ -212,3 +212,38 @@ func TestRelativePiCodingAgentDirIsMadeAbsolute(t *testing.T) {
 		t.Fatalf("root %s is relative", rep.Root)
 	}
 }
+
+func TestForceWritesThroughASymlink(t *testing.T) {
+	repo := t.TempDir()
+	dotfiles := t.TempDir()
+	mine := filepath.Join(dotfiles, "SKILL.md")
+	if err := os.WriteFile(mine, []byte("mine"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(repo, ".pi", "skills", "conclave-ask", "SKILL.md")
+	if err := os.MkdirAll(filepath.Dir(link), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(mine, link); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := Install(pi(t), Options{Project: repo})
+	if !errors.Is(err, ErrConflict) || !strings.Contains(err.Error(), "conclave-ask") {
+		t.Fatalf("err = %v, want ErrConflict naming the file", err)
+	}
+	if _, err := Install(pi(t), Options{Project: repo, Force: true}); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Lstat(link)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode()&fs.ModeSymlink == 0 {
+		t.Fatal("--force replaced the symlink with a plain file")
+	}
+	want, _ := assets.ReadFile("assets/skills/conclave-ask/SKILL.md")
+	if got, _ := os.ReadFile(mine); !bytes.Equal(got, want) {
+		t.Fatal("the link target was not updated")
+	}
+}

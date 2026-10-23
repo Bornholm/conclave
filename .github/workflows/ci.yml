@@ -38,5 +38,7 @@ jobs:
       - uses: actions/setup-node@v5
         with:
           node-version: 22
-      - run: npm install --ignore-scripts --no-audit --no-fund
+          cache: npm
+          cache-dependency-path: internal/integration/typecheck/package-lock.json
+      - run: npm ci --ignore-scripts --no-audit --no-fund
       - run: npx tsc -p tsconfig.json

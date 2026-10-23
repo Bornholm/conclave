@@ -49,9 +49,17 @@ nohup sh -c 'conclave ask --project . < "$1/question.txt" > "$1/answer.md" 2> "$
 until [ -f "$OUT/answer.done" ]; do sleep 10; done; echo "exit=$(cat "$OUT/answer.done")"
 ```
 
-With `--context FILE` the question still comes from standard input; with
-`--context -` standard input is the context, and the question has to be an
-argument: pass it to the inner shell as `"$2"`, as the review skill does.
+With `--context FILE` the question still comes from standard input. With
+`--context -`, standard input is the context, so the question has to be a
+positional argument: not `-q`, which cannot be combined with a positional one.
+Pass it to the inner shell as `"$2"`:
+
+```bash
+OUT=$(mktemp -d)
+nohup sh -c 'conclave ask "$2" --context - < "$1/context.log" > "$1/answer.md" 2> "$1/answer.log"; echo $? > "$1/answer.done"' sh "$OUT" "What is crashing here, and why?" >/dev/null 2>&1 &
+```
+
+with the material written to `$OUT/context.log` first.
 
 `--format json` gives the structured answer instead of Markdown. The
 configuration is `.conclave.yaml` in the working directory, then in

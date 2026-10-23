@@ -129,8 +129,9 @@ type Report struct {
 	Warnings []string
 }
 
-// ErrConflict is returned when a file was left alone because it differs.
-var ErrConflict = errors.New("some files differ from the bundled version and were left alone, --force replaces them")
+// ErrConflict is returned, wrapped with the paths concerned, when files were
+// left alone because they differ. The other files are installed.
+var ErrConflict = errors.New("files differ from the bundled version and were left alone, --force replaces them")
 
 // Install writes the agent's extensions and every skill under its root. A file
 // that already holds the same content is left as is, one that differs is only
@@ -145,14 +146,16 @@ func Install(a Agent, opts Options) (*Report, error) {
 		return nil, err
 	}
 	rep := &Report{Root: root}
-	conflict := false
+	var conflicts []string
 	for _, f := range files {
 		dst := filepath.Join(root, filepath.FromSlash(f.Path))
 		st, err := write(f.Asset, dst, opts.Force)
 		if err != nil {
 			return rep, err
 		}
-		conflict = conflict || st == Conflict
+		if st == Conflict {
+			conflicts = append(conflicts, dst)
+		}
 		rep.Results = append(rep.Results, Result{Path: dst, Status: st})
 	}
 	// A project install leaves the user's extensions loaded, so an old one
@@ -164,8 +167,8 @@ func Install(a Agent, opts Options) (*Report, error) {
 		}
 	}
 	rep.Warnings = append(a.superseded(superseded...), a.shadowed(base)...)
-	if conflict {
-		return rep, ErrConflict
+	if len(conflicts) > 0 {
+		return rep, fmt.Errorf("%w: %s", ErrConflict, strings.Join(conflicts, ", "))
 	}
 	return rep, nil
 }
@@ -234,11 +237,21 @@ func (a Agent) shadowed(base string) []string {
 }
 
 // write copies one embedded file to dst, through a temporary file so that a
-// failed write never leaves half a file where the agent loads it.
+// failed write never leaves half a file where the agent loads it. A symbolic
+// link is written through, at its target: renaming over the link would replace
+// it with a plain file, and leave the user's own copy, in a dotfiles repository
+// for instance, behind.
 func write(asset, dst string, force bool) (Status, error) {
 	data, err := assets.ReadFile(asset)
 	if err != nil {
 		return 0, err
+	}
+	if info, err := os.Lstat(dst); err == nil && info.Mode()&fs.ModeSymlink != 0 {
+		target, err := filepath.EvalSymlinks(dst)
+		if err != nil {
+			return 0, fmt.Errorf("%s: %w", dst, err)
+		}
+		dst = target
 	}
 	status := Created
 	current, err := os.ReadFile(dst)

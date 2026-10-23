@@ -49,6 +49,9 @@ type Agent struct {
 	// Supersedes are files, relative to the agent's root, that an extension
 	// replaces: left in place, both would act on the same run.
 	Supersedes []string
+	// SupersededArgs are command-line arguments of the agent that only made
+	// sense with what the installed files replace.
+	SupersededArgs []string
 }
 
 var agents = map[string]Agent{
@@ -71,6 +74,9 @@ var agents = map[string]Agent{
 		// The standalone deadline extension conclave.ts was derived from: both
 		// would steer the run and lower its thinking.
 		Supersedes: []string{"extensions/deadline.ts"},
+		// Conclave 0.9.0 documented passing it that way: Pi rejects the flag
+		// once the extension that registered it is gone.
+		SupersededArgs: []string{"--deadline-env-prefix"},
 	},
 }
 
@@ -105,12 +111,15 @@ const (
 	Replaced
 	// Conflict means a different file is there and was left alone.
 	Conflict
+	// Failed means the file could not be compared or written; Err says why.
+	Failed
 )
 
 // Result is the outcome for one file.
 type Result struct {
 	Path   string
 	Status Status
+	Err    error
 }
 
 // Options selects where to install.
@@ -146,19 +155,23 @@ func Install(a Agent, opts Options) (*Report, error) {
 		return nil, err
 	}
 	rep := &Report{Root: root}
+	// One file that cannot be written does not stop the others: each is
+	// reported, and the warnings below are computed whatever happened.
 	var conflicts []string
+	var errs []error
 	for _, f := range files {
 		dst := filepath.Join(root, filepath.FromSlash(f.Path))
 		// Only the user's own links are followed: a repository can commit a
 		// link to any file of the user's, and --force would overwrite it.
 		st, err := write(f.Asset, dst, opts.Force, opts.Project == "")
-		if err != nil {
-			return rep, err
-		}
-		if st == Conflict {
+		switch {
+		case err != nil:
+			st = Failed
+			errs = append(errs, fmt.Errorf("%s: %w", dst, err))
+		case st == Conflict:
 			conflicts = append(conflicts, dst)
 		}
-		rep.Results = append(rep.Results, Result{Path: dst, Status: st})
+		rep.Results = append(rep.Results, Result{Path: dst, Status: st, Err: err})
 	}
 	// A project install leaves the user's extensions loaded, so an old one
 	// there competes with the new one as much as one in the project.
@@ -168,11 +181,19 @@ func Install(a Agent, opts Options) (*Report, error) {
 			superseded = append(superseded, user)
 		}
 	}
-	rep.Warnings = append(a.superseded(superseded...), a.shadowed(base)...)
-	if len(conflicts) > 0 {
-		return rep, fmt.Errorf("%w: %s", ErrConflict, strings.Join(conflicts, ", "))
+	// Pi reads the user's skill directories whatever the project, so a
+	// project install competes with those too.
+	bases := []string{base}
+	if opts.Project != "" {
+		if home, err := os.UserHomeDir(); err == nil {
+			bases = append(bases, home)
+		}
 	}
-	return rep, nil
+	rep.Warnings = append(a.superseded(superseded...), a.shadowed(bases...)...)
+	if len(conflicts) > 0 {
+		errs = append(errs, fmt.Errorf("%w: %s", ErrConflict, strings.Join(conflicts, ", ")))
+	}
+	return rep, errors.Join(errs...)
 }
 
 // roots returns where the files go and the directory SkillDirs are relative to.
@@ -204,6 +225,26 @@ func (a Agent) files() ([]File, error) {
 	return files, err
 }
 
+// StaleArgs returns the arguments of an agent's command that load or configure
+// what the installed files replace: a superseded file passed by path, or a flag
+// only that file understood.
+func (a Agent) StaleArgs(command []string) []string {
+	var stale []string
+	for _, arg := range command {
+		for _, flag := range a.SupersededArgs {
+			if arg == flag || strings.HasPrefix(arg, flag+"=") {
+				stale = append(stale, arg)
+			}
+		}
+		for _, p := range a.Supersedes {
+			if filepath.Base(arg) == path.Base(p) {
+				stale = append(stale, arg)
+			}
+		}
+	}
+	return stale
+}
+
 // superseded warns about files the installed extensions replace, under any of
 // roots.
 func (a Agent) superseded(roots ...string) []string {
@@ -219,19 +260,21 @@ func (a Agent) superseded(roots ...string) []string {
 	return warnings
 }
 
-// shadowed warns about skills of the same name the agent would also discover:
-// it loads only one of them.
-func (a Agent) shadowed(base string) []string {
+// shadowed warns about skills of the same name the agent would also discover
+// under any of bases: it loads only one of them.
+func (a Agent) shadowed(bases ...string) []string {
 	skills, err := fs.ReadDir(assets, skillsDir)
 	if err != nil {
 		return nil
 	}
 	var warnings []string
-	for _, dir := range a.SkillDirs {
-		for _, s := range skills {
-			other := filepath.Join(base, dir, s.Name())
-			if _, err := os.Stat(other); err == nil {
-				warnings = append(warnings, fmt.Sprintf("%s also reads %s: with two skills named %s it loads only one of them", a.Name, other, s.Name()))
+	for _, base := range bases {
+		for _, dir := range a.SkillDirs {
+			for _, s := range skills {
+				other := filepath.Join(base, dir, s.Name())
+				if _, err := os.Stat(other); err == nil {
+					warnings = append(warnings, fmt.Sprintf("%s also reads %s: with two skills named %s it loads only one of them", a.Name, other, s.Name()))
+				}
 			}
 		}
 	}

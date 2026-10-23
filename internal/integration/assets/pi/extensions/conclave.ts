@@ -155,7 +155,10 @@ function isAnswer(message: { role: string; content?: unknown }): boolean {
 }
 
 export default function conclave(pi: ExtensionAPI) {
-
+	// Per session, not per run: the steering message and the last-chance
+	// continuation start runs of their own, and the deadline is the process's,
+	// so the tools stay off and the continuation stays spent across them.
+	// session_start resets it all.
 	let budgetMs: number | undefined;
 	/** Wall-clock instant, in epoch ms, at which the run must be over. */
 	let deadlineAt = 0;
@@ -304,6 +307,16 @@ export default function conclave(pi: ExtensionAPI) {
 	}
 
 	pi.on("session_start", (_event, _ctx) => {
+		// A replaced session starts over, and one without a deadline leaves the
+		// extension inert rather than holding the previous session's.
+		clearTimers();
+		budgetMs = undefined;
+		deadlineAt = 0;
+		stage = "work";
+		sawText = false;
+		continuedOnce = false;
+		pendingSteer = undefined;
+
 		const envAt = readEnv(ENV_DEADLINE_AT);
 		const envBudget = readEnv(ENV_BUDGET_MS);
 

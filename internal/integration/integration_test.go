@@ -274,3 +274,48 @@ func TestProjectInstallNeverWritesThroughASymlink(t *testing.T) {
 		t.Fatalf("the link should have been replaced by the bundled file: %v", err)
 	}
 }
+
+func TestOneFailedFileDoesNotStopTheOthersNorTheWarnings(t *testing.T) {
+	user := t.TempDir()
+	t.Setenv("PI_CODING_AGENT_DIR", user)
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	if err := os.MkdirAll(filepath.Join(home, ".agents", "skills", "conclave-review"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// A dangling link: its target cannot be resolved, so it cannot be written through.
+	dangling := filepath.Join(user, "skills", "conclave-ask", "SKILL.md")
+	if err := os.MkdirAll(filepath.Dir(dangling), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(t.TempDir(), "gone", "SKILL.md"), dangling); err != nil {
+		t.Fatal(err)
+	}
+	rep, err := Install(pi(t), Options{})
+	if err == nil || !strings.Contains(err.Error(), dangling) {
+		t.Fatalf("err = %v, want one naming %s", err, dangling)
+	}
+	for path, st := range statuses(rep) {
+		want := Created
+		if path == dangling {
+			want = Failed
+		}
+		if st != want {
+			t.Errorf("%s: status %v, want %v", path, st, want)
+		}
+	}
+	if len(rep.Warnings) == 0 {
+		t.Error("the warnings were dropped by the failure")
+	}
+}
+
+func TestStaleArgs(t *testing.T) {
+	cmd := []string{"pi", "--print", "--extension", "/home/me/pi-extensions/deadline.ts", "--deadline-env-prefix", "CONCLAVE", "--model", "x"}
+	got := strings.Join(pi(t).StaleArgs(cmd), " ")
+	if got != "/home/me/pi-extensions/deadline.ts --deadline-env-prefix" {
+		t.Fatalf("stale = %q", got)
+	}
+	if stale := pi(t).StaleArgs([]string{"pi", "--print", "--model", "x"}); len(stale) != 0 {
+		t.Fatalf("stale = %v for a clean command", stale)
+	}
+}

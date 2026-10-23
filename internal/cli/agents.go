@@ -3,8 +3,10 @@ package cli
 import (
 	"context"
 	"errors"
+	"flag"
 	"fmt"
 	"io"
+	"os"
 	"strings"
 
 	"github.com/bornholm/conclave/internal/agent"
@@ -31,9 +33,17 @@ func runAgentsInstall(ctx context.Context, args []string, stdout, stderr io.Writ
 	fs := newFlagSet("agents install", stderr)
 	project := fs.String("project", "", "install into the repository holding PATH, at its root (\".\" for the current one), instead of the user configuration")
 	force := fs.Bool("force", false, "replace files that differ from the bundled version")
+	configPath := fs.String("config", config.DefaultFileName, "configuration whose agent commands are checked for what the install replaces, when it exists")
 	positional, err := parseInterspersed(fs, args)
 	if err != nil {
 		return err
+	}
+	projectSet := false
+	fs.Visit(func(f *flag.Flag) { projectSet = projectSet || f.Name == "project" })
+	if projectSet && *project == "" {
+		// Most likely an unset variable: installing into the user
+		// configuration instead would be a different command.
+		return errors.New("--project needs a path, \".\" for the current repository")
 	}
 	if len(positional) != 1 {
 		return fmt.Errorf("usage: conclave agents install <%s> [--project PATH] [--force]", strings.Join(integration.Agents(), "|"))
@@ -55,13 +65,40 @@ func runAgentsInstall(ctx context.Context, args []string, stdout, stderr io.Writ
 	rep, err := integration.Install(a, opts)
 	if rep != nil {
 		for _, r := range rep.Results {
+			if r.Err != nil {
+				fmt.Fprintf(stdout, "%s %s: %v\n", installMarks[r.Status], r.Path, r.Err)
+				continue
+			}
 			fmt.Fprintf(stdout, "%s %s\n", installMarks[r.Status], r.Path)
 		}
 		for _, w := range rep.Warnings {
 			fmt.Fprintf(stdout, "! %s\n", w)
 		}
 	}
+	for _, w := range staleCommands(a, *configPath) {
+		fmt.Fprintf(stdout, "! %s\n", w)
+	}
 	return err
+}
+
+// staleCommands warns about agents of the configuration at path whose command
+// still loads or configures what the install replaces. A missing or invalid
+// configuration is not this command's concern: it says nothing then.
+func staleCommands(a integration.Agent, path string) []string {
+	if _, err := os.Stat(path); err != nil {
+		return nil
+	}
+	cfg, err := config.Load(path)
+	if err != nil {
+		return nil
+	}
+	var warnings []string
+	for _, ag := range cfg.Agents {
+		if stale := a.StaleArgs(ag.Command); len(stale) > 0 {
+			warnings = append(warnings, fmt.Sprintf("%s: agent %s still passes %s, which the installed files replace: remove it from its command", path, ag.ID, strings.Join(stale, " ")))
+		}
+	}
+	return warnings
 }
 
 var installMarks = map[integration.Status]string{
@@ -69,6 +106,7 @@ var installMarks = map[integration.Status]string{
 	integration.Unchanged: "= unchanged",
 	integration.Replaced:  "✓ replaced ",
 	integration.Conflict:  "✗ differs  ",
+	integration.Failed:    "✗ failed   ",
 }
 
 func runAgentsCheck(ctx context.Context, args []string, stdout, stderr io.Writer) error {

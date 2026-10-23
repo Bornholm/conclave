@@ -36,7 +36,9 @@ Two warnings name files that compete with the installed ones, without touching t
 - a skill of the same name under `~/.agents/skills`, or `.agents/skills` for a project, which Pi also reads: with two skills of one name it loads only one;
 - an `extensions/deadline.ts`, the standalone extension `conclave.ts` comes from, in the directory installed into or, for a project install, in the user's: with both, two extensions steer the same run.
 
-An extension passed in an agent's `command` in `.conclave.yaml` (`pi --extension …/deadline.ts`) is not seen by the command. Remove it once `conclave.ts` is installed, along with the `--deadline-env-prefix CONCLAVE` that Conclave 0.9.0 documented for it: Pi rejects that flag once the standalone extension is gone.
+The command also reads `.conclave.yaml`, or the file named by `--config`, when it exists, and warns about an agent whose `command` still passes `deadline.ts`, with `pi --extension …/deadline.ts`, or the `--deadline-env-prefix CONCLAVE` that Conclave 0.9.0 documented for it. Remove both once `conclave.ts` is installed: the first would steer the same run twice, and Pi rejects the second once the standalone extension is gone.
+
+A file that cannot be compared or written, a dangling symbolic link for instance, is reported `failed` with the reason. The other files are still installed and the warnings still computed, and the command fails.
 
 ## The Pi extension
 

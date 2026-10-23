@@ -370,3 +370,26 @@ func TestAgentsInstall(t *testing.T) {
 		}
 	}
 }
+
+func TestAgentsInstallWarnsAboutAStaleConfiguration(t *testing.T) {
+	t.Setenv("PI_CODING_AGENT_DIR", t.TempDir())
+	stale := strings.Replace(exampleConfig, "      - --\n    input: argument", "      - --extension\n      - /x/deadline.ts\n      - --deadline-env-prefix\n      - CONCLAVE\n      - --\n    input: argument", 1)
+	if stale == exampleConfig {
+		t.Fatal("the example no longer has the pi agent this test edits")
+	}
+	cfg := filepath.Join(t.TempDir(), "c.yaml")
+	if err := os.WriteFile(cfg, []byte(stale), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var out, errb bytes.Buffer
+	if code := Main([]string{"agents", "install", "pi", "--config", cfg}, &out, &errb); code != 0 {
+		t.Fatalf("install: %d %s%s", code, out.String(), errb.String())
+	}
+	if !strings.Contains(out.String(), "agent pi still passes /x/deadline.ts --deadline-env-prefix") {
+		t.Fatalf("no warning about the stale command: %s", out.String())
+	}
+	out.Reset()
+	if code := Main([]string{"agents", "install", "pi", "--project", ""}, &out, &errb); code == 0 {
+		t.Fatal("--project with an empty path must fail")
+	}
+}

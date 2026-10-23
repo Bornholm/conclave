@@ -38,13 +38,15 @@ With several agents and a lead, an answer takes minutes. Launch it so it
 survives the tool call, and wait on a sentinel. Write the question to a file
 and pass it on standard input, never inside the `sh -c` script: a question is
 free text, and one holding a quote would end the string and run the rest as a
-command.
+command. The heredoc is quoted, so nothing in it is expanded; only a line equal
+to its delimiter would end it, so pick a delimiter that does not occur in the
+question.
 
 ```bash
 OUT=$(mktemp -d)
-cat > "$OUT/question.txt" <<'QUESTION'
+cat > "$OUT/question.txt" <<'CONCLAVE_QUESTION_END'
 Where is the retry policy of the HTTP client, and what does it retry?
-QUESTION
+CONCLAVE_QUESTION_END
 nohup sh -c 'conclave ask --project . < "$1/question.txt" > "$1/answer.md" 2> "$1/answer.log"; echo $? > "$1/answer.done"' sh "$OUT" >/dev/null 2>&1 &
 until [ -f "$OUT/answer.done" ]; do sleep 10; done; echo "exit=$(cat "$OUT/answer.done")"
 ```

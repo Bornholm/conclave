@@ -12,9 +12,14 @@ findings before repeating them, then report or post.
 ## Launch detached, always
 
 ```bash
-OUT=$(mktemp -d)
+OUT=$(mktemp -d "${TMPDIR:-/tmp}/conclave-review.XXXXXX")
 nohup sh -c 'conclave review "$2" > "$1/review.md" 2> "$1/review.log"; echo $? > "$1/review.done"' sh "$OUT" N >/dev/null 2>&1 &
+echo "$OUT"
 ```
+
+Note the directory it prints. A shell variable does not survive from one tool
+call to the next in most agents, so the commands below use that literal path
+wherever they say `$OUT`.
 
 Values reach the inner shell as positional arguments, never pasted into its
 script: a value holding a quote would otherwise end the string and run the rest

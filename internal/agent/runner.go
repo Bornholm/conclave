@@ -128,7 +128,7 @@ func lastLine(b []byte) string {
 // EffectiveTimeout is the wall-clock limit of one agent run: its own timeout,
 // or the shorter of the configured one and what the parent context leaves.
 // Exporting it to the child keeps its own deadline aligned with this one, so
-// an agent that paces itself ends before it is killed.
+// an agent that paces itself has written its report before it is killed.
 func EffectiveTimeout(ctx context.Context, cfg *config.Config, a config.AgentConfig) time.Duration {
 	timeout := cfg.EffectiveTimeout(a)
 	if deadline, ok := ctx.Deadline(); ok {

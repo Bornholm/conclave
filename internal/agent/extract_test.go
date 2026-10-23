@@ -457,3 +457,34 @@ func TestExtractTruncatedJSONIsBoundedOnALargeStream(t *testing.T) {
 		t.Errorf("the repair took %s on %d bytes: it is scanning every brace again", d, b.Len())
 	}
 }
+
+// TestExtractTruncatedJSONDropsACutMemberAfterAColon: the member being written
+// is dropped whichever position it holds. A cut after "key": must not leave a
+// document that closes as "key":}, which no parser accepts.
+func TestExtractTruncatedJSONDropsACutMemberAfterAColon(t *testing.T) {
+	cases := map[string]string{
+		"first member":      `{"schema_version":"1","note":`,
+		"after a number":    `{"schema_version":"1","a":1,"note":`,
+		"after a string":    `{"schema_version":"1","s":"x","note":`,
+		"after an object":   `{"schema_version":"1","o":{"k":1},"note":`,
+		"after an array":    `{"schema_version":"1","arr":[1],"note":`,
+		"after a true":      `{"schema_version":"1","t":true,"note":`,
+		"after a null":      `{"schema_version":"1","t":null,"note":`,
+		"nested afterwards": `{"schema_version":"1","o":{"k":1,"note":`,
+	}
+	for name, in := range cases {
+		t.Run(name, func(t *testing.T) {
+			out, err := ExtractTruncatedJSON([]byte(in), "schema_version")
+			if err != nil {
+				t.Fatalf("the report must survive losing one member: %v", err)
+			}
+			var obj map[string]any
+			if err := json.Unmarshal(out, &obj); err != nil {
+				t.Fatalf("recovered output does not parse: %v (%s)", err, out)
+			}
+			if obj["schema_version"] != "1" {
+				t.Errorf("marker lost: %s", out)
+			}
+		})
+	}
+}

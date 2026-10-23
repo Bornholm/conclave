@@ -391,7 +391,11 @@ func (a *App) runReviewer(ctx context.Context, r *run, rv config.AgentConfig, wo
 		// run's own deadline may expire while it queries git, which would make
 		// every existence check fail and drop every finding.
 		salvageCtx, cancelSalvage := context.WithTimeout(context.WithoutCancel(ctx), salvageTimeout)
-		report, transcript, err = a.salvageTimedOut(salvageCtx, r, rv, worktree, rv.ID, agent.EffectiveTimeout(ctx, r.cfg, rv), transcript, &ex)
+		// The run's budget comes from the configuration, not from ctx: by now
+		// the context's deadline has passed, so EffectiveTimeout on it returns a
+		// negative duration and the message would claim the reviewer died before
+		// it started.
+		report, transcript, err = a.salvageTimedOut(salvageCtx, r, rv, worktree, rv.ID, r.cfg.EffectiveTimeout(rv), transcript, &ex)
 		cancelSalvage()
 	}
 	// A reviewer that ran to its end but left no usable report is asked once
@@ -688,7 +692,30 @@ func (a *App) runLead(ctx context.Context, r *run, lead config.AgentConfig, work
 	}
 	if res.Err != nil {
 		ex.Error = res.Err.Error()
-		return nil, nil, res.Err
+		if !res.TimedOut || res.Result == nil || len(bytes.TrimSpace(res.Result.Stdout)) == 0 {
+			return nil, nil, res.Err
+		}
+		// The lead is the one agent whose output gathers every reviewer, so a
+		// consolidation written just before its deadline is worth reading. It
+		// gets the same treatment as a reviewer's salvaged report.
+		salvageCtx, cancelSalvage := context.WithTimeout(context.WithoutCancel(ctx), salvageTimeout)
+		defer cancelSalvage()
+		ad, aerr := a.adapt(r, lead, res.Result.Stdout, &ex)
+		if aerr != nil {
+			return nil, nil, res.Err
+		}
+		exists := func(p string) bool { return r.git.PathExistsAt(salvageCtx, r.pr.Head.SHA, p) }
+		review, warnings, perr := consolidation.ParseLeadReview(ad.Report, succeeded, outcomes, r.changed, exists, r.cfg.Review.Limits.MaxFindings)
+		// A context that died during validation drops findings silently, so a
+		// consolidation read that way is not trusted.
+		if perr != nil || salvageCtx.Err() != nil {
+			return nil, warnings, res.Err
+		}
+		ex.Error = ""
+		ex.Salvaged = true
+		ex.Warnings = append(warnings, "the lead was stopped by its time budget; the consolidation is the one it had already written")
+		log.Warn("lead was stopped but its consolidation was usable", "lead", lead.ID, "findings", len(review.Findings))
+		return review, ex.Warnings, nil
 	}
 	ad, err := a.adapt(r, lead, res.Result.Stdout, &ex)
 	if err != nil {

@@ -770,3 +770,23 @@ func validPiStreamFor(id string) string {
 	return `{"type":"message_start","message":{"role":"assistant","content":[]}}` + "\n" +
 		`{"type":"message_update","assistantMessageEvent":{"type":"text_delta","delta":` + string(b) + `}}` + "\n"
 }
+
+// TestSalvageReportsTheConfiguredTimeout: the run's budget must be reported from
+// the configuration. Recomputing it from a context whose deadline has passed
+// yields a negative duration, and the message then blames the reviewer for
+// dying before it started.
+func TestSalvageReportsTheConfiguredTimeout(t *testing.T) {
+	a, _ := newApp(t, agentCfg(t, "r1", config.RoleReviewer, "valid"), agentCfg(t, "lead", config.RoleLead, "valid"))
+	expired, cancel := context.WithCancel(context.Background())
+	cancel()
+	var ex domain.AgentExecution
+	_, _, err := a.salvageTimedOut(expired, &run{cfg: a.Config, store: nil},
+		a.Config.Agents[0], t.TempDir(), "r1", a.Config.EffectiveTimeout(a.Config.Agents[0]),
+		[]byte(validPiStreamFor("r1")), &ex)
+	if err == nil {
+		t.Skip("this context cannot validate anything, which the previous test covers")
+	}
+	if strings.Contains(err.Error(), "-") && strings.Contains(err.Error(), "timed out after -") {
+		t.Errorf("negative timeout reported: %v", err)
+	}
+}

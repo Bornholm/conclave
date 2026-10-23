@@ -142,7 +142,7 @@ func EffectiveTimeout(ctx context.Context, cfg *config.Config, a config.AgentCon
 // BuildEnv computes the child environment: optionally the parent environment
 // minus variables that would redirect Git or leak the run, then fixed values,
 // then the agent's explicit variables. A positive timeout is exported as
-// CONCLAVE_AGENT_DEADLINE_MS and CONCLAVE_DEADLINE_AT for agents that can pace
+// CONCLAVE_DEADLINE_MS and CONCLAVE_DEADLINE_AT for agents that can pace
 // themselves, such as the pi deadline extension.
 func BuildEnv(a config.AgentConfig, worktree, tmpDir string, timeout time.Duration) []string {
 	env := map[string]string{}
@@ -169,7 +169,7 @@ func BuildEnv(a config.AgentConfig, worktree, tmpDir string, timeout time.Durati
 	if timeout > 0 {
 		// The budget is what the child can act on; the deadline is only there
 		// for an agent that wants to reason about the wall clock.
-		env["CONCLAVE_AGENT_DEADLINE_MS"] = strconv.FormatInt(timeout.Milliseconds(), 10)
+		env["CONCLAVE_DEADLINE_MS"] = strconv.FormatInt(timeout.Milliseconds(), 10)
 		env["CONCLAVE_DEADLINE_AT"] = time.Now().Add(timeout).UTC().Format(time.RFC3339)
 	}
 	if tmpDir != "" {

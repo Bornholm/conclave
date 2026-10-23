@@ -154,7 +154,7 @@ func TestBuildEnv(t *testing.T) {
 			t.Errorf("env lacks %s", want)
 		}
 	}
-	for _, bad := range []string{"CONCLAVE_AGENT_DEADLINE_MS", "CONCLAVE_DEADLINE_AT"} {
+	for _, bad := range []string{"CONCLAVE_DEADLINE_MS", "CONCLAVE_DEADLINE_AT"} {
 		if strings.Contains(env, bad) {
 			t.Errorf("env exports %s without a timeout", bad)
 		}
@@ -167,7 +167,7 @@ func TestBuildEnv(t *testing.T) {
 
 func TestBuildEnvDeadline(t *testing.T) {
 	env := strings.Join(BuildEnv(config.AgentConfig{ID: "a"}, "/wt", "", 90*time.Second), "\n")
-	if !strings.Contains(env, "CONCLAVE_AGENT_DEADLINE_MS=90000") {
+	if !strings.Contains(env, "CONCLAVE_DEADLINE_MS=90000") {
 		t.Errorf("env lacks the budget in milliseconds: %s", env)
 	}
 	line := ""

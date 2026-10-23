@@ -39,6 +39,19 @@ func main() {
 		time.Sleep(time.Minute)
 	case "lead":
 		fmt.Print(leadReport())
+	case "incremental-fixed":
+		// Says the previous finding is fixed, and finds nothing new.
+		fmt.Print(`{"schema_version":"1","reviewer":{"id":"` + id + `"},"summary":"P1 is fixed.","findings":[],"verdict":"approve",
+"previous_findings":[{"id":"P1","status":"fixed","evidence":"changed.txt now takes the lock"}]}`)
+	case "incremental-still":
+		fmt.Print(`{"schema_version":"1","reviewer":{"id":"` + id + `"},"summary":"P1 remains.","verdict":"request_changes",
+"findings":[{"id":"f1","category":"concurrency","severity":"high","confidence":0.9,"file":"changed.txt","start_line":2,"end_line":2,
+ "title":"Unsynchronized access","description":"Still unlocked.","previous_id":"P1"}],
+"previous_findings":[{"id":"P1","status":"still-present","evidence":"changed.txt:2"}]}`)
+	case "incremental-lead-dropped":
+		// Calls the previous finding still present but carries it in no finding.
+		fmt.Print(`{"schema_version":"1","summary":"P1 remains.","verdict":"approve","findings":[],"failed_reviewers":[],
+"previous_findings":[{"id":"P1","status":"still-present","evidence":"changed.txt:2","reported_by":["r1"]}]}`)
 	case "envelope":
 		inner := strings.ReplaceAll(validReport(id), `"`, `\"`)
 		inner = strings.ReplaceAll(inner, "\n", `\n`)

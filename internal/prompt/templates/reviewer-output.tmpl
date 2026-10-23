@@ -19,4 +19,4 @@ Rules:
 - "confidence" is a number between 0 and 1.
 - "verdict" is one of: approve, comment, request_changes.
 - Report at most {{.MaxFindings}} findings, most important first.
-- An empty "findings" array with verdict "approve" is a valid answer.{{end}}
+- An empty "findings" array with verdict "approve" is a valid answer.{{template "reviewer-since-output" .}}{{end}}

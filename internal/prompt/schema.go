@@ -24,11 +24,19 @@ const ReviewerSchema = `{
         "title": {"type": "string"},
         "description": {"type": "string"},
         "evidence": {"type": "string"},
-        "suggestion": {"type": "string"}
+        "suggestion": {"type": "string"},
+        "previous_id": {"type": "string"}
       }}},
     "questions": {"type": "array", "items": {
       "type": "object", "required": ["question"],
-      "properties": {"file": {"type": "string"}, "line": {"type": "integer"}, "question": {"type": "string"}}}}
+      "properties": {"file": {"type": "string"}, "line": {"type": "integer"}, "question": {"type": "string"}}}},
+    "previous_findings": {"type": "array", "items": {
+      "type": "object", "required": ["id", "status"],
+      "properties": {
+        "id": {"type": "string"},
+        "status": {"type": "string", "enum": ["fixed", "still-present", "withdrawn"]},
+        "evidence": {"type": "string"}
+      }}}
   }
 }`
 
@@ -55,14 +63,23 @@ const LeadSchema = `{
         "evidence": {"type": "string"},
         "suggestion": {"type": "string"},
         "reported_by": {"type": "array", "items": {"type": "string"}},
-        "out_of_scope": {"type": "boolean"}
+        "out_of_scope": {"type": "boolean"},
+        "previous_id": {"type": "string"}
       }}},
     "questions": {"type": "array", "items": {
       "type": "object", "required": ["question"],
       "properties": {"file": {"type": "string"}, "line": {"type": "integer"}, "question": {"type": "string"}}}},
     "failed_reviewers": {"type": "array", "items": {
       "type": "object", "required": ["id", "reason"],
-      "properties": {"id": {"type": "string"}, "reason": {"type": "string"}}}}
+      "properties": {"id": {"type": "string"}, "reason": {"type": "string"}}}},
+    "previous_findings": {"type": "array", "items": {
+      "type": "object", "required": ["id", "status"],
+      "properties": {
+        "id": {"type": "string"},
+        "status": {"type": "string", "enum": ["fixed", "still-present", "withdrawn"]},
+        "evidence": {"type": "string"},
+        "reported_by": {"type": "array", "items": {"type": "string"}}
+      }}}
   }
 }`
 

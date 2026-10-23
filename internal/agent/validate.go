@@ -16,6 +16,10 @@ import (
 type Limits struct {
 	MaxFindings   int
 	MaxFieldBytes int
+	// Previous is the number of findings of the previous review, in an
+	// incremental review: ids P1 to P<Previous> are valid. Zero means the
+	// review is not incremental.
+	Previous int
 }
 
 // DefaultLimits are used when none are given.
@@ -45,7 +49,9 @@ func ParseReport(raw []byte, agentID string, changed map[string]bool, exists Fil
 		return nil, nil, fmt.Errorf("invalid verdict %q", rep.Verdict)
 	}
 	if lim.MaxFindings <= 0 {
+		previous := lim.Previous
 		lim = DefaultLimits
+		lim.Previous = previous
 	}
 	rep.Summary = truncate(rep.Summary, lim.MaxFieldBytes)
 	var warnings []string
@@ -63,9 +69,19 @@ func ParseReport(raw []byte, agentID string, changed map[string]bool, exists Fil
 		if f.ID == "" {
 			f.ID = fmt.Sprintf("%s-%d", agentID, i+1)
 		}
+		if f.PreviousID, err = NormalizePreviousID(f.PreviousID, lim.Previous); err != nil {
+			warnings = append(warnings, fmt.Sprintf("finding %d (%q): %v, link dropped", i, truncate(f.Title, 60), err))
+		}
 		kept = append(kept, f)
 	}
 	rep.Findings = kept
+	var pw []string
+	rep.PreviousFindings, pw = NormalizePrevious(rep.PreviousFindings, lim.Previous, lim.MaxFieldBytes)
+	warnings = append(warnings, pw...)
+	// A reviewer speaks for itself only.
+	for i := range rep.PreviousFindings {
+		rep.PreviousFindings[i].ReportedBy = nil
+	}
 	qs := rep.Questions[:0]
 	for _, q := range rep.Questions {
 		if strings.TrimSpace(q.Question) == "" {
@@ -197,4 +213,67 @@ func SortedKeys(m map[string]bool) []string {
 // without checking membership in the changed file set.
 func NormalizeFindingFields(f domain.Finding, exists FileChecker) (domain.Finding, error) {
 	return normalizeFinding(f, nil, exists, DefaultLimits)
+}
+
+// NormalizePreviousID validates a link to a previous finding: "" stays "", and
+// an id outside P1 to P<n> is an error, the link being dropped.
+func NormalizePreviousID(id string, n int) (string, error) {
+	id = strings.ToUpper(strings.TrimSpace(id))
+	if id == "" {
+		return "", nil
+	}
+	if !validPreviousID(id, n) {
+		if n == 0 {
+			return "", fmt.Errorf("previous_id %q in a review that is not incremental", id)
+		}
+		return "", fmt.Errorf("previous_id %q is not one of P1 to P%d", id, n)
+	}
+	return id, nil
+}
+
+func validPreviousID(id string, n int) bool {
+	for i := 0; i < n; i++ {
+		if id == domain.PreviousID(i) {
+			return true
+		}
+	}
+	return false
+}
+
+// NormalizePrevious validates the statuses given to the previous findings.
+// An entry with an unknown id or status is dropped, and so is a "fixed" or
+// "withdrawn" without evidence: either one takes a finding off the review,
+// and a wrong one buries a real problem. The first entry for an id wins.
+func NormalizePrevious(in []domain.PreviousStatus, n, maxFieldBytes int) ([]domain.PreviousStatus, []string) {
+	if len(in) == 0 {
+		return nil, nil
+	}
+	if n == 0 {
+		return nil, []string{"previous_findings given in a review that is not incremental, ignored"}
+	}
+	if maxFieldBytes <= 0 {
+		maxFieldBytes = DefaultLimits.MaxFieldBytes
+	}
+	var out []domain.PreviousStatus
+	var warnings []string
+	seen := map[string]bool{}
+	for _, p := range in {
+		p.ID = strings.ToUpper(strings.TrimSpace(p.ID))
+		p.Status = domain.PreviousStatusKind(strings.ToLower(strings.TrimSpace(string(p.Status))))
+		p.Evidence = truncate(strings.TrimSpace(p.Evidence), maxFieldBytes)
+		switch {
+		case !validPreviousID(p.ID, n):
+			warnings = append(warnings, fmt.Sprintf("previous finding %q is not one of P1 to P%d, ignored", p.ID, n))
+		case !p.Status.Valid():
+			warnings = append(warnings, fmt.Sprintf("previous finding %s: unknown status %q, ignored", p.ID, p.Status))
+		case p.Status != domain.PreviousStillPresent && p.Evidence == "":
+			warnings = append(warnings, fmt.Sprintf("previous finding %s: %s without evidence, ignored", p.ID, p.Status))
+		case seen[p.ID]:
+			warnings = append(warnings, fmt.Sprintf("previous finding %s given twice, the first status kept", p.ID))
+		default:
+			seen[p.ID] = true
+			out = append(out, p)
+		}
+	}
+	return out, warnings
 }

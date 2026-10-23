@@ -1,6 +1,7 @@
 package app
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -19,6 +20,7 @@ import (
 	"github.com/bornholm/conclave/internal/config"
 	"github.com/bornholm/conclave/internal/domain"
 	"github.com/bornholm/conclave/internal/forge"
+	"github.com/bornholm/conclave/internal/output"
 	"github.com/bornholm/conclave/internal/testutil"
 )
 
@@ -1075,5 +1077,121 @@ func TestSalvageContextHonoursCancellation(t *testing.T) {
 	case <-salvageCtx.Done():
 	case <-time.After(2 * time.Second):
 		t.Error("cancelling the run must cancel the salvage")
+	}
+}
+
+// advanceHead commits on the feature branch of the fixture and makes it the
+// pull request head, as a push answering a review would.
+func advanceHead(t *testing.T, a *App, dir string) string {
+	t.Helper()
+	git := func(args ...string) string {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir = dir
+		cmd.Env = append(os.Environ(), "GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@t", "GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@t")
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+		return strings.TrimSpace(string(out))
+	}
+	git("checkout", "-q", "feature")
+	if err := os.WriteFile(filepath.Join(dir, "changed.txt"), []byte("a\nB locked\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	git("commit", "-q", "-am", "take the lock")
+	head := git("rev-parse", "HEAD")
+	git("checkout", "-q", "main")
+	a.Forge.(*fakeForge).pr.Head.SHA = head
+	return head
+}
+
+func TestIncrementalReview(t *testing.T) {
+	a, dir := newApp(t, agentCfg(t, "r1", config.RoleReviewer, "valid"), agentCfg(t, "lead", config.RoleLead, "valid"))
+	first, err := a.Review(context.Background(), ReviewRequest{Number: 7})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(first.Review.Findings) != 1 {
+		t.Fatalf("the first review should have one finding: %+v", first.Review.Findings)
+	}
+	oldHead := first.Review.Meta.HeadSHA
+	advanceHead(t, a, dir)
+
+	a.Config.Agents[0].Environment["CONCLAVE_TESTAGENT_MODE"] = "incremental-fixed"
+	a.Config.Agents[1].Environment["CONCLAVE_TESTAGENT_MODE"] = "incremental-lead-dropped"
+	res, err := a.Review(context.Background(), ReviewRequest{Number: 7, Since: SinceLast, Responses: "P1: the lock is taken by the caller"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rv := res.Review
+	if res.Manifest.SinceRunID != first.Manifest.ID || res.Manifest.SinceHeadSHA != oldHead || rv.Meta.Since == nil {
+		t.Errorf("the run does not record what it was measured against: %+v", res.Manifest)
+	}
+	p, _ := os.ReadFile(filepath.Join(res.RunDir, "prompts", "reviewer-r1.txt"))
+	for _, want := range []string{"PREVIOUS FINDINGS (1, ids P1 to P1)", "- P1 [high] changed.txt:2", "the lock is taken by the caller",
+		"CHANGES SINCE THE PREVIOUS REVIEW (git diff " + oldHead, "+B locked", `"previous_findings" has one entry per previous finding, P1 to P1`} {
+		if !strings.Contains(string(p), want) {
+			t.Errorf("reviewer prompt lacks %q", want)
+		}
+	}
+	if lp, _ := os.ReadFile(filepath.Join(res.RunDir, "prompts", "lead.txt")); !strings.Contains(string(lp), "Settle each one") {
+		t.Error("the lead prompt lacks the previous review")
+	}
+	// The lead called P1 still present without carrying it: Conclave puts the
+	// previous finding back, and a high one holds the verdict.
+	if len(rv.Findings) != 1 || rv.Findings[0].PreviousID != "P1" || rv.Verdict != domain.VerdictRequestChanges {
+		t.Errorf("still-present finding not kept: verdict=%s %+v", rv.Verdict, rv.Findings)
+	}
+	var md bytes.Buffer
+	if err := output.Markdown(&md, rv, output.Options{ShowAttribution: true}); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"### Since the previous review", "0 fixed, 0 withdrawn, 1 still present, 0 not checked", "**Still present** from the previous review (P1)"} {
+		if !strings.Contains(md.String(), want) {
+			t.Errorf("markdown lacks %q:\n%s", want, md.String())
+		}
+	}
+}
+
+func TestIncrementalReviewWithoutLeadKeepsWhatOneReviewerStillSees(t *testing.T) {
+	a, dir := newApp(t, agentCfg(t, "r1", config.RoleReviewer, "valid"), agentCfg(t, "r2", config.RoleReviewer, "valid"), agentCfg(t, "lead", config.RoleLead, "valid"))
+	first, err := a.Review(context.Background(), ReviewRequest{Number: 7})
+	if err != nil {
+		t.Fatal(err)
+	}
+	advanceHead(t, a, dir)
+	a.Config.Agents[0].Environment["CONCLAVE_TESTAGENT_MODE"] = "incremental-fixed"
+	a.Config.Agents[1].Environment["CONCLAVE_TESTAGENT_MODE"] = "incremental-still"
+	a.Config.Agents[2].Environment["CONCLAVE_TESTAGENT_MODE"] = "exit-1"
+	res, err := a.Review(context.Background(), ReviewRequest{Number: 7, Since: first.Manifest.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rv := res.Review
+	if len(rv.PreviousFindings) != 1 || rv.PreviousFindings[0].Status != domain.PreviousStillPresent || strings.Join(rv.PreviousFindings[0].ReportedBy, ",") != "r2" {
+		t.Errorf("statuses: %+v", rv.PreviousFindings)
+	}
+	if len(rv.Findings) != 1 || rv.Findings[0].PreviousID != "P1" || rv.Verdict != domain.VerdictRequestChanges {
+		t.Errorf("verdict=%s findings=%+v", rv.Verdict, rv.Findings)
+	}
+}
+
+func TestIncrementalReviewNeedsAPreviousReviewOfTheSamePullRequest(t *testing.T) {
+	a, _ := newApp(t, agentCfg(t, "r1", config.RoleReviewer, "valid"), agentCfg(t, "lead", config.RoleLead, "valid"))
+	if _, err := a.Review(context.Background(), ReviewRequest{Number: 7, Since: SinceLast}); err == nil || !strings.Contains(err.Error(), "no successful review of pull request #7") {
+		t.Fatalf("err = %v", err)
+	}
+	first, err := a.Review(context.Background(), ReviewRequest{Number: 7})
+	if err != nil {
+		t.Fatal(err)
+	}
+	other := filepath.Join(t.TempDir(), "review.json")
+	data, _ := os.ReadFile(filepath.Join(first.RunDir, "final", "review.json"))
+	if err := os.WriteFile(other, bytes.Replace(data, []byte(`"pr_number": 7`), []byte(`"pr_number": 8`), 1), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.Review(context.Background(), ReviewRequest{Number: 7, Since: other}); err == nil || !strings.Contains(err.Error(), "not #7") {
+		t.Fatalf("a review of another pull request must be refused: %v", err)
 	}
 }

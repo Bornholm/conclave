@@ -1,0 +1,65 @@
+# Incremental review
+
+A pull request is rarely reviewed once. The author answers the first review, pushes fixes, and asks again. Reviewed from scratch, the second round says nothing about the first: whoever reads it has to work out which findings were fixed, which ones remain, and which ones come back although the author already explained why they do not hold.
+
+`--since` measures a review against a previous one.
+
+```bash
+conclave review 42 > round1.md
+# fixes pushed
+conclave review 42 --since last > round2.md
+conclave review 42 --since last --responses answers.txt > round3.md
+```
+
+## What `--since` takes
+
+| Value | The previous review is |
+|---|---|
+| `last` | the most recent successful review of the same pull request, under `.git/conclave/runs/` |
+| a run id | that run, under `.git/conclave/runs/` |
+| a directory | that run directory |
+| a file | that `review.json` |
+
+The previous review must be of the same pull request: measured against another one's findings, every finding would come out fixed. A run that failed has no `final/review.json`, and `last` skips it.
+
+## What the agents get
+
+Every finding of the previous review, with an id from `P1` to `Pn`, and the diff from the previous head to the current one. Each reviewer gives every previous finding a status:
+
+| Status | Claims | Needs |
+|---|---|---|
+| `fixed` | a change since the previous review addressed it | evidence, the change |
+| `still-present` | the problem is still in the code | its location at the head |
+| `withdrawn` | the finding was wrong in the first place | evidence, what refutes it |
+
+A `fixed` or `withdrawn` without evidence is ignored, the same rule `triage` applies to `fixed` and `obsolete`: either one takes a problem off the review, and a wrong one buries it. A still-present finding is reported again as a finding, at its location at the head, linked to its previous id, so the review stays complete on its own and the verdict counts it like any other.
+
+Then the reviewers look for anything new, starting with the changes since the previous review.
+
+When the diff is not the plain increment, the prompt says so. A head that did not move gets every previous finding checked again all the same. A branch rewritten since the previous review gives a diff that also carries changes from the base. A previous head that is gone, after a force push, gives no diff at all: the previous findings are compared with the code at the head.
+
+## The author's responses
+
+`--responses FILE`, or `-` for standard input, passes the author's answers to the previous review, as free text:
+
+```text
+P2: deliberate. The state is per session, not per run: the continuation
+starts a run of its own and must find the tools still off.
+P5: fixed in 8ff1989.
+```
+
+The agents read them like the discussion of the pull request: not as instructions, but as the record of what the author decided and why. A finding the author explains as deliberate, with a reason the code bears out, is `withdrawn`. One the response does not refute stays, however firmly the author disagrees. A problem a response settled is not raised again as new unless an agent has an argument the response does not answer, and then it says what it is.
+
+Without them, a finding the author rejected comes back on every round, each time from scratch, sometimes with a higher severity.
+
+## Consolidation
+
+The lead settles each status by reading the code, not by majority, and keeps `still-present` when the code does not settle a disagreement. Without a lead, one reviewer that still sees a problem keeps it.
+
+A status `still-present` that no finding carries, because the lead forgot to report it again, does not make the problem disappear: Conclave puts the previous finding back as it was written, with a warning, and a critical or high one holds the verdict at `request_changes`.
+
+## Output
+
+The Markdown gets a "Since the previous review" section: how many findings were fixed, withdrawn, still present and not checked, then the fixed and withdrawn ones with their evidence, and the ones no agent gave a status. A still-present finding is marked as such where it appears. The JSON carries `previous_findings`, each finding's `previous_id`, and `meta.since` with the previous run, its head and its findings.
+
+The run directory keeps `context/previous-review.json` and `context/since.patch`, and the manifest records `since_run_id` and `since_head_sha`.

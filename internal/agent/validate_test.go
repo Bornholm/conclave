@@ -81,3 +81,54 @@ func TestMaxFindings(t *testing.T) {
 		t.Fatalf("%v %d %v", err, len(rep.Findings), warnings)
 	}
 }
+
+const incrementalReport = `{
+ "schema_version": "1", "reviewer": {"id": "r1"}, "summary": "s", "verdict": "comment",
+ "findings": [
+  {"id":"a","category":"x","severity":"high","confidence":0.5,"file":"src/a.go","start_line":1,"end_line":1,"title":"still","previous_id":"p2"},
+  {"id":"b","category":"x","severity":"low","confidence":0.5,"file":"src/a.go","start_line":1,"end_line":1,"title":"bad link","previous_id":"P9"}
+ ],
+ "previous_findings": [
+  {"id":"P1","status":"fixed","evidence":"the nil check is in 3b2"},
+  {"id":"p2","status":"Still-Present","evidence":""},
+  {"id":"P3","status":"withdrawn","evidence":""},
+  {"id":"P1","status":"still-present"},
+  {"id":"P7","status":"fixed","evidence":"x"},
+  {"id":"P3","status":"gone","evidence":"x"}
+ ]
+}`
+
+func TestParseReportPreviousFindings(t *testing.T) {
+	exists := func(string) bool { return true }
+	rep, warnings, err := ParseReport([]byte(incrementalReport), "r1", nil, exists, Limits{Previous: 3})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rep.Findings[0].PreviousID != "P2" || rep.Findings[1].PreviousID != "" {
+		t.Errorf("links: %q %q", rep.Findings[0].PreviousID, rep.Findings[1].PreviousID)
+	}
+	got := map[string]string{}
+	for _, p := range rep.PreviousFindings {
+		got[p.ID] = string(p.Status)
+	}
+	// P3 "withdrawn" without evidence is not a status: taking a finding off the
+	// review needs a reason. P1 keeps its first status, P7 does not exist.
+	if len(got) != 2 || got["P1"] != "fixed" || got["P2"] != "still-present" {
+		t.Errorf("statuses: %v (%v)", got, warnings)
+	}
+	if len(warnings) != 5 {
+		t.Errorf("warnings: %d %v", len(warnings), warnings)
+	}
+
+	// Outside an incremental review, the fields are dropped.
+	rep, warnings, err = ParseReport([]byte(incrementalReport), "r1", nil, exists, Limits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rep.PreviousFindings) != 0 || rep.Findings[0].PreviousID != "" {
+		t.Errorf("a full review kept incremental fields: %+v", rep)
+	}
+	if len(warnings) == 0 {
+		t.Error("dropping them should say so")
+	}
+}

@@ -123,7 +123,7 @@ FAILED REVIEWERS
 {{.GroupsJSON}}
 --- END PRE-COMPUTED GROUPS ---
 
-{{template "time-budget" .}}OUTPUT CONTRACT
+{{template "lead-since" .}}{{template "time-budget" .}}OUTPUT CONTRACT
 Return exactly one JSON object and nothing else on standard output. Do not
 wrap it in Markdown. The object must match this schema:
 
@@ -149,4 +149,4 @@ Rules:
 - "verdict" is one of: approve, comment, request_changes, following VERDICT RULES.
 - "out_of_scope" is true for findings in files outside CHANGED FILES.
 - Copy "failed_reviewers" from the FAILED REVIEWERS section verbatim.
-- Report at most {{.MaxFindings}} findings.
+- Report at most {{.MaxFindings}} findings.{{template "lead-since-output" .}}

@@ -13,13 +13,16 @@
 9. Group similar findings (same file, overlapping lines, similar title or description, whatever category each reviewer chose), then run the lead with every report and the groups. The lead may only attribute a finding to a reviewer that actually succeeded. If the lead fails or prints garbage, a deterministic fallback builds the review from the groups.
 10. Render Markdown or JSON, remove the worktrees, keep the artifacts.
 
+With `--since`, the agents also get the previous review's findings and the diff since its head, and give each finding a status. See [incremental review](incremental-review.md).
+
 ## Artifacts
 
 Every run lands in `.git/conclave/runs/<run-id>/`.
 
 ```
 manifest.json          timings, exit codes, model per agent, warnings
-context/               pull-request.json, changed-files.json, associated-issues.json, discussion.json, diff.patch
+context/               pull-request.json, changed-files.json, associated-issues.json, discussion.json, diff.patch,
+                       and with --since previous-review.json and since.patch
 prompts/               the exact prompt each agent received
 raw/                   stdout and stderr per agent, plus <id>.trace.jsonl for pi-json agents
 reports/               validated reports, one per successful reviewer

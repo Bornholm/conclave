@@ -30,6 +30,11 @@ type RunManifest struct {
 	HeadSHA      string `json:"head_sha"`
 	MergeBaseSHA string `json:"merge_base_sha"`
 
+	// SinceRunID and SinceHeadSHA name the previous review an incremental
+	// review is measured against.
+	SinceRunID   string `json:"since_run_id,omitempty"`
+	SinceHeadSHA string `json:"since_head_sha,omitempty"`
+
 	Agents []AgentExecution `json:"agents"`
 }
 

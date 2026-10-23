@@ -550,8 +550,7 @@ func isNoUsableReport(err error) bool {
 // failed, it left whatever it had written on standard output, and an agent
 // that paces itself usually wrote a usable report before stopping.
 type cutShort struct {
-	err        error
-	transcript []byte
+	err error
 	// timeout is the budget actually applied to the run, which is what the
 	// report must name: recomputing it from the configuration claims 30 minutes
 	// for a reviewer the whole review stopped after 2.
@@ -662,9 +661,9 @@ func (a *App) salvageTimedOut(ctx context.Context, r *run, rv config.AgentConfig
 	ad, err := a.adapt(r, stored, stdout, ex)
 	if err != nil {
 		if ad != nil {
-			cut.transcript = ad.Transcript
+			return nil, ad.Transcript, cut
 		}
-		return nil, cut.transcript, cut
+		return nil, nil, cut
 	}
 	var warnings []string
 	exists := func(p string) bool { return r.git.PathExistsAt(ctx, r.pr.Head.SHA, p) }
@@ -673,8 +672,7 @@ func (a *App) salvageTimedOut(ctx context.Context, r *run, rv config.AgentConfig
 	ex.Warnings = append(ex.Warnings, warnings...)
 	if err != nil {
 		ex.Error = err.Error()
-		cut.transcript = ad.Transcript
-		return nil, cut.transcript, cut
+		return nil, ad.Transcript, cut
 	}
 	// A finding whose path cannot be checked is dropped, so a context that died
 	// during validation would leave an empty report that reads like a clean
@@ -682,8 +680,7 @@ func (a *App) salvageTimedOut(ctx context.Context, r *run, rv config.AgentConfig
 	if err := ctx.Err(); err != nil {
 		err = fmt.Errorf("%w; the report could not be validated, so it was not used", err)
 		ex.Error = err.Error()
-		cut.transcript = ad.Transcript
-		return nil, cut.transcript, cut
+		return nil, ad.Transcript, cut
 	}
 	report.Reviewer.Model = ex.Model
 	ex.Error = ""
@@ -719,7 +716,7 @@ func (a *App) reviewerAttempt(ctx context.Context, r *run, rv config.AgentConfig
 			if res.Result != nil {
 				transcript = res.Result.Stdout
 			}
-			return nil, transcript, cutShort{err: res.Err, transcript: transcript, timeout: res.Timeout}
+			return nil, transcript, cutShort{err: res.Err, timeout: res.Timeout}
 		}
 		return nil, nil, res.Err
 	}
@@ -832,6 +829,9 @@ const cutOffReportWarning = "the report was cut off while being written; it was 
 // cutOffVerdictWarning explains the verdict a truncated report could not carry.
 const cutOffVerdictWarning = "the report was cut before its verdict, so the analysis reports it as comment rather than letting a partial report approve"
 
+// downgradedVerdictWarning explains why a truncated report's approval was not kept.
+const downgradedVerdictWarning = "the report was cut off after approving, so the approval is reported as comment: the findings lost to the cut may have justified a stricter verdict"
+
 // extractReport closes a report that a stopped run left unterminated, for the
 // callers that parse a report themselves. It returns nil when the report is not
 // truncated or cannot be closed honestly.
@@ -843,6 +843,11 @@ const cutOffVerdictWarning = "the report was cut before its verdict, so the anal
 // document cut short. Both are the same problem, so both take the same repair.
 func extractReport(ad *agent.Adapted) []byte {
 	if ad == nil || len(ad.Report) == 0 {
+		return nil
+	}
+	// A report that parses as it is was not cut: whatever unterminated object
+	// follows it, a quoted schema or a second attempt, must not replace it.
+	if _, err := agent.ExtractJSON(ad.Report, "schema_version"); err == nil {
 		return nil
 	}
 	closed, err := agent.ExtractTruncatedJSON(ad.Report, "schema_version")
@@ -881,10 +886,13 @@ func (a *App) adapt(r *run, ag config.AgentConfig, stdout []byte, ex *domain.Age
 		// plan and triage reports have none, and inventing one for them would
 		// add a field their contract does not allow.
 		if r.verdicts {
-			var added bool
-			ad.Report, added = agent.EnsureVerdict(ad.Report)
-			if added {
+			var change agent.VerdictChange
+			ad.Report, change = agent.EnsureVerdict(ad.Report)
+			switch change {
+			case agent.VerdictAdded:
 				ex.Warnings = append(ex.Warnings, cutOffVerdictWarning)
+			case agent.VerdictDowngraded:
+				ex.Warnings = append(ex.Warnings, downgradedVerdictWarning)
 			}
 		}
 	}

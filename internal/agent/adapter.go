@@ -238,7 +238,12 @@ func adaptPiJSON(stdout []byte) (*Adapted, error) {
 	if partialThinking.Len() > 0 {
 		transcript.WriteString("[reasoning]\n" + partialThinking.String() + "\n\n")
 	}
-	if partial.Len() > 0 {
+	if partial.Len() > 0 && completeReport(lastText) && !bytes.Contains(partial.Bytes(), []byte(`"schema_version"`)) {
+		// The run finished a report, then was stopped while writing something
+		// else: a closing remark, a second thought. The report stands; what
+		// followed it is only transcript.
+		transcript.WriteString(partial.String() + "\n\n")
+	} else if partial.Len() > 0 {
 		// A run stopped mid-message. What it was writing is newer than any text
 		// an earlier message left behind - partial is reset on every
 		// message_start - so it is the report, even when lastText holds prose
@@ -274,4 +279,14 @@ func tail(b []byte, limit int) []byte {
 		}
 	}
 	return cut
+}
+
+// completeReport reports whether text already holds a whole report, which a
+// later message cut short must not replace.
+func completeReport(text string) bool {
+	if text == "" {
+		return false
+	}
+	_, err := ExtractJSON([]byte(text), "schema_version")
+	return err == nil
 }

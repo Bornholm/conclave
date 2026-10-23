@@ -276,7 +276,14 @@ func closeUnterminated(b []byte) ([]byte, bool) {
 			}
 		case 't', 'f', 'n', '-', '0', '1', '2', '3', '4', '5', '6', '7', '8', '9':
 			valueStarted = true
-		case '{', '[':
+		case '{':
+			// An object's first member starts right after its brace, with no
+			// comma to mark it: a cut after its key and colon must drop it like
+			// any later member, or closing leaves "id":}.
+			stack = append(stack, c)
+			members = append(members, i+1)
+			valueStarted = false
+		case '[':
 			stack = append(stack, c)
 			members = append(members, -1)
 			valueStarted = true
@@ -302,7 +309,9 @@ func closeUnterminated(b []byte) ([]byte, bool) {
 	if !inStr {
 		// The last byte is judged after trailing whitespace: a newline appended
 		// by the caller must not hide a number the cut landed in.
-		if trimmed := bytes.TrimRight(b, " \t\r\n"); len(trimmed) > 0 {
+		// true and false end in an e too, and are complete: only a number is
+		// refused.
+		if trimmed := bytes.TrimRight(b, " \t\r\n"); len(trimmed) > 0 && !bytes.HasSuffix(trimmed, []byte("true")) && !bytes.HasSuffix(trimmed, []byte("false")) {
 			switch trimmed[len(trimmed)-1] {
 			case '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', '+', '-', '.', 'e', 'E':
 				return nil, false
@@ -342,11 +351,12 @@ func closeUnterminated(b []byte) ([]byte, bool) {
 // The verdict added is "comment", never "approve". A partial report must not be
 // able to approve a pull request: the findings that would have justified a
 // stricter verdict may be exactly the ones the cut destroyed. It returns the
-// document unchanged, and false, when it already carries a verdict.
-func EnsureVerdict(raw []byte) ([]byte, bool) {
+// document unchanged, and VerdictKept, when it already carries a verdict other
+// than "approve".
+func EnsureVerdict(raw []byte) ([]byte, VerdictChange) {
 	obj, ok := asObject(bytes.TrimSpace(raw))
 	if !ok {
-		return raw, false
+		return raw, VerdictKept
 	}
 	if v, has := obj["verdict"]; has {
 		// A repaired report that says "approve" is downgraded: the findings that
@@ -357,23 +367,36 @@ func EnsureVerdict(raw []byte) ([]byte, bool) {
 			obj["verdict"] = json.RawMessage(`"comment"`)
 			out, err := json.Marshal(obj)
 			if err != nil {
-				return raw, false
+				return raw, VerdictKept
 			}
-			return out, true
+			return out, VerdictDowngraded
 		}
-		return raw, false
+		return raw, VerdictKept
 	}
 	var rep map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &rep); err != nil {
-		return raw, false
+		return raw, VerdictKept
 	}
 	rep["verdict"] = json.RawMessage(`"comment"`)
 	out, err := json.Marshal(rep)
 	if err != nil {
-		return raw, false
+		return raw, VerdictKept
 	}
-	return out, true
+	return out, VerdictAdded
 }
+
+// VerdictChange says what EnsureVerdict did to a report's verdict, so the
+// warning given to the reader names what actually happened.
+type VerdictChange int
+
+const (
+	// VerdictKept: the report's own verdict stands.
+	VerdictKept VerdictChange = iota
+	// VerdictAdded: the cut fell before the verdict, and "comment" was added.
+	VerdictAdded
+	// VerdictDowngraded: the report said "approve", which a cut report may not.
+	VerdictDowngraded
+)
 
 // ExtractJSON finds the JSON object produced by an agent in its raw stdout.
 // It accepts, in order: a raw object; a Claude Code envelope (object with a

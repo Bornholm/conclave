@@ -263,6 +263,14 @@ func TestExtractTruncatedJSONClosesACutReport(t *testing.T) {
 		{"cut in key", `{"schema_version":"1","summ`, true},
 		{"cut in escape", `{"schema_version":"1","summary":"a\`, false},
 		{"cut in number", `{"schema_version":"1","reviewer":{"id":"r"},"n":12`, false},
+		// A literal that ends in e is complete, not a number cut short.
+		{"cut after true", `{"schema_version":"1","breaking":true`, true},
+		{"cut after false", `{"schema_version":"1","breaking":false`, true},
+		{"cut in a number ending in e", `{"schema_version":"1","n":1e`, false},
+		// An object's first member has no comma before it, and is dropped all
+		// the same when the cut falls after its colon.
+		{"cut after a nested first key", `{"schema_version":"1","reviewer":{"id":`, true},
+		{"cut in a nested first key", `{"schema_version":"1","reviewer":{"i`, true},
 		{"without the marker", `{"other":"x","summary":"half`, false},
 		{"no object at all", `just prose`, false},
 	}
@@ -361,8 +369,8 @@ func TestExtractTruncatedJSONIsAgentAgnostic(t *testing.T) {
 // be able to approve, so the verdict added is the conservative one.
 func TestEnsureVerdict(t *testing.T) {
 	cut := []byte(`{"schema_version":"1","findings":[{"id":"f1"}]}`)
-	out, added := EnsureVerdict(cut)
-	if !added {
+	out, change := EnsureVerdict(cut)
+	if change != VerdictAdded {
 		t.Fatal("a report without a verdict must get one")
 	}
 	var obj map[string]any
@@ -379,7 +387,7 @@ func TestEnsureVerdict(t *testing.T) {
 
 	// A report that has one keeps it.
 	complete := []byte(`{"schema_version":"1","verdict":"request_changes"}`)
-	if _, added := EnsureVerdict(complete); added {
+	if _, change := EnsureVerdict(complete); change != VerdictKept {
 		t.Error("an existing verdict must not be replaced")
 	}
 }
@@ -493,8 +501,8 @@ func TestExtractTruncatedJSONDropsACutMemberAfterAColon(t *testing.T) {
 // that came after the cut, so an "approve" it did manage to write is not a
 // judgement on the whole change.
 func TestEnsureVerdictDowngradesAnApproval(t *testing.T) {
-	out, changed := EnsureVerdict([]byte(`{"schema_version":"1","verdict":"approve"}`))
-	if !changed {
+	out, change := EnsureVerdict([]byte(`{"schema_version":"1","verdict":"approve"}`))
+	if change != VerdictDowngraded {
 		t.Fatal("an approval inside a repaired report must be downgraded")
 	}
 	var obj map[string]any
@@ -506,8 +514,8 @@ func TestEnsureVerdictDowngradesAnApproval(t *testing.T) {
 	}
 	// A stricter verdict is kept: the cut can only have removed findings, and
 	// removing findings cannot make a change safer.
-	out, changed = EnsureVerdict([]byte(`{"schema_version":"1","verdict":"request_changes"}`))
-	if changed {
+	out, change = EnsureVerdict([]byte(`{"schema_version":"1","verdict":"request_changes"}`))
+	if change != VerdictKept {
 		t.Errorf("a request_changes verdict must be kept: %s", out)
 	}
 }

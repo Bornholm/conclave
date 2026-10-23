@@ -162,6 +162,32 @@ func TestAdaptPiJSONPrefersTheUnfinishedMessage(t *testing.T) {
 	}
 }
 
+// TestAdaptPiJSONKeepsACompleteReportOverLaterProse: a run that finished its
+// report and was stopped while adding a remark must keep the report. The
+// unfinished message is newer, but it is not a report.
+func TestAdaptPiJSONKeepsACompleteReportOverLaterProse(t *testing.T) {
+	report := `{"schema_version":"1","reviewer":{"id":"r"},"summary":"s","findings":[],"verdict":"comment"}`
+	stream := strings.Join([]string{
+		`{"type":"message_start","message":{"role":"assistant","content":[]}}`,
+		`{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":` + strconv.Quote(report) + `}]}}`,
+		`{"type":"message_start","message":{"role":"assistant","content":[]}}`,
+		`{"type":"message_update","assistantMessageEvent":{"type":"text_delta","delta":"Let me also double-check"}}`,
+	}, "\n")
+	ad, err := Adapt(config.OutputPiJSON, []byte(stream))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(ad.Report) != report {
+		t.Errorf("the complete report was replaced: %s", ad.Report)
+	}
+	if ad.Partial {
+		t.Error("the report is complete, not recovered from an unfinished message")
+	}
+	if !strings.Contains(string(ad.Transcript), "Let me also double-check") {
+		t.Errorf("what followed the report belongs in the transcript: %s", ad.Transcript)
+	}
+}
+
 // TestAdaptPiJSONKeepsReasoningOutOfTheReport: a real pi message carries both
 // thinking and text deltas (verified on a recorded run: 2 of 17 messages). Mixing
 // them put the model's reasoning at the start of the salvaged document.

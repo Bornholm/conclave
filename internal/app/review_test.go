@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/bornholm/conclave/internal/agent"
 	"github.com/bornholm/conclave/internal/artifact"
 	"github.com/bornholm/conclave/internal/config"
 	"github.com/bornholm/conclave/internal/domain"
@@ -724,6 +725,30 @@ func TestVerdictIsAddedOnlyToAReviewerReport(t *testing.T) {
 				t.Errorf("the verdict warning must follow the verdict: %v", ex.Warnings)
 			}
 		})
+	}
+}
+
+// TestAdaptKeepsAReportThatParses: the repair is for a report that was cut. A
+// complete one followed by an unterminated fragment carrying the marker, a
+// quoted schema or a second attempt, must not be replaced by that fragment.
+func TestAdaptKeepsAReportThatParses(t *testing.T) {
+	report := `{"schema_version":"1","reviewer":{"id":"r"},"summary":"s","findings":[],"verdict":"request_changes"}`
+	stdout := []byte(report + "\nThe schema starts with {\"schema_version\":\"1\",\"summ")
+	store, err := artifact.Open(t.TempDir(), "run")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var ex domain.AgentExecution
+	ad, err := (&App{}).adapt(&run{store: store, verdicts: true}, config.AgentConfig{ID: "r", Output: config.OutputAuto}, stdout, &ex)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := agent.ExtractJSON(ad.Report, "schema_version")
+	if err != nil || string(got) != report {
+		t.Errorf("the complete report must stand: %s (%v)", got, err)
+	}
+	if slices.Contains(ex.Warnings, cutOffReportWarning) {
+		t.Errorf("a report that parses was not cut off: %v", ex.Warnings)
 	}
 }
 

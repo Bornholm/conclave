@@ -29,6 +29,7 @@ Usage:
   conclave config validate [--config PATH]
   conclave config example
   conclave agents check [--config PATH]
+  conclave agents install pi [--project PATH] [--force]
   conclave version
 `
 

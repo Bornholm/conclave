@@ -24,3 +24,21 @@ jobs:
       - run: GOOS=darwin GOARCH=amd64 go build ./...
       - run: GOOS=linux GOARCH=arm64 go build ./...
       - run: sh -n install.sh
+
+  # The Pi extension is embedded as source and only ever run by Pi: check it
+  # against Pi's published types, so a contract change fails here, not in a
+  # review stopped at its deadline.
+  pi-extension:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: internal/integration/typecheck
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: internal/integration/typecheck/package-lock.json
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - run: npx tsc -p tsconfig.json

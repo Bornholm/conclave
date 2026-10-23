@@ -1,0 +1,25 @@
+{
+  "//": "Typechecks the embedded Pi extension against Pi's published types. Run by CI, see .github/workflows/ci.yml.",
+  "compilerOptions": {
+    "strict": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "module": "preserve",
+    "moduleResolution": "bundler",
+    "target": "es2022",
+    "types": [
+      "node"
+    ],
+    "paths": {
+      "@earendil-works/pi-coding-agent": [
+        "./node_modules/@earendil-works/pi-coding-agent"
+      ]
+    },
+    "typeRoots": [
+      "./node_modules/@types"
+    ]
+  },
+  "files": [
+    "../assets/pi/extensions/conclave.ts"
+  ]
+}

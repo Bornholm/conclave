@@ -18,6 +18,7 @@ The script installs the Debian or Arch package when it can, the bare binary othe
 cd my-repo
 conclave config example > .conclave.yaml   # then edit the agents section
 conclave config validate
+conclave agents install pi                 # optional: pacing extension and skills for Pi
 conclave review 123 > review.md
 ```
 
@@ -53,6 +54,7 @@ The question comes from an argument, from `--question` or, when neither is given
 - [Triage](docs/triage.md), what a status means and what it takes to earn it.
 - [Plan](docs/plan.md), why several agents plan and only one plan comes out.
 - [Ask](docs/ask.md), how a question is passed, and what happens when the agents disagree.
+- [Agents](docs/agents.md), what `conclave agents install` adds to a coding agent: the extension that makes a run answer before its timeout, and the skills that drive Conclave from a session.
 - [Configuration](docs/configuration.md), the settings people get wrong and the contract an agent must honor.
 - [`.conclave.example.yaml`](.conclave.example.yaml), the full reference with the three agents.
 

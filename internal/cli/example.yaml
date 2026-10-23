@@ -151,6 +151,8 @@ agents:
     input: argument          # opencode reads the message from its arguments
 
   # Pi — https://github.com/badlogic/pi-mono
+  # `conclave agents install pi` adds the extension that paces a run to its
+  # timeout, so that it answers before Conclave stops it.
   - id: pi
     role: reviewer
     command:

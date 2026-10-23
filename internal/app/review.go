@@ -383,7 +383,7 @@ func (a *App) runReviewer(ctx context.Context, r *run, rv config.AgentConfig, wo
 		return ex, nil, err
 	}
 	report, transcript, err := a.reviewerAttempt(ctx, r, rv, worktree, rv.ID, p, &ex)
-	if isCutShort(err) {
+	if isStopped(err) {
 		// The agent used its whole budget. With an agent that paces itself
 		// (the pi deadline extension), what it wrote before stopping is a
 		// report that was simply interrupted, not a run to throw away.
@@ -422,7 +422,9 @@ func (a *App) runReviewer(ctx context.Context, r *run, rv config.AgentConfig, wo
 		// A retry after a timeout runs on its own deadline: the run's own
 		// timeout has, by definition, already been spent.
 		retryCtx, cancel, budget := ctx, context.CancelFunc(func() {}), timeBudget(ctx, r.cfg, rv)
-		retryTimeout := time.Duration(0)
+		// The budget the retry runs on, which is what to report if it is stopped
+		// in turn. A retry of a run that ended normally keeps the agent timeout.
+		retryTimeout := r.cfg.EffectiveTimeout(rv)
 		if isCutShort(err) {
 			if grace := r.cfg.ReviewReportGrace(); grace > 0 {
 				retryCtx, cancel = withGrace(ctx, grace)
@@ -527,6 +529,18 @@ func isCutShort(err error) bool {
 // without a usable report, or it ran out of time after writing one.
 func isRecoverable(err error) bool { return isNoUsableReport(err) || isCutShort(err) }
 
+// isStopped reports whether the run was stopped rather than broken, so that what
+// it wrote may still be a report. Besides the run's own deadline, this covers the
+// whole review's timeout: a reviewer killed because review.timeout expired
+// produces a plain context error, and discarding its output is the same loss the
+// salvage exists to prevent.
+func isStopped(err error) bool {
+	if isCutShort(err) {
+		return true
+	}
+	return errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
+}
+
 // salvageTimeout bounds the work of reading a finished run's output. It is short
 // because nothing is being generated: the process is gone, only the files remain.
 const salvageTimeout = 2 * time.Minute
@@ -626,10 +640,10 @@ func (a *App) reviewerAttempt(ctx context.Context, r *run, rv config.AgentConfig
 	}
 	if res.Err != nil {
 		ex.Error = res.Err.Error()
-		if res.TimedOut {
-			// The run was stopped, not broken: whatever it wrote is on
-			// standard output, and the caller decides whether a report can be
-			// made of it.
+		// A stopped run - its own deadline or the whole review's - is not a
+		// broken one: whatever it wrote is on standard output, and the caller
+		// decides whether a report can be made of it.
+		if res.TimedOut || errors.Is(res.Err, context.DeadlineExceeded) || errors.Is(res.Err, context.Canceled) {
 			var transcript []byte
 			if res.Result != nil {
 				transcript = res.Result.Stdout
@@ -740,10 +754,12 @@ func (a *App) runLead(ctx context.Context, r *run, lead config.AgentConfig, work
 // know the report is shorter than the work behind it.
 const cutOffReportWarning = "the report was cut off while being written; it was closed and parsed as far as it went, so anything after the cut is missing"
 
-// expectsVerdict reports whether the agent's report schema carries a verdict,
-// which is the case for reviewers and the lead only.
-func expectsVerdict(ag config.AgentConfig) bool {
-	return ag.Role == config.RoleReviewer || ag.Role == config.RoleLead
+// expectsVerdict reports whether this report's contract carries a verdict. The
+// agent role cannot answer it: `conclave ask`, `plan` and `triage` run the same
+// reviewer and lead agents with a different output schema, so the report's own
+// shape decides.
+func expectsVerdict(report []byte) bool {
+	return agent.CarriesFindings(report)
 }
 
 // cutOffVerdictWarning explains the verdict a truncated report could not carry.
@@ -797,7 +813,7 @@ func (a *App) adapt(r *run, ag config.AgentConfig, stdout []byte, ex *domain.Age
 		// The verdict is a field of the reviewer and lead schemas only; ask,
 		// plan and triage reports have none, and inventing one for them would
 		// add a field their contract does not allow.
-		if expectsVerdict(ag) {
+		if expectsVerdict(ad.Report) {
 			var added bool
 			ad.Report, added = agent.EnsureVerdict(ad.Report)
 			if added {

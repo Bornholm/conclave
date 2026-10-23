@@ -90,6 +90,14 @@ func main() {
 		fmt.Print(`{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":` + strconv.Quote(validReport(id)) + `}]}}` + "\n")
 		fmt.Fprint(os.Stderr, "still exploring\n")
 		time.Sleep(time.Minute)
+	case "prose-then-timeout":
+		// Ends normally with prose and no report, so it is asked again; the
+		// retry then runs out of time in turn.
+		if strings.Contains(prompt, "ended without the JSON report") {
+			time.Sleep(time.Minute)
+			return
+		}
+		fmt.Print(`{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"I reviewed the diff but I am describing it in prose instead of writing the report."}]}}` + "\n")
 	case "timeout-no-report":
 		// Stopped in the middle of its work, with prose rather than a report.
 		fmt.Print(`{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"I am still reading the changed files and have not written the report yet."}]}}` + "\n")

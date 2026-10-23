@@ -689,18 +689,23 @@ func TestReviewSalvagedReportKeepsItsFindings(t *testing.T) {
 	}
 }
 
-// TestAskDoesNotGainAVerdict: ask, plan and triage reports have no verdict in
-// their schema. Adding one on a truncated report invents a field their contract
-// does not allow.
-func TestAskDoesNotGainAVerdict(t *testing.T) {
-	for _, role := range []string{config.RoleReviewer, config.RoleLead} {
-		if !expectsVerdict(config.AgentConfig{Role: role}) {
-			t.Errorf("%s reports do carry a verdict", role)
-		}
+// TestVerdictIsAddedOnlyToAReviewerReport: ask, plan and triage run the same
+// reviewer and lead agents, so the role cannot decide whether a verdict belongs
+// in the report. The shape does: only a report carrying findings has a verdict in
+// its contract.
+func TestVerdictIsAddedOnlyToAReviewerReport(t *testing.T) {
+	reviewerReport := `{"schema_version":"1","reviewer":{"id":"r"},"summary":"s","findings":[],"comment":"c"}`
+	if !expectsVerdict([]byte(reviewerReport)) {
+		t.Error("a report with findings is a reviewer report and carries a verdict")
 	}
-	for _, role := range []string{"respondent", "planner"} {
-		if expectsVerdict(config.AgentConfig{Role: role}) {
-			t.Errorf("role %q is neither a reviewer nor the lead: no verdict belongs in its report", role)
+	// The shapes the same agents produce for the other commands.
+	for name, doc := range map[string]string{
+		"answer": `{"schema_version":"1","reviewer":{"id":"r"},"answer":"a","key_points":[]}`,
+		"plan":   `{"schema_version":"1","reviewer":{"id":"r"},"number":1,"understanding":"u","approach":"a","steps":[]}`,
+		"triage": `{"schema_version":"1","reviewer":{"id":"r"},"number":1,"labels":[],"status":"fixed"}`,
+	} {
+		if expectsVerdict([]byte(doc)) {
+			t.Errorf("an %s report has no verdict in its schema, so none must be added", name)
 		}
 	}
 }
@@ -788,5 +793,61 @@ func TestSalvageReportsTheConfiguredTimeout(t *testing.T) {
 	}
 	if strings.Contains(err.Error(), "-") && strings.Contains(err.Error(), "timed out after -") {
 		t.Errorf("negative timeout reported: %v", err)
+	}
+}
+
+// TestReviewSalvagesARunStoppedByTheReviewTimeout: a reviewer killed because
+// review.timeout expired produces a plain context error, not a TimedOut result,
+// and its output used to be discarded - the same loss this PR exists to prevent.
+func TestReviewSalvagesARunStoppedByTheReviewTimeout(t *testing.T) {
+	cfg := agentCfg(t, "r1", config.RoleReviewer, "timeout-with-report")
+	cfg.Output = config.OutputPiJSON
+	// A generous agent timeout, so the run is stopped by the review's own.
+	cfg.Timeout = time.Minute
+	a, _ := newApp(t, cfg,
+		agentCfg(t, "r2", config.RoleReviewer, "valid"),
+		agentCfg(t, "lead", config.RoleLead, "valid"))
+	a.Config.Review.Timeout = 2 * time.Second
+	// The review itself is interrupted, so Review reports that; what matters is
+	// that the reviewer's output was read before it ended.
+	res, err := a.Review(context.Background(), ReviewRequest{Number: 7})
+	if err == nil {
+		t.Fatal("a review stopped by its own timeout must report it")
+	}
+	if res == nil {
+		t.Fatal("the manifest is still written for an interrupted review")
+	}
+	var r1 domain.AgentExecution
+	for _, ex := range res.Manifest.Agents {
+		if ex.ID == "r1" {
+			r1 = ex
+		}
+	}
+	if !r1.Salvaged {
+		t.Errorf("a run stopped by review.timeout must be salvageable too: %+v", r1)
+	}
+}
+
+// TestRetryTimeoutIsNotZero: a retry of a run that ended normally, then stopped
+// by its own deadline, used to be recorded as "timed out after 0s".
+func TestRetryTimeoutIsNotZero(t *testing.T) {
+	cfg := agentCfg(t, "r1", config.RoleReviewer, "prose-then-timeout")
+	cfg.Output = config.OutputPiJSON
+	cfg.Timeout = 2 * time.Second
+	a, _ := newApp(t, cfg,
+		agentCfg(t, "r2", config.RoleReviewer, "valid"),
+		agentCfg(t, "lead", config.RoleLead, "valid"))
+	res, err := a.Review(context.Background(), ReviewRequest{Number: 7})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var r1 domain.AgentExecution
+	for _, ex := range res.Manifest.Agents {
+		if ex.ID == "r1" {
+			r1 = ex
+		}
+	}
+	if strings.Contains(r1.Error, "timed out after 0s") {
+		t.Errorf("a stopped retry must report the budget it ran on: %+v", r1)
 	}
 }

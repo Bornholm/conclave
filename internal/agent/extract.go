@@ -281,6 +281,20 @@ func closeUnterminated(b []byte) ([]byte, bool) {
 	return out.Bytes(), true
 }
 
+// CarriesFindings reports whether a document is shaped like a reviewer report,
+// which is the only report whose contract has a verdict. Ask, plan and triage
+// reports are produced by the same agents - Planners, Respondents and
+// TriageReviewers all return the reviewer role - so the role cannot decide it;
+// the shape can.
+func CarriesFindings(raw []byte) bool {
+	obj, ok := asObject(bytes.TrimSpace(raw))
+	if !ok {
+		return false
+	}
+	_, hasFindings := obj["findings"]
+	return hasFindings
+}
+
 // EnsureVerdict adds a conservative verdict to a report that has none, which is
 // what a report cut before its last members looks like: the schema puts the
 // verdict last, so a truncated one has lost it while keeping the findings.

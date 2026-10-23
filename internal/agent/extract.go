@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"unicode/utf8"
 )
 
 // ErrNoJSON is returned when no candidate JSON object is found in the output.
@@ -45,7 +46,7 @@ func ExtractTruncatedJSON(raw []byte, marker string) ([]byte, error) {
 	// The walk is bounded by construction: a brace that does not carry the marker
 	// within its opening fields is skipped without any re-scan, and an event
 	// stream holding no report at all is therefore read in linear time. Walking
-	// every brace in full took minutes on 12 MB.
+	// every brace in full is quadratic: minutes on a 12 MB stream.
 	key := []byte(`"` + marker + `"`)
 	first := bytes.IndexByte(raw, '{')
 	for pos := len(raw); pos > 0; {
@@ -332,6 +333,18 @@ func closeUnterminated(b []byte) ([]byte, bool) {
 		out.Reset()
 		out.Write(trimmed)
 	} else if inStr {
+		// A cut inside a multi-byte character leaves its first bytes, which
+		// decode as U+FFFD: a character the model never wrote.
+		if b := out.Bytes(); len(b) > 0 {
+			for k := 1; k <= utf8.UTFMax && k <= len(b); k++ {
+				if utf8.RuneStart(b[len(b)-k]) {
+					if !utf8.FullRune(b[len(b)-k:]) {
+						out.Truncate(len(b) - k)
+					}
+					break
+				}
+			}
+		}
 		out.WriteByte('"')
 	}
 	for i := len(stack) - 1; i >= 0; i-- {

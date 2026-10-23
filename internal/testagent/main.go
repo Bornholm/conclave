@@ -130,6 +130,18 @@ func main() {
 		fmt.Print(strings.Replace(rep, `"evidence": "changed.txt:2"`, `"evidence": ""`, 1))
 	case "triage-lead":
 		fmt.Print(triageLead(issueNumbers(prompt)))
+	case "lead-cut":
+		// Ends normally with a consolidation cut inside its last array.
+		rep := leadReport()
+		fmt.Print(rep[:len(rep)-len("]\n}")])
+	case "triage-cut":
+		// Ends normally, but the report stops inside its last string: what a
+		// provider error cutting the stream short leaves behind.
+		rep := triageReport(id, issueNumber(prompt))
+		fmt.Print(rep[:len(rep)-len("\"\n}")])
+	case "triage-lead-cut":
+		rep := triageLead(issueNumbers(prompt))
+		fmt.Print(rep[:len(rep)-len("]\n}")])
 	case "triage-lead-ghost":
 		fmt.Print(strings.Replace(triageLead(issueNumbers(prompt)), `"reported_by": ["r1"]`, `"reported_by": ["ghost"]`, 1))
 	case "plan":

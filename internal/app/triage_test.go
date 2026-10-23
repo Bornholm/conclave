@@ -97,6 +97,36 @@ func TestTriageEndToEnd(t *testing.T) {
 	}
 }
 
+// TestTriageWarnsAboutACutReport: adapt() closes a report the agent never
+// finished for every command, and its warning is the only thing telling the
+// reader the report is shorter than the work. Triage used to overwrite it.
+func TestTriageWarnsAboutACutReport(t *testing.T) {
+	a := newTriageApp(t,
+		agentCfg(t, "r1", config.RoleReviewer, "triage-cut"),
+		agentCfg(t, "lead", config.RoleLead, "triage-lead-cut"))
+	res, err := a.Triage(context.Background(), TriageRequest{Numbers: []int64{11, 12}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tr := res.Triage
+	if !tr.Meta.LeadUsed || len(tr.Issues) != 2 {
+		t.Fatalf("the cut reports must still be used: %+v", tr.Meta)
+	}
+	var reviewer, lead bool
+	for _, w := range tr.Warnings {
+		if strings.Contains(w, cutOffReportWarning) {
+			reviewer = reviewer || strings.HasPrefix(w, "r1")
+			lead = lead || !strings.HasPrefix(w, "r1")
+		}
+		if strings.Contains(w, cutOffVerdictWarning) {
+			t.Errorf("a triage has no verdict to warn about: %s", w)
+		}
+	}
+	if !reviewer || !lead {
+		t.Errorf("both cut reports must be flagged (reviewer %v, lead %v): %v", reviewer, lead, tr.Warnings)
+	}
+}
+
 func TestTriageListsIssues(t *testing.T) {
 	a := newTriageApp(t,
 		agentCfg(t, "r1", config.RoleReviewer, "triage"),

@@ -806,11 +806,13 @@ func (a *App) runLead(ctx context.Context, r *run, lead config.AgentConfig, work
 	ex.Warnings = append(ex.Warnings, warnings...)
 	if err != nil {
 		ex.Error = err.Error()
-		return nil, warnings, fmt.Errorf("invalid lead review: %w", err)
+		return nil, ex.Warnings, fmt.Errorf("invalid lead review: %w", err)
 	}
 	ex.Succeeded = true
 	log.Info("lead finished", "agent", lead.ID, "findings", len(review.Findings), "duration", ex.Duration.Round(time.Millisecond))
-	return review, warnings, nil
+	// The lead's own warnings, adapt()'s included: the reviewers' are read from
+	// the manifest before the lead runs, so these reach the review only here.
+	return review, ex.Warnings, nil
 }
 
 // adapt applies the agent's output format, stores the tool trace and records

@@ -752,6 +752,25 @@ func TestAdaptKeepsAReportThatParses(t *testing.T) {
 	}
 }
 
+// TestReviewWarnsAboutACutLeadReport: the reviewers' warnings are read from the
+// manifest before the lead runs, so the lead's own, adapt()'s included, reach
+// the review only through what runLead returns.
+func TestReviewWarnsAboutACutLeadReport(t *testing.T) {
+	a, _ := newApp(t,
+		agentCfg(t, "r1", config.RoleReviewer, "valid"),
+		agentCfg(t, "lead", config.RoleLead, "lead-cut"))
+	res, err := a.Review(context.Background(), ReviewRequest{Number: 7})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.Review.Meta.LeadUsed {
+		t.Fatalf("the cut consolidation must still be used: %v", res.Review.Warnings)
+	}
+	if !slices.Contains(res.Review.Warnings, cutOffReportWarning) {
+		t.Errorf("the review must say the lead's report was cut off: %v", res.Review.Warnings)
+	}
+}
+
 // TestReviewReportGraceZeroDisablesTheRetry: report_grace: 0 is documented as
 // disabling the retry of a run that ran out of time. It must not launch one on a
 // context that expires immediately, which turned a timeout into a confusing

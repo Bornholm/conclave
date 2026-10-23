@@ -255,9 +255,12 @@ func (a *App) execute(ctx context.Context, r *run, req ReviewRequest) (*domain.C
 	// review.timeout expired while the reviewers ran. The ones it stopped had
 	// their reports salvaged, and failing the review here would throw away the
 	// very reports the salvage exists to keep. There is no time left for the
-	// lead, so the consolidation is the deterministic one. A Ctrl-C and a
-	// fail_fast error are not covered: both mean stop.
-	outOfTime := err != nil && err == ctx.Err() && isStopped(err) && hasReport(outcomes)
+	// lead, so the consolidation is the deterministic one. The context, not the
+	// returned error, says whether the review ran out of time. A Ctrl-C and a
+	// fail_fast error are not covered: both mean stop, and with fail_fast a
+	// reviewer that left nothing fails the review even when review.timeout is
+	// what stopped it.
+	outOfTime := err != nil && !errors.Is(err, errFailFast) && isStopped(ctx.Err()) && hasReport(outcomes)
 	if err != nil && !outOfTime {
 		return nil, err
 	}
@@ -337,6 +340,9 @@ func truncateBytes(s string, max int) string {
 	return agent.CutRunes(s, max) + TruncationMarker
 }
 
+// errFailFast marks the error of a review stopped by review.fail_fast.
+var errFailFast = errors.New("fail_fast")
+
 // hasReport reports whether at least one reviewer produced a usable report.
 func hasReport(outcomes []consolidation.ReviewerOutcome) bool {
 	for _, o := range outcomes {
@@ -384,7 +390,7 @@ func (a *App) runReviewers(ctx context.Context, r *run, reviewers []config.Agent
 	r.manifest.Agents = append(r.manifest.Agents, execs...)
 	_ = r.store.WriteManifest(r.manifest)
 	if err != nil {
-		return outcomes, fmt.Errorf("fail_fast: %w", err)
+		return outcomes, fmt.Errorf("%w: %w", errFailFast, err)
 	}
 	if ctx.Err() != nil {
 		return outcomes, ctx.Err()
@@ -794,6 +800,12 @@ func (a *App) runLead(ctx context.Context, r *run, lead config.AgentConfig, work
 		// consolidation is not published as a complete one.
 		ex.Warnings = append(ex.Warnings, warnings...)
 		ex.Warnings = append(ex.Warnings, "the lead was stopped by its time budget; the consolidation is the one it had already written")
+		// A stopped run never approves, whether its document was cut or not:
+		// one rule, the same as for a review cut short by review.timeout.
+		if review.Verdict == domain.VerdictApprove {
+			review.Verdict = domain.VerdictComment
+			ex.Warnings = append(ex.Warnings, "the lead approved, but a consolidation recovered from a stopped lead is reported as comment")
+		}
 		log.Warn("lead was stopped but its consolidation was usable", "lead", lead.ID, "findings", len(review.Findings))
 		return review, ex.Warnings, nil
 	}

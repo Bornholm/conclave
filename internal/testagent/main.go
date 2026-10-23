@@ -200,6 +200,12 @@ func main() {
 		fmt.Println(`{"type":"message_update","assistantMessageEvent":{"type":"thinking_delta","delta":"thinking it over. "}}`)
 		fmt.Println(`{"type":"message_update","assistantMessageEvent":{"type":"text_delta","delta":` + strconv.Quote(rep[:cut]) + `}}`)
 		time.Sleep(time.Minute)
+	case "lead-timeout-approving":
+		// A lead that wrote a complete, approving consolidation, then is stopped.
+		rep := strings.Replace(leadReport(), `"verdict": "request_changes"`, `"verdict": "approve"`, 1)
+		fmt.Println(`{"type":"message_start","message":{"role":"assistant","content":[]}}`)
+		fmt.Println(`{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":` + strconv.Quote(rep) + `}]}}`)
+		time.Sleep(time.Minute)
 	case "lead-timeout":
 		// A lead that writes its consolidation as a complete message, then is
 		// stopped before the run ends.

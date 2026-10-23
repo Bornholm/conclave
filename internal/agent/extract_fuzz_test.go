@@ -14,6 +14,40 @@ var truncationSeeds = []string{
 	`{"schema_version":"1","reviewer":{"id":"r","model":"m"},"summary":"Le délai n'est jamais \"appliqué\".\nVoir ci-dessous.","findings":[{"id":"f1","category":"correctness","severity":"high","confidence":0.85,"file":"internal/app/review.go","start_line":123,"end_line":130,"title":"Timeout ignoré","description":"a\\b","breaking":false},{"id":"f2","severity":"low","confidence":1e-2,"file":"docs/x.md","start_line":7,"end_line":7,"title":"t","verified":true,"note":null}],"questions":[],"verdict":"request_changes"}`,
 	`{"reviewer":{"id":"r"},"schema_version":"1","findings":[{"file":"a.go","start_line":-1,"tags":["x","y",["z"]],"meta":{"a":{"b":{}}}}],"verdict":"comment"}`,
 	`{"schema_version":"1","answer":"€ 😀 é \t","key_points":["one","two"],"confidence":0.5}`,
+	longReport(),
+}
+
+// longReport is a report long enough that most of it lies past markerWindow:
+// the reports worth salvaging are the long ones, written by a run that used its
+// whole budget.
+func longReport() string {
+	var findings []string
+	for i := range 18 {
+		findings = append(findings, fmt.Sprintf(`{"id":"f%d","severity":"medium","confidence":0.%d,"file":"internal/app/review.go","start_line":%d,"end_line":%d,"title":"Finding %d","description":"%s"}`,
+			i, i%10, 100+i, 110+i, i, strings.Repeat("détail ", 20)))
+	}
+	return `{"schema_version":"1","reviewer":{"id":"r"},"summary":"s","findings":[` + strings.Join(findings, ",") + `],"verdict":"comment"}`
+}
+
+// TestExtractTruncatedJSONRecoversPastTheMarkerWindow: the window bounds where
+// the marker is looked for, not how far the report may go. A cut deep inside a
+// long report is repaired, not refused.
+func TestExtractTruncatedJSONRecoversPastTheMarkerWindow(t *testing.T) {
+	doc := longReport()
+	if len(doc) < markerWindow+1024 {
+		t.Fatalf("the seed must reach past the window: %d bytes", len(doc))
+	}
+	cut := strings.LastIndex(doc, "détail ") + 3
+	out, err := ExtractTruncatedJSON([]byte(doc[:cut]), "schema_version")
+	if err != nil {
+		t.Fatalf("a cut %d bytes in must be repaired: %v", cut, err)
+	}
+	var obj struct {
+		Findings []json.RawMessage `json:"findings"`
+	}
+	if err := json.Unmarshal(out, &obj); err != nil || len(obj.Findings) != 18 {
+		t.Errorf("the findings before the cut must all be kept: %d (%v)", len(obj.Findings), err)
+	}
 }
 
 // TestExtractTruncatedJSONNeverInvents cuts every seed at every byte and checks

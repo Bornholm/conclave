@@ -926,6 +926,48 @@ func TestReviewCutShortByTheTimeoutDoesNotApprove(t *testing.T) {
 	}
 }
 
+// TestSalvagedLeadNeverApproves: a lead stopped by its deadline after writing a
+// complete, approving consolidation is published as a comment. A stopped run
+// never approves, cut or not.
+func TestSalvagedLeadNeverApproves(t *testing.T) {
+	lead := agentCfg(t, "lead", config.RoleLead, "lead-timeout-approving")
+	lead.Output = config.OutputPiJSON
+	lead.Timeout = 700 * time.Millisecond
+	a, _ := newApp(t, agentCfg(t, "r1", config.RoleReviewer, "valid"), lead)
+	res, err := a.Review(context.Background(), ReviewRequest{Number: 7})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.Review.Meta.LeadUsed {
+		t.Fatalf("the stopped lead's consolidation must be used: %v", res.Review.Warnings)
+	}
+	if res.Review.Verdict != domain.VerdictComment {
+		t.Errorf("verdict = %s, want comment", res.Review.Verdict)
+	}
+	if !slices.ContainsFunc(res.Review.Warnings, func(w string) bool { return strings.Contains(w, "recovered from a stopped lead") }) {
+		t.Errorf("the review must say why it does not approve: %v", res.Review.Warnings)
+	}
+}
+
+// TestFailFastWinsOverReviewTimeout: with fail_fast, a reviewer that left
+// nothing fails the review, even when review.timeout is what stopped it and
+// another reviewer's report was salvaged. Both settings mean stop.
+func TestFailFastWinsOverReviewTimeout(t *testing.T) {
+	r1 := agentCfg(t, "r1", config.RoleReviewer, "timeout-with-report")
+	r2 := agentCfg(t, "r2", config.RoleReviewer, "timeout-silent")
+	for _, c := range []*config.AgentConfig{&r1, &r2} {
+		c.Output = config.OutputPiJSON
+		c.Timeout = time.Minute
+	}
+	a, _ := newApp(t, r1, r2, agentCfg(t, "lead", config.RoleLead, "valid"))
+	a.Config.Review.Timeout = 2 * time.Second
+	a.Config.Review.FailFast = true
+	_, err := a.Review(context.Background(), ReviewRequest{Number: 7})
+	if !errors.Is(err, errFailFast) {
+		t.Fatalf("fail_fast must fail the review, got %v", err)
+	}
+}
+
 // TestReviewTimeoutWithoutReportFails: the salvage only rescues reports that
 // exist. A review.timeout that left none is still a failed review.
 func TestReviewTimeoutWithoutReportFails(t *testing.T) {

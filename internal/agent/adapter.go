@@ -221,8 +221,11 @@ func adaptPiJSON(stdout []byte) (*Adapted, error) {
 			if text != "" {
 				lastText = text
 			}
-			// The finalized message supersedes its deltas.
+			// The finalized message supersedes its deltas, reasoning included:
+			// keeping them made a complete run look like one stopped mid-message,
+			// and wrote the same reasoning twice into the transcript.
 			partial.Reset()
+			partialThinking.Reset()
 			turnOpen = false
 			entry := map[string]any{"type": "assistant", "model": ad.Model, "content": kinds}
 			if text != "" {

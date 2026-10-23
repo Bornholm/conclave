@@ -185,3 +185,26 @@ func TestAdaptPiJSONKeepsReasoningOutOfTheReport(t *testing.T) {
 		t.Errorf("the reasoning must reach the transcript: %q", ad.Transcript)
 	}
 }
+
+// TestAdaptPiJSONDoesNotMarkACompleteRunPartial: message_end supersedes the deltas
+// of its own message, reasoning included. Leaving the reasoning behind made a run
+// that ended normally look like one stopped mid-message, and the salvage then
+// published "the agent was stopped while still writing" for a complete report.
+func TestAdaptPiJSONDoesNotMarkACompleteRunPartial(t *testing.T) {
+	stream := strings.Join([]string{
+		`{"type":"message_start","message":{"role":"assistant","content":[]}}`,
+		`{"type":"message_update","assistantMessageEvent":{"type":"thinking_delta","delta":"weighing it up"}}`,
+		`{"type":"message_end","message":{"role":"assistant","content":[{"type":"thinking","thinking":"weighing it up"},{"type":"text","text":"{\"schema_version\":\"1\"}"}]}}`,
+		`{"type":"agent_settled"}`,
+	}, "\n")
+	ad, err := Adapt(config.OutputPiJSON, []byte(stream))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ad.Partial {
+		t.Error("a run that ended normally must not be marked partial")
+	}
+	if n := strings.Count(string(ad.Transcript), "weighing it up"); n != 1 {
+		t.Errorf("the reasoning appears %d times in the transcript, want 1", n)
+	}
+}

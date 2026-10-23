@@ -905,3 +905,22 @@ func TestSalvagedLeadIsRecordedAsSucceeded(t *testing.T) {
 		t.Errorf("a published consolidation must not be recorded as a failed agent: %+v", ex)
 	}
 }
+
+// TestSalvageContextHonoursCancellation: the docs promise that a Ctrl-C stops a
+// salvage where it is. A plain WithoutCancel kept reading for two minutes after
+// it, which is what the helper exists to prevent.
+func TestSalvageContextHonoursCancellation(t *testing.T) {
+	parent, cancelParent := context.WithCancel(context.Background())
+	salvageCtx, cancel := salvageContext(parent)
+	defer cancel()
+
+	if _, ok := salvageCtx.Deadline(); !ok {
+		t.Error("the salvage window must have a deadline of its own")
+	}
+	cancelParent()
+	select {
+	case <-salvageCtx.Done():
+	case <-time.After(2 * time.Second):
+		t.Error("cancelling the run must cancel the salvage")
+	}
+}

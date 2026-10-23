@@ -390,7 +390,7 @@ func (a *App) runReviewer(ctx context.Context, r *run, rv config.AgentConfig, wo
 		// The salvage reads the output of a process that is already gone; the
 		// run's own deadline may expire while it queries git, which would make
 		// every existence check fail and drop every finding.
-		salvageCtx, cancelSalvage := context.WithTimeout(context.WithoutCancel(ctx), salvageTimeout)
+		salvageCtx, cancelSalvage := salvageContext(ctx)
 		// The run's budget comes from the configuration, not from ctx: by now
 		// the context's deadline has passed, so EffectiveTimeout on it returns a
 		// negative duration and the message would claim the reviewer died before
@@ -468,7 +468,7 @@ func (a *App) runReviewer(ctx context.Context, r *run, rv config.AgentConfig, wo
 			// the retry's expiring deadline: an expired context makes every
 			// existence check fail, and every finding is then dropped while the
 			// run is recorded as a success. Only the cancellation is inherited.
-			salvageCtx, cancelSalvage := context.WithTimeout(context.WithoutCancel(ctx), salvageTimeout)
+			salvageCtx, cancelSalvage := salvageContext(ctx)
 			report, transcript, err = a.salvageTimedOut(salvageCtx, r, rv, worktree, name, retryTimeout, transcript, &ex)
 			cancelSalvage()
 		}
@@ -554,12 +554,38 @@ func isStopped(err error) bool {
 	if isCutShort(err) {
 		return true
 	}
+	// DeadlineExceeded is a deadline, and only a deadline: an expired
+	// review.timeout is salvageable. Canceled is a cancellation, whoever asked
+	// for it, and is not.
 	return errors.Is(err, context.DeadlineExceeded) && !errors.Is(err, context.Canceled)
 }
 
 // salvageTimeout bounds the work of reading a finished run's output. It is short
 // because nothing is being generated: the process is gone, only the files remain.
 const salvageTimeout = 2 * time.Minute
+
+// salvageContext replaces a spent deadline with one of its own while still
+// honouring a cancellation. A plain WithoutCancel would keep reading for two
+// minutes after Ctrl-C, which the documentation promises does not happen.
+func salvageContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	base, cancelBase := context.WithCancel(context.WithoutCancel(ctx))
+	// The parent ends for two different reasons, and they must not be conflated.
+	// An expired review.timeout reports DeadlineExceeded, and replacing that spent
+	// deadline is the whole point of this context. A Ctrl-C reports Canceled, and
+	// the documentation promises it stops the salvage where it is.
+	stop := context.AfterFunc(ctx, func() {
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			return
+		}
+		cancelBase()
+	})
+	window, cancelTimer := context.WithTimeout(base, salvageTimeout)
+	return window, func() {
+		stop()
+		cancelTimer()
+		cancelBase()
+	}
+}
 
 // withGrace returns a context extended by d past the run's own deadline. A
 // reviewer retry runs on time set aside for it, so it is not cut short again
@@ -728,7 +754,7 @@ func (a *App) runLead(ctx context.Context, r *run, lead config.AgentConfig, work
 		// The lead is the one agent whose output gathers every reviewer, so a
 		// consolidation written just before its deadline is worth reading. It
 		// gets the same treatment as a reviewer's salvaged report.
-		salvageCtx, cancelSalvage := context.WithTimeout(context.WithoutCancel(ctx), salvageTimeout)
+		salvageCtx, cancelSalvage := salvageContext(ctx)
 		defer cancelSalvage()
 		ad, aerr := a.adapt(r, lead, res.Result.Stdout, &ex)
 		if aerr != nil {

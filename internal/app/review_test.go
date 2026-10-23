@@ -479,6 +479,11 @@ func TestReviewAsksAgainForACutShortRunWithATranscript(t *testing.T) {
 	if !strings.Contains(string(p), "still reading the changed files") {
 		t.Errorf("the retry prompt lacks the transcript: %s", p)
 	}
+	// The stop is what happened; the parse error only says why nothing could
+	// be kept. Reporting the parse error alone read like a run that ended.
+	if !strings.Contains(string(p), "timed out after") {
+		t.Errorf("the retry prompt must say the run was stopped: %s", p)
+	}
 }
 
 // TestReviewDoesNotAskAgainAfterAModelAPIError: a reviewer whose provider

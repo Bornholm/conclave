@@ -462,7 +462,11 @@ func (a *App) runReviewer(ctx context.Context, r *run, rv config.AgentConfig, wo
 			break
 		}
 		name := fmt.Sprintf("%s.retry%d", rv.ID, attempt)
-		a.logger().Warn("reviewer returned no usable report, asking again", "agent", rv.ID, "attempt", attempt, "reason", ex.Error)
+		if isCutShort(err) {
+			a.logger().Warn("reviewer was stopped without a usable report, asking again", "agent", rv.ID, "attempt", attempt, "reason", ex.Error)
+		} else {
+			a.logger().Warn("reviewer returned no usable report, asking again", "agent", rv.ID, "attempt", attempt, "reason", ex.Error)
+		}
 		// A retry of a run that ended normally keeps the agent timeout. A retry
 		// after a timeout runs on report_grace instead, since the run's own
 		// timeout is already spent. retryTimeout is what to report if the retry
@@ -660,6 +664,9 @@ func (a *App) salvageTimedOut(ctx context.Context, r *run, rv config.AgentConfig
 	stored.ID = name
 	ad, err := a.adapt(r, stored, stdout, ex)
 	if err != nil {
+		// The parse error alone reads like a run that ended badly; the stop is
+		// what happened, the parse error is why nothing could be kept.
+		ex.Error = fmt.Sprintf("%v; %v", cut.err, err)
 		if ad != nil {
 			return nil, ad.Transcript, cut
 		}
@@ -671,7 +678,7 @@ func (a *App) salvageTimedOut(ctx context.Context, r *run, rv config.AgentConfig
 		agent.Limits{MaxFindings: r.cfg.Review.Limits.MaxFindings, MaxFieldBytes: agent.DefaultLimits.MaxFieldBytes})
 	ex.Warnings = append(ex.Warnings, warnings...)
 	if err != nil {
-		ex.Error = err.Error()
+		ex.Error = fmt.Sprintf("%v; %v", cut.err, err)
 		return nil, ad.Transcript, cut
 	}
 	// A finding whose path cannot be checked is dropped, so a context that died

@@ -185,9 +185,8 @@ func adaptPiJSON(stdout []byte) (*Adapted, error) {
 				case "text_delta":
 					partial.WriteString(e.Delta)
 				case "thinking_delta":
-					// Reasoning is not the report. A real message carries both,
-					// and mixing them put the model's thinking at the start of
-					// the salvaged document.
+					// Reasoning is not the report. A message carries both, and
+					// mixed in, the thinking would open the salvaged document.
 					partialThinking.WriteString(e.Delta)
 				}
 			}
@@ -222,8 +221,8 @@ func adaptPiJSON(stdout []byte) (*Adapted, error) {
 				lastText = text
 			}
 			// The finalized message supersedes its deltas, reasoning included:
-			// keeping them made a complete run look like one stopped mid-message,
-			// and wrote the same reasoning twice into the transcript.
+			// kept, they would mark a complete run as stopped mid-message and
+			// write the reasoning twice into the transcript.
 			partial.Reset()
 			partialThinking.Reset()
 			turnOpen = false

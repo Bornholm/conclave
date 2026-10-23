@@ -420,20 +420,14 @@ func (a *App) runReviewer(ctx context.Context, r *run, rv config.AgentConfig, wo
 	}
 	report, transcript, err := a.reviewerAttempt(ctx, r, rv, worktree, rv.ID, p, &ex)
 	if isStopped(err) {
-		// The agent used its whole budget. With an agent that paces itself
-		// (the pi deadline extension), what it wrote before stopping is a
-		// report that was simply interrupted, not a run to throw away.
-		// The salvage reads the output of a process that is already gone; the
-		// run's own deadline may expire while it queries git, which would make
-		// every existence check fail and drop every finding.
+		// The agent used its whole budget, but what it wrote before stopping is
+		// often a complete or nearly complete report. Reading it queries git for
+		// each finding's path, so it runs on a context of its own: on the spent
+		// deadline every existence check would fail and drop every finding.
 		salvageCtx, cancelSalvage := salvageContext(ctx)
-		// The run's budget comes from the configuration, not from ctx: by now
-		// the context's deadline has passed, so EffectiveTimeout on it returns a
-		// negative duration and the message would claim the reviewer died before
-		// it started.
-		// The budget the run actually had: the whole review may have stopped it
-		// long before its own timeout, and naming the configured one would blame
-		// the agent for a deadline it never reached.
+		// The budget the run actually had, which review.timeout may have made
+		// shorter than the configured one. It cannot be recomputed from ctx,
+		// whose deadline has passed.
 		timeout := r.cfg.EffectiveTimeout(rv)
 		var stopped cutShort
 		if errors.As(err, &stopped) && stopped.timeout > 0 {
@@ -463,17 +457,15 @@ func (a *App) runReviewer(ctx context.Context, r *run, rv config.AgentConfig, wo
 		}
 		name := fmt.Sprintf("%s.retry%d", rv.ID, attempt)
 		a.logger().Warn("reviewer returned no usable report, asking again", "agent", rv.ID, "attempt", attempt, "reason", ex.Error)
-		// A retry after a timeout runs on its own deadline: the run's own
-		// timeout has, by definition, already been spent.
+		// A retry of a run that ended normally keeps the agent timeout. A retry
+		// after a timeout runs on report_grace instead, since the run's own
+		// timeout is already spent. retryTimeout is what to report if the retry
+		// is stopped in turn.
 		retryCtx, cancel, budget := ctx, context.CancelFunc(func() {}), timeBudget(ctx, r.cfg, rv)
-		// The budget the retry runs on, which is what to report if it is stopped
-		// in turn. A retry of a run that ended normally keeps the agent timeout.
 		retryTimeout := r.cfg.EffectiveTimeout(rv)
 		if isCutShort(err) {
 			if grace := r.cfg.ReviewReportGrace(); grace > 0 {
 				retryCtx, cancel = withGrace(ctx, grace)
-				// The retry runs on the grace period, so that is the timeout to
-				// report if it is stopped in turn.
 				retryTimeout = grace
 				budget = newTimeBudget(time.Now(), agent.EffectiveTimeout(retryCtx, r.cfg, rv))
 			} else {
@@ -500,10 +492,7 @@ func (a *App) runReviewer(ctx context.Context, r *run, rv config.AgentConfig, wo
 			transcript = more
 		}
 		if isCutShort(err) {
-			// The salvage queries git for each finding's path. It must not run on
-			// the retry's expiring deadline: an expired context makes every
-			// existence check fail, and every finding is then dropped while the
-			// run is recorded as a success. Only the cancellation is inherited.
+			// Same reason as the first salvage: not on the expiring deadline.
 			salvageCtx, cancelSalvage := salvageContext(ctx)
 			report, transcript, err = a.salvageTimedOut(salvageCtx, r, rv, worktree, name, retryTimeout, transcript, &ex)
 			cancelSalvage()
@@ -558,9 +547,8 @@ func isNoUsableReport(err error) bool {
 // that paces itself usually wrote a usable report before stopping.
 type cutShort struct {
 	err error
-	// timeout is the budget actually applied to the run, which is what the
-	// report must name: recomputing it from the configuration claims 30 minutes
-	// for a reviewer the whole review stopped after 2.
+	// timeout is the budget actually applied to the run. review.timeout may
+	// have made it shorter than the configured one, which would overstate it.
 	timeout time.Duration
 }
 
@@ -656,9 +644,7 @@ func withGrace(ctx context.Context, d time.Duration) (context.Context, context.C
 // as timed out when nothing usable came out of it.
 func (a *App) salvageTimedOut(ctx context.Context, r *run, rv config.AgentConfig, worktree, name string, timeout time.Duration, stdout []byte, ex *domain.AgentExecution) (*domain.AgentReport, []byte, error) {
 	cut := cutShort{
-		// The timeout that stopped the run, not the one bounding this salvage:
-		// ctx here is the short salvage context, and reporting its duration
-		// would tell the operator the reviewer died after two minutes.
+		// The timeout that stopped the run, not the salvage window ctx carries.
 		err: fmt.Errorf("timed out after %s", timeout.Round(time.Second)),
 	}
 	if len(bytes.TrimSpace(stdout)) == 0 {
@@ -804,8 +790,8 @@ func (a *App) runLead(ctx context.Context, r *run, lead config.AgentConfig, work
 		ex.Error = ""
 		ex.Salvaged = true
 		ex.Succeeded = true
-		// The warnings adapt() added about a truncated report stay: overwriting
-		// them published a cut consolidation as a complete one.
+		// The warnings adapt() added about a truncated report are kept, so a cut
+		// consolidation is not published as a complete one.
 		ex.Warnings = append(ex.Warnings, warnings...)
 		ex.Warnings = append(ex.Warnings, "the lead was stopped by its time budget; the consolidation is the one it had already written")
 		log.Warn("lead was stopped but its consolidation was usable", "lead", lead.ID, "findings", len(review.Findings))

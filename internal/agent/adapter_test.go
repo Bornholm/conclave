@@ -188,6 +188,26 @@ func TestAdaptPiJSONKeepsACompleteReportOverLaterProse(t *testing.T) {
 	}
 }
 
+// TestAdaptPiJSONKeepsACompleteReportOverACutRewrite: a run that finished its
+// report and was stopped while writing it a second time keeps the first one.
+// The rewrite carries the marker, which is no reason to prefer a cut copy.
+func TestAdaptPiJSONKeepsACompleteReportOverACutRewrite(t *testing.T) {
+	report := `{"schema_version":"1","reviewer":{"id":"r"},"summary":"s","findings":[],"verdict":"comment"}`
+	stream := strings.Join([]string{
+		`{"type":"message_start","message":{"role":"assistant","content":[]}}`,
+		`{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":` + strconv.Quote(report) + `}]}}`,
+		`{"type":"message_start","message":{"role":"assistant","content":[]}}`,
+		`{"type":"message_update","assistantMessageEvent":{"type":"text_delta","delta":"{\"schema_version\":\"1\",\"summ"}}`,
+	}, "\n")
+	ad, err := Adapt(config.OutputPiJSON, []byte(stream))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(ad.Report) != report || ad.Partial {
+		t.Errorf("the complete report must stand over its cut rewrite: partial=%v %s", ad.Partial, ad.Report)
+	}
+}
+
 // TestAdaptPiJSONKeepsReasoningOutOfTheReport: a real pi message carries both
 // thinking and text deltas (verified on a recorded run: 2 of 17 messages). Mixing
 // them put the model's reasoning at the start of the salvaged document.

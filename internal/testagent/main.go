@@ -31,6 +31,12 @@ func main() {
 	switch mode {
 	case "valid":
 		fmt.Print(validReport(id))
+	case "approving":
+		fmt.Print(approvingReport(id))
+	case "timeout-approving":
+		// Wrote an approving report in time, then was stopped by the review.
+		fmt.Print(`{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":` + strconv.Quote(approvingReport(id)) + `}]}}` + "\n")
+		time.Sleep(time.Minute)
 	case "lead":
 		fmt.Print(leadReport())
 	case "envelope":
@@ -355,6 +361,11 @@ func validReport(id string) string {
   "questions": [{"question": "Is this intentional?"}],
   "verdict": "request_changes"
 }`
+}
+
+// approvingReport is a complete reviewer report that found nothing.
+func approvingReport(id string) string {
+	return `{"schema_version":"1","reviewer":{"id":"` + id + `","model":"fake"},"summary":"Nothing to change.","findings":[],"verdict":"approve"}`
 }
 
 func leadReport() string {

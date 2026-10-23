@@ -879,8 +879,31 @@ func TestReviewSalvagesARunStoppedByTheReviewTimeout(t *testing.T) {
 	if !reportedByR1 {
 		t.Errorf("the salvaged report must reach the review: %+v", res.Review.Findings)
 	}
+	if res.Review.Verdict == domain.VerdictApprove {
+		t.Errorf("a review cut short by review.timeout must not approve: %s", res.Review.Verdict)
+	}
 	if !slices.ContainsFunc(res.Review.Warnings, func(w string) bool { return strings.Contains(w, "review.timeout expired before lead") }) {
 		t.Errorf("the review must say why the lead did not run: %v", res.Review.Warnings)
+	}
+}
+
+// TestReviewCutShortByTheTimeoutDoesNotApprove: no lead weighed the reports, and
+// a reviewer stopped may have lost the findings that mattered, so approving
+// reports still yield a comment.
+func TestReviewCutShortByTheTimeoutDoesNotApprove(t *testing.T) {
+	cfg := agentCfg(t, "r1", config.RoleReviewer, "timeout-approving")
+	cfg.Output = config.OutputPiJSON
+	cfg.Timeout = time.Minute
+	a, _ := newApp(t, cfg,
+		agentCfg(t, "r2", config.RoleReviewer, "approving"),
+		agentCfg(t, "lead", config.RoleLead, "valid"))
+	a.Config.Review.Timeout = 2 * time.Second
+	res, err := a.Review(context.Background(), ReviewRequest{Number: 7})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Review.Verdict != domain.VerdictComment {
+		t.Errorf("verdict = %s, want comment", res.Review.Verdict)
 	}
 }
 
@@ -960,8 +983,10 @@ func TestSalvagedLeadIsRecordedAsSucceeded(t *testing.T) {
 			ex = e
 		}
 	}
+	// The fixture always outlives the lead's timeout: a missing salvage is the
+	// regression this test exists for, not a reason to skip it.
 	if !ex.Salvaged {
-		t.Skip("the lead was not stopped, so there is no salvage to check")
+		t.Fatalf("the lead was stopped after writing its consolidation, which must be salvaged: %+v", ex)
 	}
 	if !ex.Succeeded {
 		t.Errorf("a published consolidation must not be recorded as a failed agent: %+v", ex)

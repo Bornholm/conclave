@@ -297,6 +297,13 @@ func (a *App) execute(ctx context.Context, r *run, req ReviewRequest) (*domain.C
 		log.Warn("review timed out before the lead, using deterministic consolidation", "lead", lead.ID, "reviewers", len(succeeded))
 		warnings = append(warnings, fmt.Sprintf("review.timeout expired before lead %s could run: the consolidation is the deterministic one, built from the reports the reviewers had written", lead.ID))
 		review := consolidation.Fallback(groups, outcomes)
+		// No lead weighed the reports, and the reviewers stopped may have lost
+		// the findings that would have mattered: an incomplete review must not
+		// approve.
+		if review.Verdict == domain.VerdictApprove {
+			review.Verdict = domain.VerdictComment
+			warnings = append(warnings, "the reports approved, but a review cut short by review.timeout is reported as comment")
+		}
 		review.Meta = meta
 		review.Warnings = warnings
 		return review, nil
@@ -621,7 +628,8 @@ func salvageContext(ctx context.Context) (context.Context, context.CancelFunc) {
 func withGrace(ctx context.Context, d time.Duration) (context.Context, context.CancelFunc) {
 	// WithoutCancel would drop the parent's signal along with its deadline, and
 	// a retry nothing can interrupt outlives Ctrl-C and review.timeout. The
-	// deadline is replaced; the cancellation is forwarded.
+	// reviewer's own deadline is replaced by d; the parent ending, whether by a
+	// Ctrl-C or by review.timeout expiring, still ends the retry.
 	base, cancelBase := context.WithCancel(context.WithoutCancel(ctx))
 	stop := context.AfterFunc(ctx, cancelBase)
 	if d <= 0 {
@@ -824,7 +832,7 @@ func (a *App) runLead(ctx context.Context, r *run, lead config.AgentConfig, work
 // cutOffReportWarning labels a report recovered from a message a stopped run
 // never finished. Findings after the cut are missing, and the reader has to
 // know the report is shorter than the work behind it.
-const cutOffReportWarning = "the report was cut off while being written; it was closed and parsed as far as it went, so anything after the cut is missing"
+const cutOffReportWarning = "the report was cut off while being written; it was closed and parsed as far as it went, so anything after the cut is missing, and so is a member whose value the cut fell before"
 
 // cutOffVerdictWarning explains the verdict a truncated report could not carry.
 const cutOffVerdictWarning = "the report was cut before its verdict, so the analysis reports it as comment rather than letting a partial report approve"

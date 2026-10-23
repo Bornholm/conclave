@@ -534,11 +534,15 @@ func isRecoverable(err error) bool { return isNoUsableReport(err) || isCutShort(
 // whole review's timeout: a reviewer killed because review.timeout expired
 // produces a plain context error, and discarding its output is the same loss the
 // salvage exists to prevent.
+//
+// A user's cancellation is deliberately not covered. Ctrl-C means stop, and
+// reading the output for another two minutes after it, on a context that ignores
+// cancellation by design, is the opposite of what was asked.
 func isStopped(err error) bool {
 	if isCutShort(err) {
 		return true
 	}
-	return errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
+	return errors.Is(err, context.DeadlineExceeded) && !errors.Is(err, context.Canceled)
 }
 
 // salvageTimeout bounds the work of reading a finished run's output. It is short
@@ -643,7 +647,7 @@ func (a *App) reviewerAttempt(ctx context.Context, r *run, rv config.AgentConfig
 		// A stopped run - its own deadline or the whole review's - is not a
 		// broken one: whatever it wrote is on standard output, and the caller
 		// decides whether a report can be made of it.
-		if res.TimedOut || errors.Is(res.Err, context.DeadlineExceeded) || errors.Is(res.Err, context.Canceled) {
+		if res.TimedOut || errors.Is(res.Err, context.DeadlineExceeded) && !errors.Is(res.Err, context.Canceled) {
 			var transcript []byte
 			if res.Result != nil {
 				transcript = res.Result.Stdout
@@ -706,7 +710,7 @@ func (a *App) runLead(ctx context.Context, r *run, lead config.AgentConfig, work
 	}
 	if res.Err != nil {
 		ex.Error = res.Err.Error()
-		if !res.TimedOut || res.Result == nil || len(bytes.TrimSpace(res.Result.Stdout)) == 0 {
+		if !res.TimedOut && !isStopped(res.Err) || res.Result == nil || len(bytes.TrimSpace(res.Result.Stdout)) == 0 {
 			return nil, nil, res.Err
 		}
 		// The lead is the one agent whose output gathers every reviewer, so a
@@ -727,6 +731,7 @@ func (a *App) runLead(ctx context.Context, r *run, lead config.AgentConfig, work
 		}
 		ex.Error = ""
 		ex.Salvaged = true
+		ex.Succeeded = true
 		ex.Warnings = append(warnings, "the lead was stopped by its time budget; the consolidation is the one it had already written")
 		log.Warn("lead was stopped but its consolidation was usable", "lead", lead.ID, "findings", len(review.Findings))
 		return review, ex.Warnings, nil

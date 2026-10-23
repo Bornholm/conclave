@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -785,21 +786,23 @@ func validPiStreamFor(id string) string {
 
 // TestSalvageReportsTheConfiguredTimeout: the run's budget must be reported from
 // the configuration. Recomputing it from a context whose deadline has passed
-// yields a negative duration, and the message then blames the reviewer for
-// dying before it started.
+// yields a negative duration, and the message then blames the reviewer for dying
+// before it started. The salvage here fails on the markers of its own report, so
+// the message it builds is still the one under test.
 func TestSalvageReportsTheConfiguredTimeout(t *testing.T) {
 	a, _ := newApp(t, agentCfg(t, "r1", config.RoleReviewer, "valid"), agentCfg(t, "lead", config.RoleLead, "valid"))
-	expired, cancel := context.WithCancel(context.Background())
-	cancel()
 	var ex domain.AgentExecution
-	_, _, err := a.salvageTimedOut(expired, &run{cfg: a.Config, store: nil},
-		a.Config.Agents[0], t.TempDir(), "r1", a.Config.EffectiveTimeout(a.Config.Agents[0]),
-		[]byte(validPiStreamFor("r1")), &ex)
+	_, _, err := a.salvageTimedOut(context.Background(), &run{cfg: a.Config, store: nil},
+		a.Config.Agents[0], t.TempDir(), "r1", 15*time.Minute,
+		[]byte(validPiStreamFor("someone-else")), &ex)
 	if err == nil {
-		t.Skip("this context cannot validate anything, which the previous test covers")
+		t.Fatal("a report naming another reviewer must be refused")
 	}
-	if strings.Contains(err.Error(), "-") && strings.Contains(err.Error(), "timed out after -") {
-		t.Errorf("negative timeout reported: %v", err)
+	if strings.Contains(err.Error(), "timed out after -") {
+		t.Errorf("a negative timeout was reported: %v", err)
+	}
+	if !strings.Contains(err.Error(), "timed out after 15m0s") {
+		t.Errorf("the message must name the configured timeout, got %v", err)
 	}
 }
 
@@ -856,5 +859,49 @@ func TestRetryTimeoutIsNotZero(t *testing.T) {
 	}
 	if strings.Contains(r1.Error, "timed out after 0s") {
 		t.Errorf("a stopped retry must report the budget it ran on: %+v", r1)
+	}
+}
+
+// TestIsStoppedIgnoresCancellation: Ctrl-C means stop. Treating it as a deadline
+// salvaged the run, cleared its error and kept querying git for two minutes after
+// the user asked to stop.
+func TestIsStoppedIgnoresCancellation(t *testing.T) {
+	if isStopped(context.Canceled) {
+		t.Error("a user cancellation must not be salvaged")
+	}
+	if isStopped(fmt.Errorf("run: %w", context.Canceled)) {
+		t.Error("a wrapped cancellation must not be salvaged either")
+	}
+	if !isStopped(context.DeadlineExceeded) {
+		t.Error("an expired deadline is what the salvage is for")
+	}
+	if !isStopped(cutShort{err: errors.New("timed out after 15m0s")}) {
+		t.Error("a run stopped by its own budget is salvageable")
+	}
+}
+
+// TestSalvagedLeadIsRecordedAsSucceeded: the consolidation is published and the
+// review reports LeadUsed, so recording the lead as a failed agent in the
+// manifest contradicts what the caller did with its output.
+func TestSalvagedLeadIsRecordedAsSucceeded(t *testing.T) {
+	lead := agentCfg(t, "lead", config.RoleLead, "lead-timeout")
+	lead.Output = config.OutputPiJSON
+	lead.Timeout = 700 * time.Millisecond
+	a, _ := newApp(t, agentCfg(t, "r1", config.RoleReviewer, "valid"), lead)
+	res, err := a.Review(context.Background(), ReviewRequest{Number: 7})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var ex domain.AgentExecution
+	for _, e := range res.Manifest.Agents {
+		if e.ID == "lead" {
+			ex = e
+		}
+	}
+	if !ex.Salvaged {
+		t.Skip("the lead was not stopped, so there is no salvage to check")
+	}
+	if !ex.Succeeded {
+		t.Errorf("a published consolidation must not be recorded as a failed agent: %+v", ex)
 	}
 }

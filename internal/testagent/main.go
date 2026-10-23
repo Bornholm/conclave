@@ -182,6 +182,14 @@ func main() {
 		fmt.Println(`{"type":"message_update","assistantMessageEvent":{"type":"thinking_delta","delta":"thinking it over. "}}`)
 		fmt.Println(`{"type":"message_update","assistantMessageEvent":{"type":"text_delta","delta":` + strconv.Quote(rep[:cut]) + `}}`)
 		time.Sleep(time.Minute)
+	case "lead-timeout":
+		// A lead that writes its consolidation as a complete message, then is
+		// stopped before the run ends.
+		rep := strings.ReplaceAll(strings.ReplaceAll(leadReport(), "\\", "\\\\"), `"`, `\"`)
+		rep = strings.ReplaceAll(rep, "\n", `\n`)
+		fmt.Println(`{"type":"message_start","message":{"role":"assistant","content":[]}}`)
+		fmt.Println(`{"type":"message_end","message":{"role":"assistant","provider":"fake","model":"fake/lead","content":[{"type":"text","text":"` + rep + `"}]}}`)
+		time.Sleep(time.Minute)
 	case "lead-impostor":
 		fmt.Print(strings.Replace(leadReport(), `"reported_by": ["r1"]`, `"reported_by": ["ghost"]`, 1))
 	default:

@@ -45,17 +45,33 @@ func ExtractTruncatedJSON(raw []byte, marker string) ([]byte, error) {
 	// the report the model was still writing. Looking only at those two keeps
 	// this linear; walking every brace was quadratic and took minutes on a 12 MB
 	// event stream that holds no report at all.
-	first, last := bytes.IndexByte(raw, '{'), bytes.LastIndexByte(raw, '{')
-	var candidates [][]byte
-	if first >= 0 {
-		candidates = append(candidates, raw[first:])
-	}
-	if last >= 0 && last != first {
-		candidates = append(candidates, raw[last:])
-	}
-	for _, candidate := range candidates {
-		if out, err := closeTruncated(candidate, marker); err == nil {
-			return out, nil
+	// The report is the last object that opens with the marker, so the scan walks
+	// braces backwards looking for it. It stops at the first one that closes,
+	// since from there the text is a complete document and the cut tail cannot be
+	// behind it. Walking every brace without that stop was quadratic and took
+	// minutes on a 12 MB event stream holding no report at all.
+	key := []byte(`"` + marker + `"`)
+	for pos := len(raw); pos > 0; {
+		start := bytes.LastIndexByte(raw[:pos], '{')
+		if start < 0 {
+			break
+		}
+		pos = start
+		opensOnMarker := bytes.HasPrefix(bytes.TrimLeft(raw[start+1:], " \t\r\n"), key)
+		if opensOnMarker {
+			if out, err := closeAt(raw[start:], marker); err == nil {
+				return out, nil
+			}
+			if matchBrace(raw, start) >= 0 {
+				return nil, ErrNoJSON
+			}
+		}
+		// An envelope holds the report escaped, so its braces never open on the
+		// marker. Only the outermost object can be one.
+		if start == bytes.IndexByte(raw, '{') {
+			if out, err := closeTruncated(raw[start:], marker); err == nil {
+				return out, nil
+			}
 		}
 	}
 	return nil, ErrNoJSON

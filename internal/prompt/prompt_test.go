@@ -135,3 +135,25 @@ func TestReviewerRetryPrompt(t *testing.T) {
 		}
 	}
 }
+
+// TestTimeBudgetAsksForTheReportEarly: a reviewer cannot read the clock, so
+// "stop at three quarters of the budget" is advice it cannot act on. Measured
+// on real runs, reviewers wrote 430 KB of reasoning over 18 messages and no
+// report at all. The prompt therefore asks for the object as soon as there is
+// something to say, and says that exploring is not progress.
+func TestTimeBudgetAsksForTheReportEarly(t *testing.T) {
+	now := time.Date(2026, 10, 12, 14, 0, 0, 0, time.UTC)
+	out, err := Reviewer(ReviewerInput{AgentID: "rev", PR: &domain.PullRequest{}, Budget: NewTimeBudget(now, 30*time.Minute)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"Write the JSON object as soon as you have something worth reporting",
+		"the very next message you send must be the",
+		"A message that carries no text cannot become a report",
+	} {
+		if !strings.Contains(string(out), want) {
+			t.Errorf("the budget must ask for the report early, lacks %q:\n%s", want, out)
+		}
+	}
+}

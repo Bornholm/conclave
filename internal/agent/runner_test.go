@@ -143,7 +143,7 @@ func TestBuildEnv(t *testing.T) {
 	t.Setenv("GIT_WORK_TREE", "/evil")
 	t.Setenv("KEEP_ME", "1")
 	f := false
-	env := strings.Join(BuildEnv(config.AgentConfig{ID: "a", Environment: map[string]string{"X": "y"}}, "/wt", "/tmp/x"), "\n")
+	env := strings.Join(BuildEnv(config.AgentConfig{ID: "a", Environment: map[string]string{"X": "y"}}, "/wt", "/tmp/x", 0), "\n")
 	for _, bad := range []string{"GIT_DIR=", "GIT_WORK_TREE="} {
 		if strings.Contains(env, bad) {
 			t.Errorf("env leaks %s", bad)
@@ -154,9 +154,59 @@ func TestBuildEnv(t *testing.T) {
 			t.Errorf("env lacks %s", want)
 		}
 	}
-	env = strings.Join(BuildEnv(config.AgentConfig{ID: "a", InheritEnv: &f}, "/wt", ""), "\n")
+	for _, bad := range []string{"CONCLAVE_DEADLINE_MS", "CONCLAVE_DEADLINE_AT"} {
+		if strings.Contains(env, bad) {
+			t.Errorf("env exports %s without a timeout", bad)
+		}
+	}
+	env = strings.Join(BuildEnv(config.AgentConfig{ID: "a", InheritEnv: &f}, "/wt", "", 0), "\n")
 	if strings.Contains(env, "KEEP_ME") || !strings.Contains(env, "PATH="+os.Getenv("PATH")) {
 		t.Errorf("isolated env wrong: %s", env)
+	}
+}
+
+func TestBuildEnvDeadline(t *testing.T) {
+	env := strings.Join(BuildEnv(config.AgentConfig{ID: "a"}, "/wt", "", 90*time.Second), "\n")
+	if !strings.Contains(env, "CONCLAVE_DEADLINE_MS=90000") {
+		t.Errorf("env lacks the budget in milliseconds: %s", env)
+	}
+	line := ""
+	for _, l := range strings.Split(env, "\n") {
+		if strings.HasPrefix(l, "CONCLAVE_DEADLINE_AT=") {
+			line = strings.TrimPrefix(l, "CONCLAVE_DEADLINE_AT=")
+		}
+	}
+	at, err := time.Parse(time.RFC3339, line)
+	if err != nil {
+		t.Fatalf("deadline %q is not RFC3339: %v", line, err)
+	}
+	if d := time.Until(at); d < 85*time.Second || d > 95*time.Second {
+		t.Errorf("deadline is %s away, want about 90s", d)
+	}
+}
+
+func TestEffectiveTimeout(t *testing.T) {
+	cfg := &config.Config{Review: config.ReviewConfig{AgentTimeout: 15 * time.Minute, LeadTimeout: 5 * time.Minute}}
+	rv := config.AgentConfig{ID: "r", Role: config.RoleReviewer}
+	lead := config.AgentConfig{ID: "l", Role: config.RoleLead}
+	if got := EffectiveTimeout(context.Background(), cfg, rv); got != 15*time.Minute {
+		t.Errorf("reviewer timeout = %s, want 15m", got)
+	}
+	if got := EffectiveTimeout(context.Background(), cfg, lead); got != 5*time.Minute {
+		t.Errorf("lead timeout = %s, want 5m", got)
+	}
+	// An agent timeout overrides the role default.
+	withOwn := rv
+	withOwn.Timeout = time.Minute
+	if got := EffectiveTimeout(context.Background(), cfg, withOwn); got != time.Minute {
+		t.Errorf("own timeout = %s, want 1m", got)
+	}
+	// The parent deadline wins when it is nearer: the agent must not outlive
+	// the review that is about to cancel it.
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	if got := EffectiveTimeout(ctx, cfg, rv); got > time.Minute {
+		t.Errorf("timeout = %s, want at most the context deadline", got)
 	}
 }
 

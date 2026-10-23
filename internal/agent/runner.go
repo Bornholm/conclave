@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -22,6 +23,11 @@ type Execution struct {
 	Result   *process.Result
 	Err      error
 	Duration time.Duration
+	// TimedOut reports that the run used its whole budget and was stopped.
+	// What it wrote is still in Result, unlike a run that failed.
+	TimedOut bool
+	// Timeout is the budget that was applied, after clamping to the context.
+	Timeout time.Duration
 }
 
 // Runner executes configured agents inside their worktree.
@@ -39,11 +45,12 @@ func (r *Runner) Run(ctx context.Context, cfg *config.Config, a config.AgentConf
 	for i, arg := range a.Command {
 		command[i] = strings.ReplaceAll(arg, config.WorktreePlaceholder, worktree)
 	}
+	timeout := EffectiveTimeout(ctx, cfg, a)
 	req := process.Request{
 		Command:        command,
 		Dir:            worktree,
-		Env:            BuildEnv(a, worktree, r.TempDir),
-		Timeout:        cfg.EffectiveTimeout(a),
+		Env:            BuildEnv(a, worktree, r.TempDir, timeout),
+		Timeout:        timeout,
 		MaxStdoutBytes: cfg.EffectiveMaxOutputBytes(a),
 		MaxStderrBytes: cfg.EffectiveMaxOutputBytes(a),
 	}
@@ -75,12 +82,13 @@ func (r *Runner) Run(ctx context.Context, cfg *config.Config, a config.AgentConf
 	}
 	start := time.Now()
 	res, err := r.Process.Run(ctx, req)
-	ex := Execution{Result: res, Duration: time.Since(start)}
+	ex := Execution{Result: res, Duration: time.Since(start), Timeout: timeout}
+	ex.TimedOut = res != nil && res.TimedOut
 	switch {
 	case err != nil:
 		ex.Err = err
 	case res.TimedOut:
-		ex.Err = fmt.Errorf("timed out after %s", cfg.EffectiveTimeout(a).Round(time.Second))
+		ex.Err = fmt.Errorf("timed out after %s", timeout.Round(time.Second))
 	case res.ExitCode != 0:
 		ex.Err = fmt.Errorf("exited with code %d: %s", res.ExitCode, exitReason(res.Stderr, res.Stdout))
 	case res.StdoutTruncated:
@@ -117,10 +125,26 @@ func lastLine(b []byte) string {
 	return l
 }
 
+// EffectiveTimeout is the wall-clock limit of one agent run: its own timeout,
+// or the shorter of the configured one and what the parent context leaves.
+// Exporting it to the child keeps its own deadline aligned with this one, so
+// an agent that paces itself has written its report before it is killed.
+func EffectiveTimeout(ctx context.Context, cfg *config.Config, a config.AgentConfig) time.Duration {
+	timeout := cfg.EffectiveTimeout(a)
+	if deadline, ok := ctx.Deadline(); ok {
+		if left := time.Until(deadline); left < timeout {
+			timeout = left
+		}
+	}
+	return timeout
+}
+
 // BuildEnv computes the child environment: optionally the parent environment
 // minus variables that would redirect Git or leak the run, then fixed values,
-// then the agent's explicit variables.
-func BuildEnv(a config.AgentConfig, worktree, tmpDir string) []string {
+// then the agent's explicit variables. A positive timeout is exported as
+// CONCLAVE_DEADLINE_MS and CONCLAVE_DEADLINE_AT for agents that can pace
+// themselves, such as the pi deadline extension.
+func BuildEnv(a config.AgentConfig, worktree, tmpDir string, timeout time.Duration) []string {
 	env := map[string]string{}
 	if a.InheritsEnv() {
 		for _, kv := range os.Environ() {
@@ -142,6 +166,12 @@ func BuildEnv(a config.AgentConfig, worktree, tmpDir string) []string {
 	env["CI"] = "1"
 	env["CONCLAVE_AGENT_ID"] = a.ID
 	env["CONCLAVE_WORKTREE"] = worktree
+	if timeout > 0 {
+		// The budget is what the child can act on; the deadline is only there
+		// for an agent that wants to reason about the wall clock.
+		env["CONCLAVE_DEADLINE_MS"] = strconv.FormatInt(timeout.Milliseconds(), 10)
+		env["CONCLAVE_DEADLINE_AT"] = time.Now().Add(timeout).UTC().Format(time.RFC3339)
+	}
 	if tmpDir != "" {
 		env["TMPDIR"] = tmpDir
 	}

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"unicode/utf8"
 )
 
 // ErrNoJSON is returned when no candidate JSON object is found in the output.
@@ -16,6 +17,399 @@ var ErrNoJSON = errors.New("no JSON object found in agent output")
 // fenceRe captures the body of a Markdown code fence. The body is processed
 // like any other text, so a nested object inside it is still found.
 var fenceRe = regexp.MustCompile("(?s)```(?:json)?[ \\t]*\\r?\\n(.*?)```")
+
+// ExtractTruncatedJSON closes a JSON object that was cut off mid-write and
+// parses it. It exists for one case only: a run stopped while the model was
+// still writing its report, where the beginning of the object is intact and
+// the end is simply missing.
+//
+// The repair is deliberately narrow, because a report is a claim about code and
+// a wrong claim is worse than none. An unterminated string is closed and the
+// containers left open are closed after it; the one member the cut fell in the
+// middle of is dropped, since closing around it would leave "note":}, which
+// does not parse. Nothing else is removed and nothing is invented. The result
+// is returned only when it parses strictly once closed and carries the marker,
+// so a candidate cut somewhere hopeless - inside a number or inside an escape
+// sequence - still fails. A cut in the middle of a key is not one of them: the
+// key is the member the cut fell in, so it is dropped like any other.
+//
+// It depends on no agent: the report is looked for wherever the run left it,
+// bare or inside an envelope, which is what lets the caller apply the same
+// repair to every configured agent.
+func ExtractTruncatedJSON(raw []byte, marker string) ([]byte, error) {
+	// The report is the last object whose opening fields carry the marker and
+	// which never closes: it is the one the model was still writing when it was
+	// killed. The scan walks braces backwards, which is what finds it last, and
+	// stops as soon as a candidate carrying the marker turns out to close - from
+	// there the text holds a complete report, so nothing was cut.
+	//
+	// The walk is bounded by construction: a brace that does not carry the marker
+	// within its opening fields is skipped without any re-scan, and an event
+	// stream holding no report at all is therefore read in linear time. Walking
+	// every brace in full is quadratic: minutes on a 12 MB stream.
+	key := []byte(`"` + marker + `"`)
+	first := bytes.IndexByte(raw, '{')
+	for pos := len(raw); pos > 0; {
+		start := bytes.LastIndexByte(raw[:pos], '{')
+		if start < 0 {
+			break
+		}
+		pos = start
+		// The marker has to be this object's own key: a nested object carries it
+		// too, and judging that one ends the walk on a member instead of the
+		// report. The window bounds the work, since every schema puts the marker
+		// in its opening fields.
+		if bytes.Contains(raw[start:min(start+markerWindow, len(raw))], key) && isTopLevelKey(raw, start, key) {
+			if out, err := closeAt(raw[start:], marker); err == nil {
+				return out, nil
+			}
+			if matchBrace(raw, start) >= 0 {
+				// This very object closes, marker and all: it is a complete
+				// report, so nothing later in the text was cut away.
+				return nil, ErrNoJSON
+			}
+		}
+		// An envelope holds the report escaped, so its braces never carry the
+		// marker. Only the outermost object can be one.
+		if start == first {
+			if out, err := closeTruncated(raw[start:], marker); err == nil {
+				return out, nil
+			}
+		}
+	}
+	return nil, ErrNoJSON
+}
+
+// isTopLevelKey reports whether key appears at the first level of the object
+// starting at start, rather than inside a nested one.
+func isTopLevelKey(b []byte, start int, key []byte) bool {
+	depth, inStr, esc := 0, false, false
+	for i := start; i < len(b); i++ {
+		c := b[i]
+		switch {
+		case inStr:
+			if esc {
+				esc = false
+			} else if c == '\\' {
+				esc = true
+			} else if c == '"' {
+				inStr = false
+			}
+		case c == '"':
+			inStr = true
+			// A string opening at depth 1 is a key of this object.
+			if depth == 1 && bytes.HasPrefix(b[i:], key) {
+				return true
+			}
+		case c == '{' || c == '[':
+			depth++
+		case c == '}' || c == ']':
+			depth--
+			if depth == 0 {
+				return false
+			}
+		}
+	}
+	return false
+}
+
+// markerWindow bounds how far into an object the marker is looked for. Every
+// report schema puts it in the opening fields, and searching the whole object
+// would make the backward walk quadratic again.
+const markerWindow = 4096
+
+// closeTruncated applies the repair to one candidate, first as a bare object and
+// then as an envelope holding the report escaped.
+func closeTruncated(candidate []byte, marker string) ([]byte, error) {
+	if out, err := closeAt(candidate, marker); err == nil {
+		return out, nil
+	}
+	if unescaped, ok := unescapeCutEnvelope(candidate); ok {
+		return ExtractTruncatedJSON(unescaped, marker)
+	}
+	return nil, ErrNoJSON
+}
+
+// unescapeCutEnvelope decodes the JSON string values of a document that was
+// itself cut off, so an escaped report inside it can be repaired.
+//
+// Only the string values are decoded, and their order is kept: the report is
+// then found by the same scan that handles a bare one. A document with no
+// string value, or one whose escapes do not decode, produces nothing and the
+// caller moves on to the next brace.
+func unescapeCutEnvelope(b []byte) ([]byte, bool) {
+	var out bytes.Buffer
+	found, inStr, key := false, false, false
+	start := 0
+	emit := func(end int) {
+		if key {
+			return
+		}
+		var val string
+		if json.Unmarshal(b[start:end], &val) == nil && strings.Contains(val, "{") {
+			out.WriteString(val)
+			out.WriteByte('\n')
+			found = true
+		}
+	}
+	for i := 0; i < len(b); i++ {
+		c := b[i]
+		if inStr {
+			switch {
+			case c == '\\':
+				i++
+			case c == '"':
+				emit(i + 1)
+				inStr = false
+			}
+			continue
+		}
+		switch c {
+		case '"':
+			inStr, key = true, false
+			start = i
+			if n := len(bytes.TrimRight(b[:i], " \t\r\n")); n > 0 {
+				prev := b[n-1]
+				// A key is a string followed by a colon, not a comma.
+				key = prev == '{' || prev == ','
+			}
+		}
+	}
+	if inStr && b[len(b)-1] != '\\' {
+		// The envelope itself was killed mid-value, which is exactly what a
+		// timeout on a streaming agent produces. The value still holds the report
+		// up to the cut, so it is decoded with the string closed: the repair
+		// applied afterwards is what closes the report itself.
+		closed := make([]byte, 0, len(b)-start+1)
+		closed = append(closed, b[start:]...)
+		closed = append(closed, '"')
+		var val string
+		if json.Unmarshal(closed, &val) == nil && strings.Contains(val, "{") {
+			out.WriteString(val)
+			out.WriteByte('\n')
+			found = true
+		}
+	}
+	return out.Bytes(), found
+}
+
+// closeAt closes the object starting at b[0], which must carry the marker.
+//
+// A candidate that already closes is not a truncation, and says so: returning
+// it as repaired would label every complete report as cut off, which is the
+// opposite of what the caller needs to know.
+func closeAt(candidate []byte, marker string) ([]byte, error) {
+	// The caller has already checked that this object carries the marker at its
+	// own level; requiring it as the first key would throw away every report
+	// written in another order.
+	if end := matchBrace(candidate, 0); end >= 0 {
+		return nil, ErrNoJSON
+	}
+	closed, ok := closeUnterminated(candidate)
+	if !ok {
+		return nil, ErrNoJSON
+	}
+	// Once closed, the document goes through the ordinary repair pass: a run
+	// that was cut mid-message is also a run that never got to fix its
+	// escaping, and the two problems arrive together.
+	obj, fixed, ok := parseObject(closed, true)
+	if !ok {
+		return nil, fmt.Errorf("malformed truncated JSON report: %w", ErrNoJSON)
+	}
+	closed = fixed
+	if _, has := obj[marker]; !has {
+		return nil, ErrNoJSON
+	}
+	return closed, nil
+}
+
+// closeUnterminated closes the strings and containers left open at the end of
+// a truncated JSON document, dropping the last member when the cut fell where
+// no bracket can repair it.
+//
+// A cut after `"note":` or after a comma leaves a document that closing alone
+// would turn into `"note":}`, which does not parse. The member being written is
+// the only incomplete thing in the document, so it goes, and everything already
+// complete is kept. That is the whole risk of this repair: a member the model
+// had finished but not yet separated from the next one is indistinguishable
+// from one it had not started, and both are dropped.
+//
+// It reports false for a document it cannot close honestly: one that ends
+// inside an escape sequence, where the missing character could turn out to be a
+// quote or a backslash, or after a number, where closing it would silently keep
+// a truncated value - and a start_line one digit short points at the wrong code.
+func closeUnterminated(b []byte) ([]byte, bool) {
+	var out bytes.Buffer
+	out.Grow(len(b) + 8)
+	// stack holds the open containers; members[i] is where the current member
+	// of stack[i] began, or -1 when it has none.
+	var stack []byte
+	var members []int
+	// valueStarted records that the member being written has a value, so a
+	// trailing comma is a separator rather than an unfinished value.
+	valueStarted := false
+	// inStr and esc track the string being read, if any.
+	inStr, esc := false, false
+	for i := 0; i < len(b); i++ {
+		c := b[i]
+		if inStr {
+			switch {
+			case esc:
+				esc = false
+			case c == '\\':
+				esc = true
+			case c == '"':
+				inStr = false
+			}
+			out.WriteByte(c)
+			continue
+		}
+		switch c {
+		case '"':
+			inStr = true
+			if n := len(stack); n > 0 && stack[n-1] == '{' {
+				trimmed := bytes.TrimRight(out.Bytes(), " \t\r\n")
+				if len(trimmed) > 0 && trimmed[len(trimmed)-1] != '{' && trimmed[len(trimmed)-1] != ',' {
+					valueStarted = true
+				}
+			} else {
+				valueStarted = true
+			}
+		case 't', 'f', 'n', '-', '0', '1', '2', '3', '4', '5', '6', '7', '8', '9':
+			valueStarted = true
+		case '{':
+			// An object's first member starts right after its brace, with no
+			// comma to mark it: a cut after its key and colon must drop it like
+			// any later member, or closing leaves "id":}.
+			stack = append(stack, c)
+			members = append(members, i+1)
+			valueStarted = false
+		case '[':
+			stack = append(stack, c)
+			members = append(members, -1)
+			valueStarted = true
+		case '}', ']':
+			if len(stack) == 0 {
+				return nil, false
+			}
+			stack = stack[:len(stack)-1]
+			members = members[:len(members)-1]
+			valueStarted = true
+		case ',':
+			if n := len(stack); n > 0 {
+				members[n-1] = i + 1
+			}
+			valueStarted = false
+		}
+		out.WriteByte(c)
+	}
+	if esc {
+		// The last character was a backslash starting an escape.
+		return nil, false
+	}
+	if !inStr {
+		// The last byte is judged after trailing whitespace: a newline appended
+		// by the caller must not hide a number the cut landed in.
+		// true and false end in an e too, and are complete: only a number is
+		// refused.
+		if trimmed := bytes.TrimRight(b, " \t\r\n"); len(trimmed) > 0 && !bytes.HasSuffix(trimmed, []byte("true")) && !bytes.HasSuffix(trimmed, []byte("false")) {
+			switch trimmed[len(trimmed)-1] {
+			case '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', '+', '-', '.', 'e', 'E':
+				return nil, false
+			}
+		}
+	}
+	if !valueStarted {
+		// The member being written was cut before its value: drop it, so the
+		// closing brackets attach to something that is complete.
+		if len(members) == 0 || members[len(members)-1] < 0 {
+			return nil, false
+		}
+		at := members[len(members)-1]
+		trimmed := bytes.TrimRight(b[:at], " \t\r\n")
+		if len(trimmed) > 0 && trimmed[len(trimmed)-1] == ',' {
+			trimmed = bytes.TrimRight(trimmed[:len(trimmed)-1], " \t\r\n")
+		}
+		out.Reset()
+		out.Write(trimmed)
+	} else if inStr {
+		// A cut inside a multi-byte character leaves its first bytes, which
+		// decode as U+FFFD: a character the model never wrote.
+		if b := out.Bytes(); len(b) > 0 {
+			for k := 1; k <= utf8.UTFMax && k <= len(b); k++ {
+				if utf8.RuneStart(b[len(b)-k]) {
+					if !utf8.FullRune(b[len(b)-k:]) {
+						out.Truncate(len(b) - k)
+					}
+					break
+				}
+			}
+		}
+		out.WriteByte('"')
+	}
+	for i := len(stack) - 1; i >= 0; i-- {
+		if stack[i] == '{' {
+			out.WriteByte('}')
+		} else {
+			out.WriteByte(']')
+		}
+	}
+	return out.Bytes(), true
+}
+
+// EnsureVerdict adds a conservative verdict to a report that has none, which is
+// what a report cut before its last members looks like: the schema puts the
+// verdict last, so a truncated one has lost it while keeping the findings.
+//
+// The verdict added is "comment", never "approve". A partial report must not be
+// able to approve a pull request: the findings that would have justified a
+// stricter verdict may be exactly the ones the cut destroyed. It returns the
+// document unchanged, and VerdictKept, when it already carries a verdict other
+// than "approve".
+func EnsureVerdict(raw []byte) ([]byte, VerdictChange) {
+	obj, ok := asObject(bytes.TrimSpace(raw))
+	if !ok {
+		return raw, VerdictKept
+	}
+	if v, has := obj["verdict"]; has {
+		// A repaired report that says "approve" is downgraded: the findings that
+		// would have justified a stricter verdict may be exactly the ones the cut
+		// destroyed, and a partial review must never be able to approve.
+		var verdict string
+		if json.Unmarshal(v, &verdict) == nil && verdict == "approve" {
+			obj["verdict"] = json.RawMessage(`"comment"`)
+			out, err := json.Marshal(obj)
+			if err != nil {
+				return raw, VerdictKept
+			}
+			return out, VerdictDowngraded
+		}
+		return raw, VerdictKept
+	}
+	var rep map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &rep); err != nil {
+		return raw, VerdictKept
+	}
+	rep["verdict"] = json.RawMessage(`"comment"`)
+	out, err := json.Marshal(rep)
+	if err != nil {
+		return raw, VerdictKept
+	}
+	return out, VerdictAdded
+}
+
+// VerdictChange says what EnsureVerdict did to a report's verdict, so the
+// warning given to the reader names what actually happened.
+type VerdictChange int
+
+const (
+	// VerdictKept: the report's own verdict stands.
+	VerdictKept VerdictChange = iota
+	// VerdictAdded: the cut fell before the verdict, and "comment" was added.
+	VerdictAdded
+	// VerdictDowngraded: the report said "approve", which a cut report may not.
+	VerdictDowngraded
+)
 
 // ExtractJSON finds the JSON object produced by an agent in its raw stdout.
 // It accepts, in order: a raw object; a Claude Code envelope (object with a

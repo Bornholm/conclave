@@ -326,7 +326,8 @@ func (a *App) runPlanner(ctx context.Context, p *planRun, pl config.AgentConfig,
 	}
 	report, warnings, err := agent.ParsePlanReport(ad.Report, pl.ID, p.issue.Number,
 		agent.PlanLimits{MaxSteps: p.cfg.Plan.Limits.MaxSteps, MaxFieldBytes: agent.DefaultLimits.MaxFieldBytes})
-	ex.Warnings = warnings
+	// adapt() may already have warned that the report was cut off.
+	ex.Warnings = append(ex.Warnings, warnings...)
 	if err != nil {
 		ex.Error = err.Error()
 		return ex, nil, fmt.Errorf("invalid plan: %w", err)
@@ -373,14 +374,15 @@ func (a *App) runPlanLead(ctx context.Context, p *planRun, lead config.AgentConf
 		return nil, nil, err
 	}
 	plan, warnings, err := consolidation.ParseLeadPlan(ad.Report, p.issue, succeeded, p.cfg.Plan.Limits.MaxSteps)
-	ex.Warnings = warnings
+	// adapt() may already have warned that the report was cut off.
+	ex.Warnings = append(ex.Warnings, warnings...)
 	if err != nil {
 		ex.Error = err.Error()
-		return nil, warnings, fmt.Errorf("invalid lead plan: %w", err)
+		return nil, ex.Warnings, fmt.Errorf("invalid lead plan: %w", err)
 	}
 	ex.Succeeded = true
 	log.Info("lead finished", "agent", lead.ID, "steps", len(plan.Steps), "duration", ex.Duration.Round(time.Millisecond))
-	return plan, warnings, nil
+	return plan, ex.Warnings, nil
 }
 
 func (a *App) cleanupPlanWorktrees(p *planRun, worktrees map[string]string, keep bool) {

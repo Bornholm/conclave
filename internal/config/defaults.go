@@ -21,6 +21,9 @@ const (
 	DefaultMaxComments        = 200
 	DefaultMaxCommentBytes    = 8 << 10
 	DefaultReportRetries      = 1
+	// DefaultReportGrace is the extra time a reviewer gets to convert what it
+	// wrote into a report once its own timeout has passed.
+	DefaultReportGrace = 2 * time.Minute
 
 	DefaultTriageMaxParallel = 3
 	DefaultMaxTriageIssues   = 50

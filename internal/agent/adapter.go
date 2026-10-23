@@ -34,6 +34,9 @@ type Adapted struct {
 	// bounded by MaxTranscriptBytes. A retry hands it back to the agent when
 	// no usable report came out of the run.
 	Transcript []byte
+	// Partial marks a report recovered from the deltas of a message that never
+	// ended: the run was stopped while the model was still writing it.
+	Partial bool
 }
 
 // MaxTranscriptBytes bounds the transcript kept for a retry: the end of a
@@ -94,7 +97,14 @@ type piEvent struct {
 	Result   json.RawMessage `json:"result"`
 	// FinalError is set on an auto_retry_end event that gave up.
 	FinalError string `json:"finalError"`
-	Message    *struct {
+	// AssistantMessageEvent carries the streaming deltas of the assistant
+	// message being written. A run stopped mid-message has no message_end for
+	// it, so these are all that is left of what the model had written.
+	AssistantMessageEvent *struct {
+		Type  string `json:"type"`
+		Delta string `json:"delta"`
+	} `json:"assistantMessageEvent"`
+	Message *struct {
 		Role         string `json:"role"`
 		Model        string `json:"model"`
 		Provider     string `json:"provider"`
@@ -119,6 +129,17 @@ func adaptPiJSON(stdout []byte) (*Adapted, error) {
 	var trace bytes.Buffer
 	enc := json.NewEncoder(&trace)
 	var lastText, apiErr string
+	// partial accumulates the deltas of the message being written, and is
+	// dropped on the message_end that makes it redundant. A run killed before
+	// that event leaves a message that never ended: the deltas are then all
+	// there is, and a model told to conclude usually had its JSON in them.
+	var partial bytes.Buffer
+	// partialThinking holds the reasoning of the message being written, kept for
+	// the transcript only.
+	var partialThinking bytes.Buffer
+	// turnOpen records a turn whose message has not ended: deltas collected
+	// while no turn is open belong to a message that already finished.
+	turnOpen := false
 	for _, line := range bytes.Split(stdout, []byte("\n")) {
 		line = bytes.TrimSpace(line)
 		if len(line) == 0 || line[0] != '{' {
@@ -132,11 +153,42 @@ func adaptPiJSON(stdout []byte) (*Adapted, error) {
 		case "tool_execution_start":
 			ad.ToolCalls++
 			_ = enc.Encode(map[string]any{"type": "tool_call", "tool": ev.ToolName, "args": ev.Args})
+			// A tool call ends the assistant message that asked for it: its
+			// deltas were reasoning about work that is now done.
+			partial.Reset()
+			partialThinking.Reset()
+			turnOpen = false
 		case "tool_execution_end":
 			_ = enc.Encode(map[string]any{"type": "tool_result", "tool": ev.ToolName, "result_bytes": len(ev.Result)})
 		case "auto_retry_end":
 			if ev.FinalError != "" {
 				apiErr = ev.FinalError
+			}
+		case "message_start":
+			// Only the message being written when the run stopped matters, and
+			// this is where one begins. Checking the role keeps the user and
+			// toolResult messages from wiping the deltas of the assistant
+			// message that is still open.
+			if ev.Message != nil && ev.Message.Role == "assistant" {
+				partial.Reset()
+				partialThinking.Reset()
+				turnOpen = true
+			}
+		case "message_update":
+			if !turnOpen {
+				// A delta without an open turn belongs to a message whose end
+				// was already seen; it must not reach the next report.
+				continue
+			}
+			if e := ev.AssistantMessageEvent; e != nil && e.Delta != "" {
+				switch e.Type {
+				case "text_delta":
+					partial.WriteString(e.Delta)
+				case "thinking_delta":
+					// Reasoning is not the report. A message carries both, and
+					// mixed in, the thinking would open the salvaged document.
+					partialThinking.WriteString(e.Delta)
+				}
 			}
 		case "message_end":
 			if ev.Message == nil || ev.Message.Role != "assistant" {
@@ -168,6 +220,12 @@ func adaptPiJSON(stdout []byte) (*Adapted, error) {
 			if text != "" {
 				lastText = text
 			}
+			// The finalized message supersedes its deltas, reasoning included:
+			// kept, they would mark a complete run as stopped mid-message and
+			// write the reasoning twice into the transcript.
+			partial.Reset()
+			partialThinking.Reset()
+			turnOpen = false
 			entry := map[string]any{"type": "assistant", "model": ad.Model, "content": kinds}
 			if text != "" {
 				entry["text"] = text
@@ -176,6 +234,28 @@ func adaptPiJSON(stdout []byte) (*Adapted, error) {
 		}
 	}
 	ad.Trace = trace.Bytes()
+	if partialThinking.Len() > 0 {
+		transcript.WriteString("[reasoning]\n" + partialThinking.String() + "\n\n")
+	}
+	if partial.Len() > 0 && completeReport(lastText) {
+		// The run finished a report, then was stopped while writing something
+		// else: a closing remark, a second thought, or the same report again.
+		// A complete report beats a cut one; what followed it is only
+		// transcript.
+		transcript.WriteString(partial.String() + "\n\n")
+	} else if partial.Len() > 0 {
+		// A run stopped mid-message. What it was writing is newer than any text
+		// an earlier message left behind - partial is reset on every
+		// message_start - so it is the report, even when lastText holds prose
+		// from a message that had already finished.
+		lastText = partial.String()
+		ad.Partial = true
+		transcript.WriteString(lastText + "\n\n")
+	} else if partialThinking.Len() > 0 && lastText == "" {
+		// Nothing but reasoning before the stop: keep it as the transcript so the
+		// retry has something to convert, but it is not a report.
+		ad.Partial = true
+	}
 	ad.Transcript = tail(transcript.Bytes(), MaxTranscriptBytes)
 	if lastText == "" {
 		if apiErr != "" {
@@ -199,4 +279,14 @@ func tail(b []byte, limit int) []byte {
 		}
 	}
 	return cut
+}
+
+// completeReport reports whether text already holds a whole report, which a
+// later message cut short must not replace.
+func completeReport(text string) bool {
+	if text == "" {
+		return false
+	}
+	_, err := ExtractJSON([]byte(text), "schema_version")
+	return err == nil
 }

@@ -346,7 +346,8 @@ func (a *App) runRespondent(ctx context.Context, p *askRun, ag config.AgentConfi
 		return ex, nil, err
 	}
 	report, warnings, err := agent.ParseAnswerReport(ad.Report, ag.ID, p.answerLimits())
-	ex.Warnings = warnings
+	// adapt() may already have warned that the report was cut off.
+	ex.Warnings = append(ex.Warnings, warnings...)
 	if err != nil {
 		ex.Error = err.Error()
 		return ex, nil, fmt.Errorf("invalid answer: %w", err)
@@ -397,14 +398,15 @@ func (a *App) runAskLead(ctx context.Context, p *askRun, lead config.AgentConfig
 		return nil, nil, err
 	}
 	answer, warnings, err := consolidation.ParseLeadAnswer(ad.Report, p.question, succeeded, p.answerLimits())
-	ex.Warnings = warnings
+	// adapt() may already have warned that the report was cut off.
+	ex.Warnings = append(ex.Warnings, warnings...)
 	if err != nil {
 		ex.Error = err.Error()
-		return nil, warnings, fmt.Errorf("invalid lead answer: %w", err)
+		return nil, ex.Warnings, fmt.Errorf("invalid lead answer: %w", err)
 	}
 	ex.Succeeded = true
 	log.Info("lead finished", "agent", lead.ID, "duration", ex.Duration.Round(time.Millisecond))
-	return answer, warnings, nil
+	return answer, ex.Warnings, nil
 }
 
 func (p *askRun) answerLimits() agent.AnswerLimits {

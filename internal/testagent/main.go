@@ -31,6 +31,12 @@ func main() {
 	switch mode {
 	case "valid":
 		fmt.Print(validReport(id))
+	case "approving":
+		fmt.Print(approvingReport(id))
+	case "timeout-approving":
+		// Wrote an approving report in time, then was stopped by the review.
+		fmt.Print(`{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":` + strconv.Quote(approvingReport(id)) + `}]}}` + "\n")
+		time.Sleep(time.Minute)
 	case "lead":
 		fmt.Print(leadReport())
 	case "envelope":
@@ -80,6 +86,31 @@ func main() {
 		os.Exit(1)
 	case "timeout":
 		time.Sleep(time.Minute)
+	case "timeout-with-report":
+		// An agent that paced itself: it wrote its report in time, then kept
+		// going and was stopped. The report is on standard output already.
+		if strings.Contains(prompt, "ended without the JSON report") {
+			fmt.Print(`{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":` + strconv.Quote(validReport(id)) + `}]}}` + "\n")
+			return
+		}
+		fmt.Print(`{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":` + strconv.Quote(validReport(id)) + `}]}}` + "\n")
+		fmt.Fprint(os.Stderr, "still exploring\n")
+		time.Sleep(time.Minute)
+	case "prose-then-timeout":
+		// Ends normally with prose and no report, so it is asked again; the
+		// retry then runs out of time in turn.
+		if strings.Contains(prompt, "ended without the JSON report") {
+			time.Sleep(time.Minute)
+			return
+		}
+		fmt.Print(`{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"I reviewed the diff but I am describing it in prose instead of writing the report."}]}}` + "\n")
+	case "timeout-no-report":
+		// Stopped in the middle of its work, with prose rather than a report.
+		fmt.Print(`{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"I am still reading the changed files and have not written the report yet."}]}}` + "\n")
+		time.Sleep(time.Minute)
+	case "timeout-silent":
+		// Stopped before it wrote anything at all.
+		time.Sleep(time.Minute)
 	case "wrong-reviewer":
 		fmt.Print(validReport("impostor"))
 	case "echo-prompt":
@@ -99,6 +130,18 @@ func main() {
 		fmt.Print(strings.Replace(rep, `"evidence": "changed.txt:2"`, `"evidence": ""`, 1))
 	case "triage-lead":
 		fmt.Print(triageLead(issueNumbers(prompt)))
+	case "lead-cut":
+		// Ends normally with a consolidation cut inside its last array.
+		rep := leadReport()
+		fmt.Print(rep[:len(rep)-len("]\n}")])
+	case "triage-cut":
+		// Ends normally, but the report stops inside its last string: what a
+		// provider error cutting the stream short leaves behind.
+		rep := triageReport(id, issueNumber(prompt))
+		fmt.Print(rep[:len(rep)-len("\"\n}")])
+	case "triage-lead-cut":
+		rep := triageLead(issueNumbers(prompt))
+		fmt.Print(rep[:len(rep)-len("]\n}")])
 	case "triage-lead-ghost":
 		fmt.Print(strings.Replace(triageLead(issueNumbers(prompt)), `"reported_by": ["r1"]`, `"reported_by": ["ghost"]`, 1))
 	case "plan":
@@ -128,6 +171,49 @@ func main() {
 		fmt.Println(`{"type":"tool_execution_start","toolCallId":"t0","toolName":"read","args":{"path":"changed.txt"}}`)
 		fmt.Println(`{"type":"tool_execution_end","toolCallId":"t0","toolName":"read","result":{"content":[]}}`)
 		fmt.Println(`{"type":"message_end","message":{"role":"assistant","provider":"openrouter","model":"fake/model","content":[{"type":"text","text":"` + rep + `"}]}}`)
+	case "pi-truncated":
+		// A run stopped while the model was writing its report: the halves
+		// arrive as deltas, the object never closes, and no message_end ever
+		// comes. The cut falls inside a string, which is what a real stop
+		// produces.
+		// Cut inside the description of the first finding, which leaves the
+		// verdict and the first finding's other fields readable: the report is
+		// then repairable, and shorter than the one a complete run writes.
+		rep := validReport(id)
+		marker := `"description": "Line changed without lock."`
+		i := strings.Index(rep, marker)
+		if i < 0 {
+			fmt.Fprint(os.Stderr, "pi-truncated: marker missing from validReport\n")
+			os.Exit(2)
+		}
+		cut := i + len(`"description": "Line changed`)
+		if cut >= len(rep) {
+			// Never silently emit a complete report: the test would pass
+			// without ever exercising the repair.
+			fmt.Fprint(os.Stderr, "pi-truncated: the cut does not truncate\n")
+			os.Exit(2)
+		}
+		fmt.Println(`{"type":"session","version":3}`)
+		// The real stream opens the message before its deltas; a fixture that
+		// skipped it would exercise a path the agent never produces.
+		fmt.Println(`{"type":"message_start","message":{"role":"assistant","content":[]}}`)
+		fmt.Println(`{"type":"message_update","assistantMessageEvent":{"type":"thinking_delta","delta":"thinking it over. "}}`)
+		fmt.Println(`{"type":"message_update","assistantMessageEvent":{"type":"text_delta","delta":` + strconv.Quote(rep[:cut]) + `}}`)
+		time.Sleep(time.Minute)
+	case "lead-timeout-approving":
+		// A lead that wrote a complete, approving consolidation, then is stopped.
+		rep := strings.Replace(leadReport(), `"verdict": "request_changes"`, `"verdict": "approve"`, 1)
+		fmt.Println(`{"type":"message_start","message":{"role":"assistant","content":[]}}`)
+		fmt.Println(`{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":` + strconv.Quote(rep) + `}]}}`)
+		time.Sleep(time.Minute)
+	case "lead-timeout":
+		// A lead that writes its consolidation as a complete message, then is
+		// stopped before the run ends.
+		rep := strings.ReplaceAll(strings.ReplaceAll(leadReport(), "\\", "\\\\"), `"`, `\"`)
+		rep = strings.ReplaceAll(rep, "\n", `\n`)
+		fmt.Println(`{"type":"message_start","message":{"role":"assistant","content":[]}}`)
+		fmt.Println(`{"type":"message_end","message":{"role":"assistant","provider":"fake","model":"fake/lead","content":[{"type":"text","text":"` + rep + `"}]}}`)
+		time.Sleep(time.Minute)
 	case "lead-impostor":
 		fmt.Print(strings.Replace(leadReport(), `"reported_by": ["r1"]`, `"reported_by": ["ghost"]`, 1))
 	default:
@@ -293,6 +379,11 @@ func validReport(id string) string {
   "questions": [{"question": "Is this intentional?"}],
   "verdict": "request_changes"
 }`
+}
+
+// approvingReport is a complete reviewer report that found nothing.
+func approvingReport(id string) string {
+	return `{"schema_version":"1","reviewer":{"id":"` + id + `","model":"fake"},"summary":"Nothing to change.","findings":[],"verdict":"approve"}`
 }
 
 func leadReport() string {

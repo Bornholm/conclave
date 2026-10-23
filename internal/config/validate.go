@@ -72,6 +72,9 @@ func Validate(cfg *Config) error {
 	if cfg.Review.ReportRetries != nil && *cfg.Review.ReportRetries < 0 {
 		add("review.report_retries: must be >= 0")
 	}
+	if cfg.Review.ReportGrace != nil && *cfg.Review.ReportGrace < 0 {
+		add("review.report_grace: must be >= 0")
+	}
 	for i, pattern := range cfg.Review.DiffExclude {
 		if strings.TrimSpace(pattern) == "" || strings.HasPrefix(pattern, ":") {
 			add("review.diff_exclude[%d]: must be a non-empty path pattern without pathspec magic, got %q", i, pattern)

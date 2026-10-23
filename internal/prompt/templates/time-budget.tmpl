@@ -1,16 +1,21 @@
 {{define "time-budget"}}{{with .Budget}}{{if .Duration}}TIME BUDGET
 You have {{minutes .Duration}} of wall-clock time, until {{.Deadline.Format "15:04:05"}} UTC.
 Conclave then stops you, and a run stopped before it prints its JSON object
-counts as failed: nothing you found reaches the result. You may have no tool
-that reads the clock: do not spend calls looking for the time, pace yourself
-by the work instead. Organize your work for that budget:
-- Start with what matters most and spend your time where problems are
-  likely; do not dwell on what you can judge at a glance.
-- Read each file once, by line ranges, and only the parts you need.
-- Run independent reads and searches together rather than one at a time.
-- Once the changed code is covered, or you sense about three quarters of the
-  budget is spent, stop exploring and write the JSON object with what you
-  have verified by then. A shorter answer delivered in time is worth more
-  than a complete one that never arrives.
+counts as failed: nothing you found reaches the result, however much you
+learned. You may have no tool that reads the clock: do not spend calls looking for the time.
+
+Because the clock is out of reach, judge the budget by your own work. A search
+or a file read is the unit, and a handful of them is all a run this size holds:
+- Write the JSON object as soon as you have something worth reporting, then
+  stop. If room remains, look further and replace it with a fuller object. An
+  object that exists can be improved; one you never wrote scores zero.
+- Once the changed code is covered, the very next message you send must be the
+  JSON object.
+- A message that carries no text cannot become a report. Exploration is not
+  progress on its own.
+
+Prefer two findings you are sure of to a third you were still hunting when the
+time ran out. A shorter report delivered in time is worth more than a complete
+one that never arrives.
 
 {{end}}{{end}}{{end}}

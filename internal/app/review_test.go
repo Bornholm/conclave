@@ -2,15 +2,20 @@ package app
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/bornholm/conclave/internal/agent"
+	"github.com/bornholm/conclave/internal/artifact"
 	"github.com/bornholm/conclave/internal/config"
 	"github.com/bornholm/conclave/internal/domain"
 	"github.com/bornholm/conclave/internal/forge"
@@ -387,9 +392,14 @@ func TestReviewAsksAgainForAMissingReport(t *testing.T) {
 // TestReviewDoesNotAskAgainAfterACutShortRun: a reviewer that stopped after
 // a word has no review to convert, so it fails instead of being asked for a
 // report it would make up.
-func TestReviewDoesNotAskAgainAfterACutShortRun(t *testing.T) {
-	a, _ := newApp(t,
-		agentCfg(t, "r1", config.RoleReviewer, "cut-short"),
+// TestReviewDoesNotAskAgainAfterACutShortRun: a reviewer stopped by its
+// timeout that wrote nothing usable is not asked again. It did not end without
+// a report through its own fault, and the context window explanation does not
+// apply: the run was stopped.
+func TestReviewDoesNotAskAgainAfterAPointlessCutShortRun(t *testing.T) {
+	cfg := agentCfg(t, "r1", config.RoleReviewer, "timeout-silent")
+	cfg.Timeout = 700 * time.Millisecond
+	a, _ := newApp(t, cfg,
 		agentCfg(t, "r2", config.RoleReviewer, "valid"),
 		agentCfg(t, "lead", config.RoleLead, "valid"))
 	res, err := a.Review(context.Background(), ReviewRequest{Number: 7})
@@ -402,11 +412,77 @@ func TestReviewDoesNotAskAgainAfterACutShortRun(t *testing.T) {
 			r1 = ex
 		}
 	}
-	if r1.Succeeded || r1.ReportRetries != 0 || !strings.Contains(r1.Error, "context window") {
+	if r1.Succeeded || r1.Salvaged || !strings.Contains(r1.Error, "timed out") {
 		t.Errorf("manifest: %+v", r1)
 	}
-	if _, err := os.Stat(filepath.Join(res.RunDir, "prompts", "reviewer-r1.retry1.txt")); !os.IsNotExist(err) {
-		t.Errorf("the reviewer was asked again: %v", err)
+	if r1.ReportRetries != 0 {
+		t.Errorf("a run that wrote nothing to convert must not be asked again: %+v", r1)
+	}
+}
+
+// TestReviewSalvagesAReportFromACutShortRun: the agent wrote its report, then
+// kept going until it was stopped. The report is usable, and the run is a
+// success with a warning rather than a lost review.
+func TestReviewSalvagesAReportFromACutShortRun(t *testing.T) {
+	cfg := agentCfg(t, "r1", config.RoleReviewer, "timeout-with-report")
+	cfg.Output = config.OutputPiJSON
+	cfg.Timeout = 700 * time.Millisecond
+	a, _ := newApp(t, cfg,
+		agentCfg(t, "r2", config.RoleReviewer, "valid"),
+		agentCfg(t, "lead", config.RoleLead, "valid"))
+	res, err := a.Review(context.Background(), ReviewRequest{Number: 7})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var r1 domain.AgentExecution
+	for _, ex := range res.Manifest.Agents {
+		if ex.ID == "r1" {
+			r1 = ex
+		}
+	}
+	if !r1.Succeeded || !r1.Salvaged {
+		t.Errorf("manifest: %+v", r1)
+	}
+	if r1.Error != "" {
+		t.Errorf("a salvaged run must not report an error: %q", r1.Error)
+	}
+	if !strings.Contains(strings.Join(r1.Warnings, "\n"), "time budget") {
+		t.Errorf("the warning must say the report was interrupted: %v", r1.Warnings)
+	}
+	if _, err := os.Stat(filepath.Join(res.RunDir, "reports", "r1.json")); err != nil {
+		t.Errorf("the salvaged report was not written: %v", err)
+	}
+	if res.Review.Meta.ReviewersSucceeded != 2 {
+		t.Errorf("reviewers succeeded = %d, want 2", res.Review.Meta.ReviewersSucceeded)
+	}
+}
+
+// TestReviewAsksAgainForACutShortRunWithATranscript: the agent wrote prose but
+// no report before it was stopped. A retry on its own deadline, with what it
+// wrote, can still turn that into a report.
+func TestReviewAsksAgainForACutShortRunWithATranscript(t *testing.T) {
+	cfg := agentCfg(t, "r1", config.RoleReviewer, "timeout-no-report")
+	cfg.Timeout = 700 * time.Millisecond
+	a, _ := newApp(t, cfg,
+		agentCfg(t, "r2", config.RoleReviewer, "valid"),
+		agentCfg(t, "lead", config.RoleLead, "valid"))
+	res, err := a.Review(context.Background(), ReviewRequest{Number: 7})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The retry asks for the report and the test agent answers it, so the
+	// reviewer ends up with a usable report after being stopped once.
+	if _, err := os.Stat(filepath.Join(res.RunDir, "prompts", "reviewer-r1.retry1.txt")); err != nil {
+		t.Errorf("the reviewer was not asked again: %v", err)
+	}
+	p, _ := os.ReadFile(filepath.Join(res.RunDir, "prompts", "reviewer-r1.retry1.txt"))
+	if !strings.Contains(string(p), "still reading the changed files") {
+		t.Errorf("the retry prompt lacks the transcript: %s", p)
+	}
+	// The stop is what happened; the parse error only says why nothing could
+	// be kept. Reporting the parse error alone read like a run that ended.
+	if !strings.Contains(string(p), "timed out after") {
+		t.Errorf("the retry prompt must say the run was stopped: %s", p)
 	}
 }
 
@@ -516,5 +592,488 @@ func TestReviewRunningLabel(t *testing.T) {
 	}
 	if got := a.Forge.(*fakeForge).labelEvents; len(got) != 0 {
 		t.Errorf("no running label configured, yet: %q", got)
+	}
+}
+
+// TestReviewSalvagesAReportCutMidMessage: the run was stopped while the model
+// was still writing its report, so the JSON has no end. It is closed and used,
+// and the run carries the warning that says findings after the cut are missing.
+func TestReviewSalvagesAReportCutMidMessage(t *testing.T) {
+	cfg := agentCfg(t, "r1", config.RoleReviewer, "pi-truncated")
+	cfg.Output = config.OutputPiJSON
+	a, _ := newApp(t, cfg,
+		agentCfg(t, "r2", config.RoleReviewer, "valid"),
+		agentCfg(t, "lead", config.RoleLead, "valid"))
+	res, err := a.Review(context.Background(), ReviewRequest{Number: 7})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var r1 domain.AgentExecution
+	for _, ex := range res.Manifest.Agents {
+		if ex.ID == "r1" {
+			r1 = ex
+		}
+	}
+	if !r1.Succeeded || !r1.Salvaged {
+		t.Fatalf("manifest: %+v", r1)
+	}
+	warnings := strings.Join(r1.Warnings, "\n")
+	for _, want := range []string{"stopped while still writing", "cut off while being written", "cut before its verdict"} {
+		if !strings.Contains(warnings, want) {
+			t.Errorf("the warning must mention %q: %v", want, r1.Warnings)
+		}
+	}
+	// The repair must be what made this usable, not a fixture that happened to
+	// emit a complete report: the cut loses the findings that came after it.
+	raw, err := os.ReadFile(filepath.Join(res.RunDir, "reports", "r1.json"))
+	if err != nil {
+		t.Fatalf("the salvaged report was not written: %v", err)
+	}
+	var rep domain.AgentReport
+	if err := json.Unmarshal(raw, &rep); err != nil {
+		t.Fatal(err)
+	}
+	if len(rep.Findings) != 1 {
+		t.Errorf("a report cut inside the first finding must keep exactly one, got %d", len(rep.Findings))
+	}
+	// A partial report must never be able to approve what it could not read.
+	if rep.Verdict != domain.VerdictComment {
+		t.Errorf("verdict = %q, want comment on a report cut before its verdict", rep.Verdict)
+	}
+}
+
+// TestWithGraceKeepsCancellation: the grace period replaces the reviewer's
+// deadline, not its cancellation. A retry nothing can interrupt would outlive
+// Ctrl-C and review.timeout, and the run could not finish before it did.
+func TestWithGraceKeepsCancellation(t *testing.T) {
+	parent, cancelParent := context.WithCancel(context.Background())
+	retry, cancelRetry := withGrace(parent, time.Minute)
+	defer cancelRetry()
+
+	if _, ok := retry.Deadline(); !ok {
+		t.Error("the grace period must set a later deadline")
+	}
+	if retry.Err() != nil {
+		t.Fatalf("a fresh retry context is already done: %v", retry.Err())
+	}
+	// The parent's cancellation still reaches the retry.
+	cancelParent()
+	select {
+	case <-retry.Done():
+	case <-time.After(2 * time.Second):
+		t.Error("cancelling the parent must cancel the retry")
+	}
+}
+
+// TestReviewSalvagedReportKeepsItsFindings: the salvage queries git for each
+// finding's path, so it must run while its context is still live. Releasing the
+// retry's context first made every PathExistsAt call fail, and the run was then
+// recorded as succeeded with a salvaged report holding no findings at all -
+// a clean-looking review of nothing.
+func TestReviewSalvagedReportKeepsItsFindings(t *testing.T) {
+	cfg := agentCfg(t, "r1", config.RoleReviewer, "pi-truncated")
+	cfg.Output = config.OutputPiJSON
+	a, _ := newApp(t, cfg,
+		agentCfg(t, "r2", config.RoleReviewer, "valid"),
+		agentCfg(t, "lead", config.RoleLead, "valid"))
+	res, err := a.Review(context.Background(), ReviewRequest{Number: 7})
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(filepath.Join(res.RunDir, "reports", "r1.json"))
+	if err != nil {
+		t.Fatalf("the salvaged report was not written: %v", err)
+	}
+	var rep domain.AgentReport
+	if err := json.Unmarshal(raw, &rep); err != nil {
+		t.Fatal(err)
+	}
+	if len(rep.Findings) == 0 {
+		t.Error("a salvaged report whose findings all vanished reads like a clean review: the context was released before the salvage")
+	}
+	for _, f := range rep.Findings {
+		if strings.Contains(strings.ToUpper(f.File), "DOES NOT EXIST") {
+			t.Errorf("a finding survived with an unresolved path: %+v", f)
+		}
+	}
+}
+
+// TestVerdictIsAddedOnlyToAReviewerReport: ask, plan and triage run the same
+// reviewer and lead agents with other schemas, and a triage consolidation cut
+// after its summary keeps exactly the fields a cut lead review keeps. The shape
+// cannot tell them apart, so the command decides: only a review adds a verdict.
+func TestVerdictIsAddedOnlyToAReviewerReport(t *testing.T) {
+	cut := []byte(`{"schema_version":"1","summary":"the timeout path is never taken`)
+	ag := config.AgentConfig{ID: "r", Output: config.OutputAuto}
+	for _, tc := range []struct {
+		name     string
+		verdicts bool
+	}{{"review", true}, {"triage", false}} {
+		t.Run(tc.name, func(t *testing.T) {
+			store, err := artifact.Open(t.TempDir(), "run")
+			if err != nil {
+				t.Fatal(err)
+			}
+			var ex domain.AgentExecution
+			ad, err := (&App{}).adapt(&run{store: store, verdicts: tc.verdicts}, ag, cut, &ex)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var obj map[string]any
+			if err := json.Unmarshal(ad.Report, &obj); err != nil {
+				t.Fatalf("the cut report must be closed: %v: %s", err, ad.Report)
+			}
+			if _, has := obj["verdict"]; has != tc.verdicts {
+				t.Errorf("verdict added = %v, want %v: %s", has, tc.verdicts, ad.Report)
+			}
+			if slices.Contains(ex.Warnings, cutOffVerdictWarning) != tc.verdicts {
+				t.Errorf("the verdict warning must follow the verdict: %v", ex.Warnings)
+			}
+		})
+	}
+}
+
+// TestAdaptKeepsAReportThatParses: the repair is for a report that was cut. A
+// complete one followed by an unterminated fragment carrying the marker, a
+// quoted schema or a second attempt, must not be replaced by that fragment.
+func TestAdaptKeepsAReportThatParses(t *testing.T) {
+	report := `{"schema_version":"1","reviewer":{"id":"r"},"summary":"s","findings":[],"verdict":"request_changes"}`
+	stdout := []byte(report + "\nThe schema starts with {\"schema_version\":\"1\",\"summ")
+	store, err := artifact.Open(t.TempDir(), "run")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var ex domain.AgentExecution
+	ad, err := (&App{}).adapt(&run{store: store, verdicts: true}, config.AgentConfig{ID: "r", Output: config.OutputAuto}, stdout, &ex)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := agent.ExtractJSON(ad.Report, "schema_version")
+	if err != nil || string(got) != report {
+		t.Errorf("the complete report must stand: %s (%v)", got, err)
+	}
+	if slices.Contains(ex.Warnings, cutOffReportWarning) {
+		t.Errorf("a report that parses was not cut off: %v", ex.Warnings)
+	}
+}
+
+// TestReviewWarnsAboutACutLeadReport: the reviewers' warnings are read from the
+// manifest before the lead runs, so the lead's own, adapt()'s included, reach
+// the review only through what runLead returns.
+func TestReviewWarnsAboutACutLeadReport(t *testing.T) {
+	a, _ := newApp(t,
+		agentCfg(t, "r1", config.RoleReviewer, "valid"),
+		agentCfg(t, "lead", config.RoleLead, "lead-cut"))
+	res, err := a.Review(context.Background(), ReviewRequest{Number: 7})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.Review.Meta.LeadUsed {
+		t.Fatalf("the cut consolidation must still be used: %v", res.Review.Warnings)
+	}
+	if !slices.Contains(res.Review.Warnings, cutOffReportWarning) {
+		t.Errorf("the review must say the lead's report was cut off: %v", res.Review.Warnings)
+	}
+}
+
+// TestReviewReportGraceZeroDisablesTheRetry: report_grace: 0 is documented as
+// disabling the retry of a run that ran out of time. It must not launch one on a
+// context that expires immediately, which turned a timeout into a confusing
+// "context deadline exceeded" while still burning a prompt and a raw file.
+func TestReviewReportGraceZeroDisablesTheRetry(t *testing.T) {
+	zero := time.Duration(0)
+	cfg := agentCfg(t, "r1", config.RoleReviewer, "timeout-no-report")
+	cfg.Timeout = 700 * time.Millisecond
+	a, _ := newApp(t, cfg,
+		agentCfg(t, "r2", config.RoleReviewer, "valid"),
+		agentCfg(t, "lead", config.RoleLead, "valid"))
+	a.Config.Review.ReportGrace = &zero
+	res, err := a.Review(context.Background(), ReviewRequest{Number: 7})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(res.RunDir, "prompts", "reviewer-r1.retry1.txt")); !os.IsNotExist(err) {
+		t.Errorf("a zero grace period must not start a retry: %v", err)
+	}
+	var r1 domain.AgentExecution
+	for _, ex := range res.Manifest.Agents {
+		if ex.ID == "r1" {
+			r1 = ex
+		}
+	}
+	if strings.Contains(r1.Error, "context deadline exceeded") {
+		t.Errorf("a disabled retry must leave the timeout readable: %q", r1.Error)
+	}
+	// The first attempt was stopped with only prose written, so the reviewer is
+	// asked to convert it; with the retry disabled, that prose is what failed.
+	if r1.ReportRetries != 0 || !strings.Contains(r1.Error, "no JSON object") {
+		t.Errorf("manifest: %+v", r1)
+	}
+}
+
+// TestSalvageRefusesToReportAnUnvalidatedReport: a finding whose path cannot be
+// checked is dropped, so a context that died while git was being queried leaves
+// an empty report that reads like a clean review. The salvage must fail instead
+// of returning success with nothing in it.
+func TestSalvageRefusesToReportAnUnvalidatedReport(t *testing.T) {
+	a, _ := newApp(t, agentCfg(t, "r1", config.RoleReviewer, "valid"), agentCfg(t, "lead", config.RoleLead, "valid"))
+	dead, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	var ex domain.AgentExecution
+	report, _, err := a.salvageTimedOut(dead, &run{cfg: a.Config, git: nil, changed: nil, store: nil},
+		a.Config.Agents[0], t.TempDir(), "r1", time.Minute, []byte(validPiStreamFor("r1")), &ex)
+	if err == nil {
+		t.Errorf("a report that could not be validated must not be reported as salvaged: %+v", report)
+	}
+	if ex.Salvaged {
+		t.Error("the run must not be marked salvaged when its findings were dropped")
+	}
+}
+
+// validPiStreamFor renders a pi stream carrying one finding on changed.txt.
+func validPiStreamFor(id string) string {
+	rep := `{"schema_version":"1","reviewer":{"id":"` + id + `"},"summary":"s",` +
+		`"findings":[{"id":"f1","category":"correctness","severity":"high","confidence":0.9,` +
+		`"file":"changed.txt","start_line":1,"end_line":1,"title":"t","description":"d"}],` +
+		`"verdict":"comment"}`
+	b, _ := json.Marshal(rep)
+	return `{"type":"message_start","message":{"role":"assistant","content":[]}}` + "\n" +
+		`{"type":"message_update","assistantMessageEvent":{"type":"text_delta","delta":` + string(b) + `}}` + "\n"
+}
+
+// TestSalvageReportsTheConfiguredTimeout: the run's budget must be reported from
+// the configuration. Recomputing it from a context whose deadline has passed
+// yields a negative duration, and the message then blames the reviewer for dying
+// before it started. The salvage here fails on the markers of its own report, so
+// the message it builds is still the one under test.
+func TestSalvageReportsTheConfiguredTimeout(t *testing.T) {
+	a, _ := newApp(t, agentCfg(t, "r1", config.RoleReviewer, "valid"), agentCfg(t, "lead", config.RoleLead, "valid"))
+	var ex domain.AgentExecution
+	_, _, err := a.salvageTimedOut(context.Background(), &run{cfg: a.Config, store: nil},
+		a.Config.Agents[0], t.TempDir(), "r1", 15*time.Minute,
+		[]byte(validPiStreamFor("someone-else")), &ex)
+	if err == nil {
+		t.Fatal("a report naming another reviewer must be refused")
+	}
+	if strings.Contains(err.Error(), "timed out after -") {
+		t.Errorf("a negative timeout was reported: %v", err)
+	}
+	if !strings.Contains(err.Error(), "timed out after 15m0s") {
+		t.Errorf("the message must name the configured timeout, got %v", err)
+	}
+}
+
+// TestReviewSalvagesARunStoppedByTheReviewTimeout: a reviewer killed because
+// review.timeout expired produces a plain context error, not a TimedOut result.
+// Its output used to be discarded, then salvaged only to be thrown away with the
+// whole review: the published review is what must carry its findings.
+func TestReviewSalvagesARunStoppedByTheReviewTimeout(t *testing.T) {
+	cfg := agentCfg(t, "r1", config.RoleReviewer, "timeout-with-report")
+	cfg.Output = config.OutputPiJSON
+	// A generous agent timeout, so the run is stopped by the review's own.
+	cfg.Timeout = time.Minute
+	a, _ := newApp(t, cfg,
+		agentCfg(t, "r2", config.RoleReviewer, "valid"),
+		agentCfg(t, "lead", config.RoleLead, "valid"))
+	a.Config.Review.Timeout = 2 * time.Second
+	res, err := a.Review(context.Background(), ReviewRequest{Number: 7})
+	if err != nil {
+		t.Fatalf("a review whose reviewers left reports must be published: %v", err)
+	}
+	var r1 domain.AgentExecution
+	for _, ex := range res.Manifest.Agents {
+		if ex.ID == "r1" {
+			r1 = ex
+		}
+		if ex.ID == "lead" {
+			t.Errorf("no lead can run once review.timeout has expired: %+v", ex)
+		}
+	}
+	if !r1.Salvaged {
+		t.Errorf("a run stopped by review.timeout must be salvageable too: %+v", r1)
+	}
+	if res.Review.Meta.ReviewersSucceeded != 2 || res.Review.Meta.LeadUsed {
+		t.Errorf("both reports, no lead: %+v", res.Review.Meta)
+	}
+	var reportedByR1 bool
+	for _, f := range res.Review.Findings {
+		reportedByR1 = reportedByR1 || slices.Contains(f.ReportedBy, "r1")
+	}
+	if !reportedByR1 {
+		t.Errorf("the salvaged report must reach the review: %+v", res.Review.Findings)
+	}
+	if res.Review.Verdict == domain.VerdictApprove {
+		t.Errorf("a review cut short by review.timeout must not approve: %s", res.Review.Verdict)
+	}
+	if !slices.ContainsFunc(res.Review.Warnings, func(w string) bool { return strings.Contains(w, "review.timeout expired before lead") }) {
+		t.Errorf("the review must say why the lead did not run: %v", res.Review.Warnings)
+	}
+}
+
+// TestReviewCutShortByTheTimeoutDoesNotApprove: no lead weighed the reports, and
+// a reviewer stopped may have lost the findings that mattered, so approving
+// reports still yield a comment.
+func TestReviewCutShortByTheTimeoutDoesNotApprove(t *testing.T) {
+	cfg := agentCfg(t, "r1", config.RoleReviewer, "timeout-approving")
+	cfg.Output = config.OutputPiJSON
+	cfg.Timeout = time.Minute
+	a, _ := newApp(t, cfg,
+		agentCfg(t, "r2", config.RoleReviewer, "approving"),
+		agentCfg(t, "lead", config.RoleLead, "valid"))
+	a.Config.Review.Timeout = 2 * time.Second
+	res, err := a.Review(context.Background(), ReviewRequest{Number: 7})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Review.Verdict != domain.VerdictComment {
+		t.Errorf("verdict = %s, want comment", res.Review.Verdict)
+	}
+}
+
+// TestSalvagedLeadNeverApproves: a lead stopped by its deadline after writing a
+// complete, approving consolidation is published as a comment. A stopped run
+// never approves, cut or not.
+func TestSalvagedLeadNeverApproves(t *testing.T) {
+	lead := agentCfg(t, "lead", config.RoleLead, "lead-timeout-approving")
+	lead.Output = config.OutputPiJSON
+	lead.Timeout = 700 * time.Millisecond
+	a, _ := newApp(t, agentCfg(t, "r1", config.RoleReviewer, "valid"), lead)
+	res, err := a.Review(context.Background(), ReviewRequest{Number: 7})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.Review.Meta.LeadUsed {
+		t.Fatalf("the stopped lead's consolidation must be used: %v", res.Review.Warnings)
+	}
+	if res.Review.Verdict != domain.VerdictComment {
+		t.Errorf("verdict = %s, want comment", res.Review.Verdict)
+	}
+	if !slices.ContainsFunc(res.Review.Warnings, func(w string) bool { return strings.Contains(w, "recovered from a stopped lead") }) {
+		t.Errorf("the review must say why it does not approve: %v", res.Review.Warnings)
+	}
+}
+
+// TestFailFastWinsOverReviewTimeout: with fail_fast, a reviewer that left
+// nothing fails the review, even when review.timeout is what stopped it and
+// another reviewer's report was salvaged. Both settings mean stop.
+func TestFailFastWinsOverReviewTimeout(t *testing.T) {
+	r1 := agentCfg(t, "r1", config.RoleReviewer, "timeout-with-report")
+	r2 := agentCfg(t, "r2", config.RoleReviewer, "timeout-silent")
+	for _, c := range []*config.AgentConfig{&r1, &r2} {
+		c.Output = config.OutputPiJSON
+		c.Timeout = time.Minute
+	}
+	a, _ := newApp(t, r1, r2, agentCfg(t, "lead", config.RoleLead, "valid"))
+	a.Config.Review.Timeout = 2 * time.Second
+	a.Config.Review.FailFast = true
+	_, err := a.Review(context.Background(), ReviewRequest{Number: 7})
+	if !errors.Is(err, errFailFast) {
+		t.Fatalf("fail_fast must fail the review, got %v", err)
+	}
+}
+
+// TestReviewTimeoutWithoutReportFails: the salvage only rescues reports that
+// exist. A review.timeout that left none is still a failed review.
+func TestReviewTimeoutWithoutReportFails(t *testing.T) {
+	r1 := agentCfg(t, "r1", config.RoleReviewer, "timeout-silent")
+	r2 := agentCfg(t, "r2", config.RoleReviewer, "timeout-silent")
+	for _, c := range []*config.AgentConfig{&r1, &r2} {
+		c.Output = config.OutputPiJSON
+		c.Timeout = time.Minute
+	}
+	a, _ := newApp(t, r1, r2, agentCfg(t, "lead", config.RoleLead, "valid"))
+	a.Config.Review.Timeout = 2 * time.Second
+	if _, err := a.Review(context.Background(), ReviewRequest{Number: 7}); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("a review.timeout with no report must fail on the deadline, got %v", err)
+	}
+}
+
+// TestRetryTimeoutIsNotZero: a retry of a run that ended normally, then stopped
+// by its own deadline, used to be recorded as "timed out after 0s".
+func TestRetryTimeoutIsNotZero(t *testing.T) {
+	cfg := agentCfg(t, "r1", config.RoleReviewer, "prose-then-timeout")
+	cfg.Output = config.OutputPiJSON
+	cfg.Timeout = 2 * time.Second
+	a, _ := newApp(t, cfg,
+		agentCfg(t, "r2", config.RoleReviewer, "valid"),
+		agentCfg(t, "lead", config.RoleLead, "valid"))
+	res, err := a.Review(context.Background(), ReviewRequest{Number: 7})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var r1 domain.AgentExecution
+	for _, ex := range res.Manifest.Agents {
+		if ex.ID == "r1" {
+			r1 = ex
+		}
+	}
+	if strings.Contains(r1.Error, "timed out after 0s") {
+		t.Errorf("a stopped retry must report the budget it ran on: %+v", r1)
+	}
+}
+
+// TestIsStoppedIgnoresCancellation: Ctrl-C means stop. Treating it as a deadline
+// salvaged the run, cleared its error and kept querying git for two minutes after
+// the user asked to stop.
+func TestIsStoppedIgnoresCancellation(t *testing.T) {
+	if isStopped(context.Canceled) {
+		t.Error("a user cancellation must not be salvaged")
+	}
+	if isStopped(fmt.Errorf("run: %w", context.Canceled)) {
+		t.Error("a wrapped cancellation must not be salvaged either")
+	}
+	if !isStopped(context.DeadlineExceeded) {
+		t.Error("an expired deadline is what the salvage is for")
+	}
+	if !isStopped(cutShort{err: errors.New("timed out after 15m0s")}) {
+		t.Error("a run stopped by its own budget is salvageable")
+	}
+}
+
+// TestSalvagedLeadIsRecordedAsSucceeded: the consolidation is published and the
+// review reports LeadUsed, so recording the lead as a failed agent in the
+// manifest contradicts what the caller did with its output.
+func TestSalvagedLeadIsRecordedAsSucceeded(t *testing.T) {
+	lead := agentCfg(t, "lead", config.RoleLead, "lead-timeout")
+	lead.Output = config.OutputPiJSON
+	lead.Timeout = 700 * time.Millisecond
+	a, _ := newApp(t, agentCfg(t, "r1", config.RoleReviewer, "valid"), lead)
+	res, err := a.Review(context.Background(), ReviewRequest{Number: 7})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var ex domain.AgentExecution
+	for _, e := range res.Manifest.Agents {
+		if e.ID == "lead" {
+			ex = e
+		}
+	}
+	// The fixture always outlives the lead's timeout: a missing salvage is the
+	// regression this test exists for, not a reason to skip it.
+	if !ex.Salvaged {
+		t.Fatalf("the lead was stopped after writing its consolidation, which must be salvaged: %+v", ex)
+	}
+	if !ex.Succeeded {
+		t.Errorf("a published consolidation must not be recorded as a failed agent: %+v", ex)
+	}
+}
+
+// TestSalvageContextHonoursCancellation: the docs promise that a Ctrl-C stops a
+// salvage where it is. A plain WithoutCancel kept reading for two minutes after
+// it, which is what the helper exists to prevent.
+func TestSalvageContextHonoursCancellation(t *testing.T) {
+	parent, cancelParent := context.WithCancel(context.Background())
+	salvageCtx, cancel := salvageContext(parent)
+	defer cancel()
+
+	if _, ok := salvageCtx.Deadline(); !ok {
+		t.Error("the salvage window must have a deadline of its own")
+	}
+	cancelParent()
+	select {
+	case <-salvageCtx.Done():
+	case <-time.After(2 * time.Second):
+		t.Error("cancelling the run must cancel the salvage")
 	}
 }

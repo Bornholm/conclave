@@ -419,7 +419,8 @@ func (a *App) runTriageAgent(ctx context.Context, t *triageRun, rv config.AgentC
 	}
 	report, warnings, err := agent.ParseTriageReport(ad.Report, rv.ID, issue.Number, t.known,
 		agent.TriageLimits{MaxLabels: t.cfg.Triage.Labels.MaxLabels, MaxFieldBytes: agent.DefaultLimits.MaxFieldBytes})
-	ex.Warnings = warnings
+	// adapt() may already have warned that the report was cut off.
+	ex.Warnings = append(ex.Warnings, warnings...)
 	if err != nil {
 		ex.Error = err.Error()
 		return ex, nil, fmt.Errorf("invalid report: %w", err)
@@ -466,14 +467,15 @@ func (a *App) runTriageLead(ctx context.Context, t *triageRun, lead config.Agent
 		return nil, nil, err
 	}
 	triage, warnings, err := consolidation.ParseLeadTriage(ad.Report, t.issues, succeeded, t.known, t.cfg.Triage.Labels.MaxLabels)
-	ex.Warnings = warnings
+	// adapt() may already have warned that the report was cut off.
+	ex.Warnings = append(ex.Warnings, warnings...)
 	if err != nil {
 		ex.Error = err.Error()
-		return nil, warnings, fmt.Errorf("invalid lead triage: %w", err)
+		return nil, ex.Warnings, fmt.Errorf("invalid lead triage: %w", err)
 	}
 	ex.Succeeded = true
 	log.Info("lead finished", "agent", lead.ID, "issues", len(triage.Issues), "duration", ex.Duration.Round(time.Millisecond))
-	return triage, warnings, nil
+	return triage, ex.Warnings, nil
 }
 
 // applyLabels adds the proposed labels to the issues on the forge. It adds

@@ -319,3 +319,44 @@ func TestStaleArgs(t *testing.T) {
 		t.Fatalf("stale = %v for a clean command", stale)
 	}
 }
+
+// The link can sit on a directory above the file as well: MkdirAll and Rename
+// would follow it and write into the user's directory.
+func TestProjectInstallRefusesALinkedDirectory(t *testing.T) {
+	t.Setenv("PI_CODING_AGENT_DIR", t.TempDir())
+	repo := t.TempDir()
+	outside := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(repo, ".pi"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(repo, ".pi", "skills")); err != nil {
+		t.Fatal(err)
+	}
+	rep, err := Install(pi(t), Options{Project: repo, Force: true})
+	if err == nil || !strings.Contains(err.Error(), "symbolic link") {
+		t.Fatalf("err = %v, want a refusal to write through the link", err)
+	}
+	entries, _ := os.ReadDir(outside)
+	if len(entries) != 0 {
+		t.Fatalf("files were written outside the repository: %v", entries)
+	}
+	ext := filepath.Join(repo, ".pi", "extensions", "conclave.ts")
+	if statuses(rep)[ext] != Created {
+		t.Errorf("the extension, outside the linked directory, should still be installed: %v", statuses(rep)[ext])
+	}
+}
+
+func TestProjectInstallWarnsAboutTheUsersInstalledSkills(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("PI_CODING_AGENT_DIR", t.TempDir())
+	if _, err := Install(pi(t), Options{}); err != nil {
+		t.Fatal(err)
+	}
+	rep, err := Install(pi(t), Options{Project: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(strings.Join(rep.Warnings, "\n"), filepath.Join("skills", "conclave-review")) {
+		t.Fatalf("warnings = %v, want one about the user's conclave-review", rep.Warnings)
+	}
+}

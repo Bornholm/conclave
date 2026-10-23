@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/bornholm/conclave/internal/agent"
@@ -33,13 +34,14 @@ func runAgentsInstall(ctx context.Context, args []string, stdout, stderr io.Writ
 	fs := newFlagSet("agents install", stderr)
 	project := fs.String("project", "", "install into the repository holding PATH, at its root (\".\" for the current one), instead of the user configuration")
 	force := fs.Bool("force", false, "replace files that differ from the bundled version")
-	configPath := fs.String("config", config.DefaultFileName, "configuration whose agent commands are checked for what the install replaces, when it exists")
+	configPath := fs.String("config", config.DefaultFileName, "configuration whose agent commands are checked for what the install replaces, when it exists (with --project, the one at its root)")
 	positional, err := parseInterspersed(fs, args)
 	if err != nil {
 		return err
 	}
-	projectSet := false
-	fs.Visit(func(f *flag.Flag) { projectSet = projectSet || f.Name == "project" })
+	set := map[string]bool{}
+	fs.Visit(func(f *flag.Flag) { set[f.Name] = true })
+	projectSet := set["project"]
 	if projectSet && *project == "" {
 		// Most likely an unset variable: installing into the user
 		// configuration instead would be a different command.
@@ -58,9 +60,14 @@ func runAgentsInstall(ctx context.Context, args []string, stdout, stderr io.Writ
 		// agent looks for project files when Conclave runs it in a worktree.
 		git, err := gitrepo.Open(ctx, *project)
 		if err != nil {
-			return err
+			return fmt.Errorf("--project %s: %w", *project, err)
 		}
 		opts.Project = git.Root()
+		// The configuration of the repository installed into, not of
+		// wherever the command happens to run.
+		if !set["config"] {
+			*configPath = filepath.Join(opts.Project, config.DefaultFileName)
+		}
 	}
 	rep, err := integration.Install(a, opts)
 	if rep != nil {

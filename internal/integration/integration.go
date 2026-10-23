@@ -163,7 +163,14 @@ func Install(a Agent, opts Options) (*Report, error) {
 		dst := filepath.Join(root, filepath.FromSlash(f.Path))
 		// Only the user's own links are followed: a repository can commit a
 		// link to any file of the user's, and --force would overwrite it.
-		st, err := write(f.Asset, dst, opts.Force, opts.Project == "")
+		var st Status
+		var err error
+		if opts.Project != "" {
+			err = contained(opts.Project, dst)
+		}
+		if err == nil {
+			st, err = write(f.Asset, dst, opts.Force, opts.Project == "")
+		}
 		switch {
 		case err != nil:
 			st = Failed
@@ -173,23 +180,21 @@ func Install(a Agent, opts Options) (*Report, error) {
 		}
 		rep.Results = append(rep.Results, Result{Path: dst, Status: st, Err: err})
 	}
-	// A project install leaves the user's extensions loaded, so an old one
-	// there competes with the new one as much as one in the project.
+	// Pi loads the user's extensions and skills whatever the project, so a
+	// project install competes with those too: an old extension, a skill of
+	// the same name under ~/.agents/skills, or one a user install put there.
 	superseded := []string{root}
+	skillDirs := a.skillDirs(base)
 	if opts.Project != "" {
 		if user, err := a.UserRoot(); err == nil {
 			superseded = append(superseded, user)
+			skillDirs = append(skillDirs, filepath.Join(user, "skills"))
 		}
-	}
-	// Pi reads the user's skill directories whatever the project, so a
-	// project install competes with those too.
-	bases := []string{base}
-	if opts.Project != "" {
 		if home, err := os.UserHomeDir(); err == nil {
-			bases = append(bases, home)
+			skillDirs = append(skillDirs, a.skillDirs(home)...)
 		}
 	}
-	rep.Warnings = append(a.superseded(superseded...), a.shadowed(bases...)...)
+	rep.Warnings = append(a.superseded(superseded...), a.shadowed(skillDirs...)...)
 	if len(conflicts) > 0 {
 		errs = append(errs, fmt.Errorf("%w: %s", ErrConflict, strings.Join(conflicts, ", ")))
 	}
@@ -237,7 +242,8 @@ func (a Agent) StaleArgs(command []string) []string {
 			}
 		}
 		for _, p := range a.Supersedes {
-			if filepath.Base(arg) == path.Base(p) {
+			// A configuration may spell paths with slashes on any system.
+			if path.Base(filepath.ToSlash(arg)) == path.Base(p) {
 				stale = append(stale, arg)
 			}
 		}
@@ -260,25 +266,60 @@ func (a Agent) superseded(roots ...string) []string {
 	return warnings
 }
 
+// skillDirs returns the agent's other skill directories under base.
+func (a Agent) skillDirs(base string) []string {
+	dirs := make([]string, 0, len(a.SkillDirs))
+	for _, dir := range a.SkillDirs {
+		dirs = append(dirs, filepath.Join(base, dir))
+	}
+	return dirs
+}
+
 // shadowed warns about skills of the same name the agent would also discover
-// under any of bases: it loads only one of them.
-func (a Agent) shadowed(bases ...string) []string {
+// in any of dirs: it loads only one of them.
+func (a Agent) shadowed(dirs ...string) []string {
 	skills, err := fs.ReadDir(assets, skillsDir)
 	if err != nil {
 		return nil
 	}
 	var warnings []string
-	for _, base := range bases {
-		for _, dir := range a.SkillDirs {
-			for _, s := range skills {
-				other := filepath.Join(base, dir, s.Name())
-				if _, err := os.Stat(other); err == nil {
-					warnings = append(warnings, fmt.Sprintf("%s also reads %s: with two skills named %s it loads only one of them", a.Name, other, s.Name()))
-				}
+	for _, dir := range dirs {
+		for _, s := range skills {
+			other := filepath.Join(dir, s.Name())
+			if _, err := os.Stat(other); err == nil {
+				warnings = append(warnings, fmt.Sprintf("%s also reads %s: with two skills named %s it loads only one of them", a.Name, other, s.Name()))
 			}
 		}
 	}
 	return warnings
+}
+
+// contained refuses a destination under root that goes through a symbolic
+// link: a repository can commit `.pi` or `.pi/skills` as a link to any
+// directory of the user's, and creating and renaming files below it would
+// write there. Components that do not exist yet are created by the install,
+// as plain directories.
+func contained(root, dst string) error {
+	rel, err := filepath.Rel(root, dst)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return fmt.Errorf("outside %s", root)
+	}
+	p := root
+	for _, part := range strings.Split(rel, string(filepath.Separator)) {
+		p = filepath.Join(p, part)
+		info, err := os.Lstat(p)
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		// The file itself may be a link: write replaces it, never follows it.
+		if info.Mode()&fs.ModeSymlink != 0 && p != dst {
+			return fmt.Errorf("%s is a symbolic link, refusing to write through it in a project", p)
+		}
+	}
+	return nil
 }
 
 // write copies one embedded file to dst, through a temporary file so that a
@@ -295,7 +336,7 @@ func write(asset, dst string, force, follow bool) (Status, error) {
 	if info, err := os.Lstat(dst); follow && err == nil && info.Mode()&fs.ModeSymlink != 0 {
 		target, err := filepath.EvalSymlinks(dst)
 		if err != nil {
-			return 0, fmt.Errorf("%s: %w", dst, err)
+			return 0, err
 		}
 		dst = target
 	}

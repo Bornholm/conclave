@@ -364,6 +364,15 @@ func TestAgentsInstall(t *testing.T) {
 		t.Fatalf("--force: %d %s", code, out)
 	}
 
+	// With --project, the configuration checked is the one at its root.
+	stale := strings.Replace(exampleConfig, "      - --\n    input: argument", "      - --deadline-env-prefix\n      - CONCLAVE\n      - --\n    input: argument", 1)
+	if err := os.WriteFile(filepath.Join(repo, ".conclave.yaml"), []byte(stale), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if code, out := run("pi", "--project", sub); code != 0 || !strings.Contains(out, "agent pi still passes --deadline-env-prefix") {
+		t.Fatalf("the project's configuration was not checked: %d %s", code, out)
+	}
+
 	for _, args := range [][]string{{}, {"pi", "extra"}, {"nope"}, {"pi", "--project", t.TempDir()}} {
 		if code, out := run(args...); code == 0 {
 			t.Errorf("%v should fail: %s", args, out)

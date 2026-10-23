@@ -29,7 +29,7 @@ By default, in the user's configuration: `~/.pi/agent`, or the directory named b
 
 ## Running it again
 
-A file that already holds the bundled content is reported `unchanged`. One that differs is left alone and reported `differs`, and the command fails: it may be your own edit. `--force` replaces it. In the user's configuration, a file that is a symbolic link, into a dotfiles repository for instance, is written through and keeps its link. In a project, the link itself is replaced and never followed: a repository can commit a link to any file of yours.
+A file that already holds the bundled content is reported `unchanged`. One that differs is left alone and reported `differs`: it may be your own edit. The other files are still installed, and the command exits with status 1. `--force` replaces it. In the user's configuration, a file that is a symbolic link, into a dotfiles repository for instance, is written through and keeps its link. In a project, the link itself is replaced and never followed, and a file below a linked directory, `.pi/skills` committed as a link for instance, is reported `failed` rather than written: a repository can commit a link to any file or directory of yours.
 
 Two warnings name files that compete with the installed ones, without touching them:
 
@@ -42,7 +42,7 @@ A file that cannot be compared or written, a dangling symbolic link for instance
 
 ## The Pi extension
 
-Conclave kills an agent at its timeout, and whatever the model would have written after that is lost. Every agent run gets `CONCLAVE_DEADLINE_AT`, the instant it is stopped, and `CONCLAVE_DEADLINE_MS`, its budget (see [configuration](configuration.md)). The extension reads them and makes the run converge on an answer, at fractions of that budget counted from when Conclave launched the process, so Pi's own start-up eats into the first stage, not into the writing reserve:
+Conclave kills an agent at its timeout, and whatever the model would have written after that is lost. Every agent run with a timeout gets `CONCLAVE_DEADLINE_AT`, the instant it is stopped, and `CONCLAVE_DEADLINE_MS`, its budget (see [configuration](configuration.md)). The extension reads them and makes the run converge on an answer, at fractions of that budget counted from when Conclave launched the process, so Pi's own start-up eats into the first stage, not into the writing reserve:
 
 | At | What happens |
 |---|---|

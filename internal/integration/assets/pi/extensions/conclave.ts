@@ -262,8 +262,13 @@ export default function conclave(pi: ExtensionAPI) {
 			log("steer dropped: the run already produced an answer");
 			return;
 		}
-		if (ctx.isIdle()) return;
 		pendingSteer = undefined;
+		if (ctx.isIdle()) {
+			// The run it was meant for is over: held, it would land in whatever
+			// run comes next, with a budget that is not this one's.
+			log("steer dropped: no run in progress");
+			return;
+		}
 		try {
 			pi.sendUserMessage(text, { deliverAs: "steer" });
 		} catch (error) {
@@ -405,9 +410,13 @@ export default function conclave(pi: ExtensionAPI) {
 		if (!budgetMs) return;
 		// Only once the tools are off: the message below says so, and an earlier
 		// run that settled without text would spend the one continuation on it.
-		if (stage !== "write") return;
 		if (sawText || continuedOnce) return;
 		if (event.outcome === "aborted" || event.outcome === "error") return;
+		if (stage !== "write") {
+			// Said, so that an empty run is not a mystery in the logs.
+			log("run settled without text before its tools were cut, not continued");
+			return;
+		}
 		continuedOnce = true;
 		log("run settled without text, asking once more");
 		return {

@@ -35,21 +35,16 @@ var fenceRe = regexp.MustCompile("(?s)```(?:json)?[ \\t]*\\r?\\n(.*?)```")
 // bare or inside an envelope, which is what lets the caller apply the same
 // repair to every configured agent.
 func ExtractTruncatedJSON(raw []byte, marker string) ([]byte, error) {
-	// The report is the last object that opens with the marker and never closes:
-	// it is the one the model was still writing when it was killed. Braces are
-	// therefore tried from the end, but only a bounded number of them: each try
-	// may re-scan the text, and an event stream with no report in it made this
-	// path take minutes before the bound existed.
-	// Two positions can hold the answer: the outermost object, which is the
-	// document itself or the envelope around it, and the last object, which is
-	// the report the model was still writing. Looking only at those two keeps
-	// this linear; walking every brace was quadratic and took minutes on a 12 MB
-	// event stream that holds no report at all.
-	// The report is the last object that opens with the marker, so the scan walks
-	// braces backwards looking for it. It stops at the first one that closes,
-	// since from there the text is a complete document and the cut tail cannot be
-	// behind it. Walking every brace without that stop was quadratic and took
-	// minutes on a 12 MB event stream holding no report at all.
+	// The report is the last object whose opening fields carry the marker and
+	// which never closes: it is the one the model was still writing when it was
+	// killed. The scan walks braces backwards, which is what finds it last, and
+	// stops as soon as a candidate carrying the marker turns out to close - from
+	// there the text holds a complete report, so nothing was cut.
+	//
+	// The walk is bounded by construction: a brace that does not carry the marker
+	// within its opening fields is skipped without any re-scan, and an event
+	// stream holding no report at all is therefore read in linear time. Walking
+	// every brace in full took minutes on 12 MB.
 	key := []byte(`"` + marker + `"`)
 	for pos := len(raw); pos > 0; {
 		start := bytes.LastIndexByte(raw[:pos], '{')
@@ -57,16 +52,21 @@ func ExtractTruncatedJSON(raw []byte, marker string) ([]byte, error) {
 			break
 		}
 		pos = start
-		opensOnMarker := bytes.HasPrefix(bytes.TrimLeft(raw[start+1:], " \t\r\n"), key)
-		if opensOnMarker {
+		// The marker has to be this object's own key: a nested object carries it
+		// too, and judging that one ends the walk on a member instead of the
+		// report. The window bounds the work, since every schema puts the marker
+		// in its opening fields.
+		if bytes.Contains(raw[start:min(start+markerWindow, len(raw))], key) && isTopLevelKey(raw, start, key) {
 			if out, err := closeAt(raw[start:], marker); err == nil {
 				return out, nil
 			}
 			if matchBrace(raw, start) >= 0 {
+				// This very object closes, marker and all: it is a complete
+				// report, so nothing later in the text was cut away.
 				return nil, ErrNoJSON
 			}
 		}
-		// An envelope holds the report escaped, so its braces never open on the
+		// An envelope holds the report escaped, so its braces never carry the
 		// marker. Only the outermost object can be one.
 		if start == bytes.IndexByte(raw, '{') {
 			if out, err := closeTruncated(raw[start:], marker); err == nil {
@@ -76,6 +76,44 @@ func ExtractTruncatedJSON(raw []byte, marker string) ([]byte, error) {
 	}
 	return nil, ErrNoJSON
 }
+
+// isTopLevelKey reports whether key appears at the first level of the object
+// starting at start, rather than inside a nested one.
+func isTopLevelKey(b []byte, start int, key []byte) bool {
+	depth, inStr, esc := 0, false, false
+	for i := start; i < len(b); i++ {
+		c := b[i]
+		switch {
+		case inStr:
+			if esc {
+				esc = false
+			} else if c == '\\' {
+				esc = true
+			} else if c == '"' {
+				inStr = false
+			}
+		case c == '"':
+			inStr = true
+			// A string opening at depth 1 is a key of this object.
+			if depth == 1 && bytes.HasPrefix(b[i:], key) {
+				return true
+			}
+		case c == '{' || c == '[':
+			depth++
+		case c == '}' || c == ']':
+			depth--
+			if depth == 0 {
+				return false
+			}
+		}
+	}
+	return false
+}
+
+// markerWindow bounds how far into an object the marker is looked for. Every
+// report schema puts it in the opening fields, and searching the whole object
+// would make the backward walk quadratic again.
+const markerWindow = 4096
 
 // closeTruncated applies the repair to one candidate, first as a bare object and
 // then as an envelope holding the report escaped.
@@ -158,11 +196,9 @@ func unescapeCutEnvelope(b []byte) ([]byte, bool) {
 // it as repaired would label every complete report as cut off, which is the
 // opposite of what the caller needs to know.
 func closeAt(candidate []byte, marker string) ([]byte, error) {
-	// Cheap rejection first: most braces in a report are nested members, and
-	// scanning one of those for its matching brace is the expensive part.
-	if !bytes.HasPrefix(bytes.TrimLeft(candidate[1:], " \t\r\n"), []byte(`"`+marker+`"`)) {
-		return nil, ErrNoJSON
-	}
+	// The caller has already checked that this object carries the marker at its
+	// own level; requiring it as the first key would throw away every report
+	// written in another order.
 	if end := matchBrace(candidate, 0); end >= 0 {
 		return nil, ErrNoJSON
 	}
@@ -324,9 +360,10 @@ func IsReviewerReport(raw []byte) bool {
 	// The fields allowed here are the ones a reviewer writes before its findings:
 	// its identity and its summary. A verdict already present is allowed too, so
 	// a cut that kept it is not mistaken for another shape.
+	// "questions" is deliberately absent: an answer report carries it too, so a
+	// document with it is not provably a reviewer report.
 	allowed := map[string]bool{
-		"schema_version": true, "reviewer": true, "summary": true,
-		"verdict": true, "questions": true,
+		"schema_version": true, "reviewer": true, "summary": true, "verdict": true,
 	}
 	for k := range obj {
 		if !allowed[k] {

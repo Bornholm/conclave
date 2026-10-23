@@ -507,9 +507,14 @@ func TestIsReviewerReportIsPositive(t *testing.T) {
 	others := map[string]string{
 		"answer":        `{"schema_version":"1","reviewer":{"id":"r"},"answer":"a"}`,
 		"answer caveat": `{"schema_version":"1","reviewer":{"id":"r"},"answer":"a","caveats":[],"open_questions":[]}`,
-		"lead triage":   `{"schema_version":"1","summary":"s","issues":[]}`,
-		"plan":          `{"schema_version":"1","reviewer":{"id":"r"},"steps":[]}`,
-		"triage":        `{"schema_version":"1","number":1,"labels":[],"status":"fixed"}`,
+		// An answer cut before its "answer" field kept nothing distinctive, so it
+		// cannot be told apart from a reviewer report and gains a verdict it does
+		// not allow. Better that than the reverse: a reviewer report without a
+		// verdict is rejected outright.
+		"answer cut early": `{"schema_version":"1","reviewer":{"id":"r"},"summary":"s","questions":[{"question":"q"}]}`,
+		"lead triage":      `{"schema_version":"1","summary":"s","issues":[]}`,
+		"plan":             `{"schema_version":"1","reviewer":{"id":"r"},"steps":[]}`,
+		"triage":           `{"schema_version":"1","number":1,"labels":[],"status":"fixed"}`,
 	}
 	for name, doc := range others {
 		if IsReviewerReport([]byte(doc)) {
@@ -538,5 +543,32 @@ func TestEnsureVerdictDowngradesAnApproval(t *testing.T) {
 	out, changed = EnsureVerdict([]byte(`{"schema_version":"1","verdict":"request_changes"}`))
 	if changed {
 		t.Errorf("a request_changes verdict must be kept: %s", out)
+	}
+}
+
+// TestExtractTruncatedJSONAcceptsAnyKeyOrder: the marker has to be one of the
+// report's own keys, not its first one. Requiring it first threw away every
+// report that opened with "reviewer" or "summary", which is most of them.
+func TestExtractTruncatedJSONAcceptsAnyKeyOrder(t *testing.T) {
+	tail := `"findings":[{"id":"f1","title":"hal`
+	cases := map[string]string{
+		"marker first":   `{"schema_version":"1",` + tail,
+		"reviewer first": `{"reviewer":{"id":"r"},"schema_version":"1",` + tail,
+		"summary first":  `{"summary":"s","schema_version":"1",` + tail,
+	}
+	for name, in := range cases {
+		t.Run(name, func(t *testing.T) {
+			out, err := ExtractTruncatedJSON([]byte(in), "schema_version")
+			if err != nil {
+				t.Fatalf("a cut report must be repairable whatever its key order: %v", err)
+			}
+			var obj map[string]any
+			if err := json.Unmarshal(out, &obj); err != nil {
+				t.Fatalf("recovered report does not parse: %v (%s)", err, out)
+			}
+			if obj["schema_version"] != "1" {
+				t.Errorf("marker lost: %s", out)
+			}
+		})
 	}
 }

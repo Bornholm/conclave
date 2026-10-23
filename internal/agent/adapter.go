@@ -134,6 +134,9 @@ func adaptPiJSON(stdout []byte) (*Adapted, error) {
 	// that event leaves a message that never ended: the deltas are then all
 	// there is, and a model told to conclude usually had its JSON in them.
 	var partial bytes.Buffer
+	// partialThinking holds the reasoning of the message being written, kept for
+	// the transcript only.
+	var partialThinking bytes.Buffer
 	// turnOpen records a turn whose message has not ended: deltas collected
 	// while no turn is open belong to a message that already finished.
 	turnOpen := false
@@ -153,6 +156,7 @@ func adaptPiJSON(stdout []byte) (*Adapted, error) {
 			// A tool call ends the assistant message that asked for it: its
 			// deltas were reasoning about work that is now done.
 			partial.Reset()
+			partialThinking.Reset()
 			turnOpen = false
 		case "tool_execution_end":
 			_ = enc.Encode(map[string]any{"type": "tool_result", "tool": ev.ToolName, "result_bytes": len(ev.Result)})
@@ -167,6 +171,7 @@ func adaptPiJSON(stdout []byte) (*Adapted, error) {
 			// message that is still open.
 			if ev.Message != nil && ev.Message.Role == "assistant" {
 				partial.Reset()
+				partialThinking.Reset()
 				turnOpen = true
 			}
 		case "message_update":
@@ -177,8 +182,13 @@ func adaptPiJSON(stdout []byte) (*Adapted, error) {
 			}
 			if e := ev.AssistantMessageEvent; e != nil && e.Delta != "" {
 				switch e.Type {
-				case "text_delta", "thinking_delta":
+				case "text_delta":
 					partial.WriteString(e.Delta)
+				case "thinking_delta":
+					// Reasoning is not the report. A real message carries both,
+					// and mixing them put the model's thinking at the start of
+					// the salvaged document.
+					partialThinking.WriteString(e.Delta)
 				}
 			}
 		case "message_end":
@@ -222,6 +232,9 @@ func adaptPiJSON(stdout []byte) (*Adapted, error) {
 		}
 	}
 	ad.Trace = trace.Bytes()
+	if partialThinking.Len() > 0 {
+		transcript.WriteString("[reasoning]\n" + partialThinking.String() + "\n\n")
+	}
 	if partial.Len() > 0 {
 		// A run stopped mid-message. What it was writing is newer than any text
 		// an earlier message left behind - partial is reset on every
@@ -230,6 +243,10 @@ func adaptPiJSON(stdout []byte) (*Adapted, error) {
 		lastText = partial.String()
 		ad.Partial = true
 		transcript.WriteString(lastText + "\n\n")
+	} else if partialThinking.Len() > 0 && lastText == "" {
+		// Nothing but reasoning before the stop: keep it as the transcript so the
+		// retry has something to convert, but it is not a report.
+		ad.Partial = true
 	}
 	ad.Transcript = tail(transcript.Bytes(), MaxTranscriptBytes)
 	if lastText == "" {

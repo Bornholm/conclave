@@ -751,7 +751,7 @@ func TestSalvageRefusesToReportAnUnvalidatedReport(t *testing.T) {
 
 	var ex domain.AgentExecution
 	report, _, err := a.salvageTimedOut(dead, &run{cfg: a.Config, git: nil, changed: nil, store: nil},
-		a.Config.Agents[0], t.TempDir(), "r1", []byte(validPiStreamFor("r1")), &ex)
+		a.Config.Agents[0], t.TempDir(), "r1", time.Minute, []byte(validPiStreamFor("r1")), &ex)
 	if err == nil {
 		t.Errorf("a report that could not be validated must not be reported as salvaged: %+v", report)
 	}

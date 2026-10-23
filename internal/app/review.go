@@ -391,7 +391,7 @@ func (a *App) runReviewer(ctx context.Context, r *run, rv config.AgentConfig, wo
 		// run's own deadline may expire while it queries git, which would make
 		// every existence check fail and drop every finding.
 		salvageCtx, cancelSalvage := context.WithTimeout(context.WithoutCancel(ctx), salvageTimeout)
-		report, transcript, err = a.salvageTimedOut(salvageCtx, r, rv, worktree, rv.ID, transcript, &ex)
+		report, transcript, err = a.salvageTimedOut(salvageCtx, r, rv, worktree, rv.ID, agent.EffectiveTimeout(ctx, r.cfg, rv), transcript, &ex)
 		cancelSalvage()
 	}
 	// A reviewer that ran to its end but left no usable report is asked once
@@ -418,9 +418,13 @@ func (a *App) runReviewer(ctx context.Context, r *run, rv config.AgentConfig, wo
 		// A retry after a timeout runs on its own deadline: the run's own
 		// timeout has, by definition, already been spent.
 		retryCtx, cancel, budget := ctx, context.CancelFunc(func() {}), timeBudget(ctx, r.cfg, rv)
+		retryTimeout := time.Duration(0)
 		if isCutShort(err) {
 			if grace := r.cfg.ReviewReportGrace(); grace > 0 {
 				retryCtx, cancel = withGrace(ctx, grace)
+				// The retry runs on the grace period, so that is the timeout to
+				// report if it is stopped in turn.
+				retryTimeout = grace
 				budget = newTimeBudget(time.Now(), agent.EffectiveTimeout(retryCtx, r.cfg, rv))
 			} else {
 				// report_grace: 0 disables the retry of a run that ran out of
@@ -451,7 +455,7 @@ func (a *App) runReviewer(ctx context.Context, r *run, rv config.AgentConfig, wo
 			// existence check fail, and every finding is then dropped while the
 			// run is recorded as a success. Only the cancellation is inherited.
 			salvageCtx, cancelSalvage := context.WithTimeout(context.WithoutCancel(ctx), salvageTimeout)
-			report, transcript, err = a.salvageTimedOut(salvageCtx, r, rv, worktree, name, transcript, &ex)
+			report, transcript, err = a.salvageTimedOut(salvageCtx, r, rv, worktree, name, retryTimeout, transcript, &ex)
 			cancelSalvage()
 		}
 		// Release this attempt's timer now, so a later iteration does not hold
@@ -554,9 +558,12 @@ func withGrace(ctx context.Context, d time.Duration) (context.Context, context.C
 // object is the difference between a usable review and none, so the output is
 // parsed exactly as a completed run's would be, and the run is only reported
 // as timed out when nothing usable came out of it.
-func (a *App) salvageTimedOut(ctx context.Context, r *run, rv config.AgentConfig, worktree, name string, stdout []byte, ex *domain.AgentExecution) (*domain.AgentReport, []byte, error) {
+func (a *App) salvageTimedOut(ctx context.Context, r *run, rv config.AgentConfig, worktree, name string, timeout time.Duration, stdout []byte, ex *domain.AgentExecution) (*domain.AgentReport, []byte, error) {
 	cut := cutShort{
-		err: fmt.Errorf("timed out after %s", agent.EffectiveTimeout(ctx, r.cfg, rv).Round(time.Second)),
+		// The timeout that stopped the run, not the one bounding this salvage:
+		// ctx here is the short salvage context, and reporting its duration
+		// would tell the operator the reviewer died after two minutes.
+		err: fmt.Errorf("timed out after %s", timeout.Round(time.Second)),
 	}
 	if len(bytes.TrimSpace(stdout)) == 0 {
 		return nil, nil, cut

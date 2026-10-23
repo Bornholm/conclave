@@ -161,3 +161,27 @@ func TestAdaptPiJSONPrefersTheUnfinishedMessage(t *testing.T) {
 		t.Errorf("the report must be the unfinished message: %s", ad.Report)
 	}
 }
+
+// TestAdaptPiJSONKeepsReasoningOutOfTheReport: a real pi message carries both
+// thinking and text deltas (verified on a recorded run: 2 of 17 messages). Mixing
+// them put the model's reasoning at the start of the salvaged document.
+func TestAdaptPiJSONKeepsReasoningOutOfTheReport(t *testing.T) {
+	stream := strings.Join([]string{
+		`{"type":"message_start","message":{"role":"assistant","content":[]}}`,
+		`{"type":"message_update","assistantMessageEvent":{"type":"thinking_delta","delta":"Let me check the diff. "}}`,
+		`{"type":"message_update","assistantMessageEvent":{"type":"text_delta","delta":"{\"schema_version\":"}}`,
+		`{"type":"message_update","assistantMessageEvent":{"type":"thinking_delta","delta":"Now the findings. "}}`,
+		`{"type":"message_update","assistantMessageEvent":{"type":"text_delta","delta":"\"1\"}"}}`,
+	}, "\n")
+	ad, err := Adapt(config.OutputPiJSON, []byte(stream))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := string(ad.Report); got != `{"schema_version":"1"}` {
+		t.Errorf("report = %q, want only the text deltas", got)
+	}
+	// The reasoning is not lost: it belongs to the transcript a retry reads.
+	if !strings.Contains(string(ad.Transcript), "Let me check the diff") {
+		t.Errorf("the reasoning must reach the transcript: %q", ad.Transcript)
+	}
+}

@@ -35,29 +35,40 @@ var fenceRe = regexp.MustCompile("(?s)```(?:json)?[ \\t]*\\r?\\n(.*?)```")
 // bare or inside an envelope, which is what lets the caller apply the same
 // repair to every configured agent.
 func ExtractTruncatedJSON(raw []byte, marker string) ([]byte, error) {
-	// The run stopped mid-message, so its reasoning came with it, and the first
-	// brace in that text is usually a code sample rather than the report. The
-	// report is the last object that opens with the marker key and never
-	// closes: it is the one the model was still writing.
-	for pos := len(raw); pos > 0; {
-		start := bytes.LastIndexByte(raw[:pos], '{')
-		if start < 0 {
-			break
-		}
-		if out, err := closeAt(raw[start:], marker); err == nil {
+	// The report is the last object that opens with the marker and never closes:
+	// it is the one the model was still writing when it was killed. Braces are
+	// therefore tried from the end, but only a bounded number of them: each try
+	// may re-scan the text, and an event stream with no report in it made this
+	// path take minutes before the bound existed.
+	// Two positions can hold the answer: the outermost object, which is the
+	// document itself or the envelope around it, and the last object, which is
+	// the report the model was still writing. Looking only at those two keeps
+	// this linear; walking every brace was quadratic and took minutes on a 12 MB
+	// event stream that holds no report at all.
+	first, last := bytes.IndexByte(raw, '{'), bytes.LastIndexByte(raw, '{')
+	var candidates [][]byte
+	if first >= 0 {
+		candidates = append(candidates, raw[first:])
+	}
+	if last >= 0 && last != first {
+		candidates = append(candidates, raw[last:])
+	}
+	for _, candidate := range candidates {
+		if out, err := closeTruncated(candidate, marker); err == nil {
 			return out, nil
 		}
-		// The answer may sit inside an envelope: a "result" string for Claude
-		// Code, a text part for opencode. Those escape the report, so its braces
-		// arrive as \u007b or \" and the scan above finds the envelope, not the
-		// report. Unescaping the field when the envelope itself is cut short is
-		// what makes this repair independent of which agent wrote the answer.
-		if unescaped, ok := unescapeCutEnvelope(raw[start:]); ok {
-			if out, err := ExtractTruncatedJSON(unescaped, marker); err == nil {
-				return out, nil
-			}
-		}
-		pos = start
+	}
+	return nil, ErrNoJSON
+}
+
+// closeTruncated applies the repair to one candidate, first as a bare object and
+// then as an envelope holding the report escaped.
+func closeTruncated(candidate []byte, marker string) ([]byte, error) {
+	if out, err := closeAt(candidate, marker); err == nil {
+		return out, nil
+	}
+	if unescaped, ok := unescapeCutEnvelope(candidate); ok {
+		return ExtractTruncatedJSON(unescaped, marker)
 	}
 	return nil, ErrNoJSON
 }
@@ -131,6 +142,11 @@ func unescapeCutEnvelope(b []byte) ([]byte, bool) {
 // it as repaired would label every complete report as cut off, which is the
 // opposite of what the caller needs to know.
 func closeAt(candidate []byte, marker string) ([]byte, error) {
+	// Cheap rejection first: most braces in a report are nested members, and
+	// scanning one of those for its matching brace is the expensive part.
+	if !bytes.HasPrefix(bytes.TrimLeft(candidate[1:], " \t\r\n"), []byte(`"`+marker+`"`)) {
+		return nil, ErrNoJSON
+	}
 	if end := matchBrace(candidate, 0); end >= 0 {
 		return nil, ErrNoJSON
 	}

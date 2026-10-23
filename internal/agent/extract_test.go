@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"os"
@@ -435,5 +436,24 @@ func TestExtractTruncatedJSONLeavesACompleteReportAlone(t *testing.T) {
 	env := []byte(`{"type":"result","result":"{\"schema_version\":\"1\",\"summary\":\"s\"}"}`)
 	if out, err := ExtractTruncatedJSON(env, "schema_version"); err == nil {
 		t.Errorf("a complete envelope must not be reported as repaired, got %s", out)
+	}
+}
+
+// TestExtractTruncatedJSONIsBoundedOnALargeStream: the repair runs from adapt()
+// on every run, including the ones with no report at all, where its input is the
+// whole event stream. Walking every brace there was quadratic and took minutes on
+// 12 MB; it now looks only at the outermost and the last object.
+func TestExtractTruncatedJSONIsBoundedOnALargeStream(t *testing.T) {
+	// 4 MB of stream-like text with many braces and no report.
+	var b bytes.Buffer
+	for b.Len() < 4<<20 {
+		b.WriteString(`{"type":"message_update","assistantMessageEvent":{"type":"thinking_delta","delta":"{ not a report "}}` + "\n")
+	}
+	start := time.Now()
+	if _, err := ExtractTruncatedJSON(b.Bytes(), "schema_version"); err == nil {
+		t.Fatal("a stream without a report must not be repairable")
+	}
+	if d := time.Since(start); d > 5*time.Second {
+		t.Errorf("the repair took %s on %d bytes: it is scanning every brace again", d, b.Len())
 	}
 }

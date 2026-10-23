@@ -214,13 +214,14 @@ func TestRelativePiCodingAgentDirIsMadeAbsolute(t *testing.T) {
 }
 
 func TestForceWritesThroughASymlink(t *testing.T) {
-	repo := t.TempDir()
+	user := t.TempDir()
+	t.Setenv("PI_CODING_AGENT_DIR", user)
 	dotfiles := t.TempDir()
 	mine := filepath.Join(dotfiles, "SKILL.md")
 	if err := os.WriteFile(mine, []byte("mine"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	link := filepath.Join(repo, ".pi", "skills", "conclave-ask", "SKILL.md")
+	link := filepath.Join(user, "skills", "conclave-ask", "SKILL.md")
 	if err := os.MkdirAll(filepath.Dir(link), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -228,11 +229,11 @@ func TestForceWritesThroughASymlink(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, err := Install(pi(t), Options{Project: repo})
+	_, err := Install(pi(t), Options{})
 	if !errors.Is(err, ErrConflict) || !strings.Contains(err.Error(), "conclave-ask") {
 		t.Fatalf("err = %v, want ErrConflict naming the file", err)
 	}
-	if _, err := Install(pi(t), Options{Project: repo, Force: true}); err != nil {
+	if _, err := Install(pi(t), Options{Force: true}); err != nil {
 		t.Fatal(err)
 	}
 	info, err := os.Lstat(link)
@@ -245,5 +246,31 @@ func TestForceWritesThroughASymlink(t *testing.T) {
 	want, _ := assets.ReadFile("assets/skills/conclave-ask/SKILL.md")
 	if got, _ := os.ReadFile(mine); !bytes.Equal(got, want) {
 		t.Fatal("the link target was not updated")
+	}
+}
+
+// A repository can commit a link to any file of the user's: a project install
+// with --force must replace the link, never write through it.
+func TestProjectInstallNeverWritesThroughASymlink(t *testing.T) {
+	repo := t.TempDir()
+	victim := filepath.Join(t.TempDir(), "bashrc")
+	if err := os.WriteFile(victim, []byte("keep me"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(repo, ".pi", "skills", "conclave-ask", "SKILL.md")
+	if err := os.MkdirAll(filepath.Dir(link), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(victim, link); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Install(pi(t), Options{Project: repo, Force: true}); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := os.ReadFile(victim); string(got) != "keep me" {
+		t.Fatalf("the link target outside the repository was overwritten: %q", got)
+	}
+	if info, err := os.Lstat(link); err != nil || info.Mode()&fs.ModeSymlink != 0 {
+		t.Fatalf("the link should have been replaced by the bundled file: %v", err)
 	}
 }

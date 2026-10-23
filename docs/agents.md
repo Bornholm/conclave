@@ -29,7 +29,7 @@ By default, in the user's configuration: `~/.pi/agent`, or the directory named b
 
 ## Running it again
 
-A file that already holds the bundled content is reported `unchanged`. One that differs is left alone and reported `differs`, and the command fails: it may be your own edit. `--force` replaces it.
+A file that already holds the bundled content is reported `unchanged`. One that differs is left alone and reported `differs`, and the command fails: it may be your own edit. `--force` replaces it. In the user's configuration, a file that is a symbolic link, into a dotfiles repository for instance, is written through and keeps its link. In a project, the link itself is replaced and never followed: a repository can commit a link to any file of yours.
 
 Two warnings name files that compete with the installed ones, without touching them:
 

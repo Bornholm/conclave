@@ -149,7 +149,9 @@ func Install(a Agent, opts Options) (*Report, error) {
 	var conflicts []string
 	for _, f := range files {
 		dst := filepath.Join(root, filepath.FromSlash(f.Path))
-		st, err := write(f.Asset, dst, opts.Force)
+		// Only the user's own links are followed: a repository can commit a
+		// link to any file of the user's, and --force would overwrite it.
+		st, err := write(f.Asset, dst, opts.Force, opts.Project == "")
 		if err != nil {
 			return rep, err
 		}
@@ -237,16 +239,17 @@ func (a Agent) shadowed(base string) []string {
 }
 
 // write copies one embedded file to dst, through a temporary file so that a
-// failed write never leaves half a file where the agent loads it. A symbolic
-// link is written through, at its target: renaming over the link would replace
-// it with a plain file, and leave the user's own copy, in a dotfiles repository
-// for instance, behind.
-func write(asset, dst string, force bool) (Status, error) {
+// failed write never leaves half a file where the agent loads it. With follow,
+// a symbolic link is written through, at its target: renaming over the link
+// would replace it with a plain file, and leave the user's own copy, in a
+// dotfiles repository for instance, behind. Without, the link itself is
+// replaced.
+func write(asset, dst string, force, follow bool) (Status, error) {
 	data, err := assets.ReadFile(asset)
 	if err != nil {
 		return 0, err
 	}
-	if info, err := os.Lstat(dst); err == nil && info.Mode()&fs.ModeSymlink != 0 {
+	if info, err := os.Lstat(dst); follow && err == nil && info.Mode()&fs.ModeSymlink != 0 {
 		target, err := filepath.EvalSymlinks(dst)
 		if err != nil {
 			return 0, fmt.Errorf("%s: %w", dst, err)

@@ -181,3 +181,34 @@ func TestUnknownAgent(t *testing.T) {
 		t.Fatalf("err = %v", err)
 	}
 }
+
+func TestProjectInstallWarnsAboutTheUsersOldExtension(t *testing.T) {
+	user := t.TempDir()
+	t.Setenv("PI_CODING_AGENT_DIR", user)
+	if err := os.MkdirAll(filepath.Join(user, "extensions"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	old := filepath.Join(user, "extensions", "deadline.ts")
+	if err := os.WriteFile(old, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	rep, err := Install(pi(t), Options{Project: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(strings.Join(rep.Warnings, "\n"), old) {
+		t.Fatalf("warnings = %v, want one about %s", rep.Warnings, old)
+	}
+}
+
+func TestRelativePiCodingAgentDirIsMadeAbsolute(t *testing.T) {
+	t.Chdir(t.TempDir())
+	t.Setenv("PI_CODING_AGENT_DIR", "agent")
+	rep, err := Install(pi(t), Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !filepath.IsAbs(rep.Root) {
+		t.Fatalf("root %s is relative", rep.Root)
+	}
+}

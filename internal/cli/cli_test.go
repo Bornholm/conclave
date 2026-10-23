@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -322,5 +323,50 @@ func TestResolveConfigPath(t *testing.T) {
 	// fallback chain would otherwise hand back a file nobody named.
 	if got, _ := resolveConfigPath(".conclave.yaml", project, true); got != ".conclave.yaml" {
 		t.Errorf("an explicitly named default must not fall back: %q", got)
+	}
+}
+
+func TestAgentsInstall(t *testing.T) {
+	repo := t.TempDir()
+	if out, err := exec.Command("git", "init", "-q", repo).CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v %s", err, out)
+	}
+	sub := filepath.Join(repo, "sub")
+	if err := os.MkdirAll(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PI_CODING_AGENT_DIR", t.TempDir())
+	run := func(args ...string) (int, string) {
+		var out, errb bytes.Buffer
+		code := Main(append([]string{"agents", "install"}, args...), &out, &errb)
+		return code, out.String() + errb.String()
+	}
+
+	// Flags on either side of the agent name; PATH resolves to the repository root.
+	if code, out := run("--project", sub, "pi"); code != 0 || !strings.Contains(out, "✓ created") {
+		t.Fatalf("install: %d %s", code, out)
+	}
+	skill := filepath.Join(repo, ".pi", "skills", "conclave-review", "SKILL.md")
+	if _, err := os.Stat(skill); err != nil {
+		t.Fatalf("not installed at the repository root: %v", err)
+	}
+	if code, out := run("pi", "--project", repo); code != 0 || strings.Contains(out, "created") || !strings.Contains(out, "= unchanged") {
+		t.Fatalf("reinstall: %d %s", code, out)
+	}
+
+	if err := os.WriteFile(skill, []byte("mine"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if code, out := run("pi", "--project", repo); code != 1 || !strings.Contains(out, "✗ differs") || !strings.Contains(out, "--force") {
+		t.Fatalf("edited file: %d %s", code, out)
+	}
+	if code, out := run("pi", "--project", repo, "--force"); code != 0 || !strings.Contains(out, "✓ replaced") {
+		t.Fatalf("--force: %d %s", code, out)
+	}
+
+	for _, args := range [][]string{{}, {"pi", "extra"}, {"nope"}, {"pi", "--project", t.TempDir()}} {
+		if code, out := run(args...); code == 0 {
+			t.Errorf("%v should fail: %s", args, out)
+		}
 	}
 }

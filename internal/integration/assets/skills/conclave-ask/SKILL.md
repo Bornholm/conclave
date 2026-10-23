@@ -35,13 +35,23 @@ cut with a marker.
 ## Run it detached
 
 With several agents and a lead, an answer takes minutes. Launch it so it
-survives the tool call, and wait on a sentinel:
+survives the tool call, and wait on a sentinel. Write the question to a file
+and pass it on standard input, never inside the `sh -c` script: a question is
+free text, and one holding a quote would end the string and run the rest as a
+command.
 
 ```bash
 OUT=$(mktemp -d)
-nohup sh -c "conclave ask --project . -q 'QUESTION' > $OUT/answer.md 2> $OUT/answer.log; echo \$? > $OUT/answer.done" >/dev/null 2>&1 &
-until [ -f $OUT/answer.done ]; do sleep 10; done; echo "exit=$(cat $OUT/answer.done)"
+cat > "$OUT/question.txt" <<'QUESTION'
+Where is the retry policy of the HTTP client, and what does it retry?
+QUESTION
+nohup sh -c 'conclave ask --project . < "$1/question.txt" > "$1/answer.md" 2> "$1/answer.log"; echo $? > "$1/answer.done"' sh "$OUT" >/dev/null 2>&1 &
+until [ -f "$OUT/answer.done" ]; do sleep 10; done; echo "exit=$(cat "$OUT/answer.done")"
 ```
+
+With `--context FILE` the question still comes from standard input; with
+`--context -` standard input is the context, and the question has to be an
+argument: pass it to the inner shell as `"$2"`, as the review skill does.
 
 `--format json` gives the structured answer instead of Markdown. The
 configuration is `.conclave.yaml` in the working directory, then in

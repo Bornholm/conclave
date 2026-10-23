@@ -29,7 +29,7 @@ func runAgents(ctx context.Context, args []string, stdout, stderr io.Writer) err
 
 func runAgentsInstall(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	fs := newFlagSet("agents install", stderr)
-	project := fs.String("project", "", "install into this repository (\".\" for the current one) instead of the user configuration")
+	project := fs.String("project", "", "install into the repository holding PATH, at its root (\".\" for the current one), instead of the user configuration")
 	force := fs.Bool("force", false, "replace files that differ from the bundled version")
 	positional, err := parseInterspersed(fs, args)
 	if err != nil {

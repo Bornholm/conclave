@@ -29,10 +29,11 @@
  * that finished, which hides that it was stopped.
  *
  * The deadline is read from `CONCLAVE_DEADLINE_AT`, the absolute RFC 3339
- * instant Conclave exports for every agent run, or else from
- * `CONCLAVE_DEADLINE_MS`, a budget counted from session start. The instant is
- * preferred: it is Conclave's own, so both agree on when the run ends, whereas
- * a countdown started here would always finish after Conclave's timeout.
+ * instant Conclave exports for every agent run, and the stages from
+ * `CONCLAVE_DEADLINE_MS`, the budget it counts that instant from. The instant is
+ * Conclave's own, so both agree on when the run ends, whereas a countdown
+ * started here would always finish after Conclave's timeout. Without the
+ * instant, the budget is counted from session start.
  * Without either, outside Conclave, the extension does nothing, so it can be
  * installed for every session.
  *
@@ -145,7 +146,7 @@ function promptSection(remainingMs: number, exploringMs: number, stage: Stage): 
  * run. A message that still calls a tool is work in progress, and a message
  * with neither is an empty step.
  */
-function isAnswer(message: { role: string; content: unknown }): boolean {
+function isAnswer(message: { role: string; content?: unknown }): boolean {
 	if (message.role !== "assistant") return false;
 	if (!Array.isArray(message.content)) return false;
 	const blocks = message.content as { type?: string; text?: unknown }[];
@@ -191,7 +192,9 @@ export default function conclave(pi: ExtensionAPI) {
 		if (cap === undefined) return;
 		try {
 			const current = pi.getThinkingLevel();
-			if (THINKING_ORDER.indexOf(current) <= THINKING_ORDER.indexOf(cap)) {
+			const rank = THINKING_ORDER.indexOf(current);
+			// An unknown level is capped too: it cannot be shown to be lower.
+			if (rank !== -1 && rank <= THINKING_ORDER.indexOf(cap)) {
 				// A model declared without reasoning reports "off" while the model
 				// behind it may still deliberate at length: say so, since nothing
 				// here can bound it.
@@ -238,16 +241,15 @@ export default function conclave(pi: ExtensionAPI) {
 		// working arrives after that turn's batch of tools, and there is no gain
 		// in interrupting a model that is already writing its answer.
 		pendingSteer = text;
-		flushSteer(ctx, true);
+		flushSteer(ctx);
 	}
 
 	/**
-	 * Deliver the held message, unless the last turn no longer needs it.
-	 *
-	 * @param active whether the run is streaming, so the message queues as a
-	 * steering message rather than starting a turn of its own.
+	 * Deliver the held message, unless the last turn no longer needs it. It is
+	 * only sent while the run streams, so that it queues as a steering message
+	 * rather than starting a turn of its own.
 	 */
-	function flushSteer(ctx: ExtensionContext, active: boolean): void {
+	function flushSteer(ctx: ExtensionContext): void {
 		const text = pendingSteer;
 		if (text === undefined) return;
 		if (sawText) {
@@ -257,7 +259,6 @@ export default function conclave(pi: ExtensionAPI) {
 			log("steer dropped: the run already produced an answer");
 			return;
 		}
-		if (!active) return;
 		if (ctx.isIdle()) return;
 		pendingSteer = undefined;
 		try {
@@ -309,7 +310,10 @@ export default function conclave(pi: ExtensionAPI) {
 			if (Number.isFinite(parsed)) at = parsed;
 			else log(`ignoring ${ENV_DEADLINE_AT}=${JSON.stringify(envAt)}: expected an RFC 3339 instant`);
 		}
-		if (at === 0 && envBudget !== undefined) {
+		// Read even with the instant: the stages are fractions of the budget
+		// Conclave gave, counted from when it launched this process, not of
+		// whatever is left once Pi has started.
+		if (envBudget !== undefined) {
 			const parsed = Number(envBudget);
 			if (Number.isFinite(parsed) && parsed > 0) ms = parsed;
 			else log(`ignoring ${ENV_BUDGET_MS}=${JSON.stringify(envBudget)}: expected milliseconds`);
@@ -327,7 +331,9 @@ export default function conclave(pi: ExtensionAPI) {
 			return;
 		}
 		deadlineAt = at;
-		budgetMs = ms ?? left;
+		// A budget longer than the time to the instant would anchor the stages
+		// before the process could have been launched.
+		budgetMs = ms !== undefined && ms >= left ? ms : left;
 		log(
 			`budget ${humanize(budgetMs)}, concluding at ${humanize(budgetMs * CONCLUDE_AT)}, tools off at ${humanize(budgetMs * STOP_TOOLS_AT)}`,
 		);
@@ -369,7 +375,7 @@ export default function conclave(pi: ExtensionAPI) {
 		// read from the event itself: waiting for `message_end` would deliver a
 		// held message to a run that had just finished answering.
 		if (isAnswer(event.message)) sawText = true;
-		flushSteer(ctx, true);
+		flushSteer(ctx);
 	});
 
 	// Last chance for a run that reached its deadline without writing anything:

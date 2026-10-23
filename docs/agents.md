@@ -34,13 +34,13 @@ A file that already holds the bundled content is reported `unchanged`. One that 
 Two warnings name files that compete with the installed ones, without touching them:
 
 - a skill of the same name under `~/.agents/skills`, or `.agents/skills` for a project, which Pi also reads: with two skills of one name it loads only one;
-- an `extensions/deadline.ts`, the standalone extension `conclave.ts` comes from: with both, two extensions steer the same run.
+- an `extensions/deadline.ts`, the standalone extension `conclave.ts` comes from, in the directory installed into or, for a project install, in the user's: with both, two extensions steer the same run.
 
 An extension passed explicitly with `--extension` in `.conclave.yaml` is not seen by the command. Remove it once `conclave.ts` is installed.
 
 ## The Pi extension
 
-Conclave kills an agent at its timeout, and whatever the model would have written after that is lost. Every agent run gets `CONCLAVE_DEADLINE_AT`, the instant it is stopped, and `CONCLAVE_DEADLINE_MS`, its budget (see [configuration](configuration.md)). The extension reads them and makes the run converge on an answer:
+Conclave kills an agent at its timeout, and whatever the model would have written after that is lost. Every agent run gets `CONCLAVE_DEADLINE_AT`, the instant it is stopped, and `CONCLAVE_DEADLINE_MS`, its budget (see [configuration](configuration.md)). The extension reads them and makes the run converge on an answer, at fractions of that budget counted from when Conclave launched the process, so Pi's own start-up eats into the first stage, not into the writing reserve:
 
 | At | What happens |
 |---|---|
@@ -52,6 +52,6 @@ The system prompt also states the time left and when the tools go. A run that se
 
 It never aborts the run and never exits by itself. Aborting mid-answer would destroy what the earlier stages worked to produce, and a process that exits with status 0 at its deadline looks like one that finished: Conclave could no longer tell it was stopped, and would neither mark the report salvaged nor give it its `report_grace`. What was written stays on standard output, where Conclave reads it.
 
-Without either variable, outside Conclave, the extension does nothing, which is why it can be installed for every session. Its log lines go to standard error, prefixed with `[conclave]`.
+Without either variable, outside Conclave, the extension does nothing, which is why it can be installed for every session. Its log lines go to standard error, prefixed with `[conclave]`. CI typechecks it against Pi's published types (`internal/integration/typecheck`), since nothing else in the build reads it.
 
 A model whose provider declares it without reasoning reports its thinking as `off`, and the extension cannot lower it further, even when the model behind it, a router for instance, still reasons at length. The log says `thinking already off, left as is`: such a reviewer runs closer to its deadline, and `report_grace` is what catches it.

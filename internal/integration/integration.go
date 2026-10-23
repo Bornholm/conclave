@@ -56,7 +56,8 @@ var agents = map[string]Agent{
 		Name: "pi",
 		UserRoot: func() (string, error) {
 			if dir := os.Getenv("PI_CODING_AGENT_DIR"); dir != "" {
-				return dir, nil
+				// Absolute, so the install does not depend on where it is run.
+				return filepath.Abs(dir)
 			}
 			home, err := os.UserHomeDir()
 			if err != nil {
@@ -154,7 +155,15 @@ func Install(a Agent, opts Options) (*Report, error) {
 		conflict = conflict || st == Conflict
 		rep.Results = append(rep.Results, Result{Path: dst, Status: st})
 	}
-	rep.Warnings = append(a.superseded(root), a.shadowed(base)...)
+	// A project install leaves the user's extensions loaded, so an old one
+	// there competes with the new one as much as one in the project.
+	superseded := []string{root}
+	if opts.Project != "" {
+		if user, err := a.UserRoot(); err == nil {
+			superseded = append(superseded, user)
+		}
+	}
+	rep.Warnings = append(a.superseded(superseded...), a.shadowed(base)...)
 	if conflict {
 		return rep, ErrConflict
 	}
@@ -190,13 +199,16 @@ func (a Agent) files() ([]File, error) {
 	return files, err
 }
 
-// superseded warns about files the installed extensions replace.
-func (a Agent) superseded(root string) []string {
+// superseded warns about files the installed extensions replace, under any of
+// roots.
+func (a Agent) superseded(roots ...string) []string {
 	var warnings []string
-	for _, p := range a.Supersedes {
-		old := filepath.Join(root, filepath.FromSlash(p))
-		if _, err := os.Stat(old); err == nil {
-			warnings = append(warnings, fmt.Sprintf("%s does what the Conclave extension now does: remove it, or both act on the same run", old))
+	for _, root := range roots {
+		for _, p := range a.Supersedes {
+			old := filepath.Join(root, filepath.FromSlash(p))
+			if _, err := os.Stat(old); err == nil {
+				warnings = append(warnings, fmt.Sprintf("%s does what the Conclave extension now does: remove it, or both act on the same run", old))
+			}
 		}
 	}
 	return warnings

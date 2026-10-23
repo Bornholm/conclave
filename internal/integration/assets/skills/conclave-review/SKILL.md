@@ -13,8 +13,12 @@ findings before repeating them, then report or post.
 
 ```bash
 OUT=$(mktemp -d)
-nohup sh -c "conclave review N > $OUT/review.md 2> $OUT/review.log; echo \$? > $OUT/review.done" >/dev/null 2>&1 &
+nohup sh -c 'conclave review "$2" > "$1/review.md" 2> "$1/review.log"; echo $? > "$1/review.done"' sh "$OUT" N >/dev/null 2>&1 &
 ```
+
+Values reach the inner shell as positional arguments, never pasted into its
+script: a value holding a quote would otherwise end the string and run the rest
+as a command.
 
 A review takes 5 to 10 minutes: reviewers run in parallel, and the lead starts
 only once the slowest one finishes. A background-task mechanism of the agent
@@ -30,7 +34,7 @@ to stderr, artifacts to `.git/conclave/runs/<run-id>/`.
 ## Wait on the sentinel
 
 ```bash
-until [ -f $OUT/review.done ]; do sleep 10; done; echo "exit=$(cat $OUT/review.done)"
+until [ -f "$OUT/review.done" ]; do sleep 10; done; echo "exit=$(cat "$OUT/review.done")"
 ```
 
 The loop ends on its own, so it is safe to run in the background. Read the

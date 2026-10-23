@@ -28,9 +28,12 @@ reviewers, plus one lead run.
 
 ```bash
 OUT=$(mktemp -d)
-nohup sh -c "conclave triage --all --since 90d --limit 20 > $OUT/triage.md 2> $OUT/triage.log; echo \$? > $OUT/triage.done" >/dev/null 2>&1 &
-until [ -f $OUT/triage.done ]; do sleep 10; done; echo "exit=$(cat $OUT/triage.done)"
+nohup sh -c 'out=$1; shift; conclave triage "$@" > "$out/triage.md" 2> "$out/triage.log"; echo $? > "$out/triage.done"' sh "$OUT" --all --since 90d --limit 20 >/dev/null 2>&1 &
+until [ -f "$OUT/triage.done" ]; do sleep 10; done; echo "exit=$(cat "$OUT/triage.done")"
 ```
+
+The arguments, a label included, reach `conclave` as they are, never pasted
+into the inner script.
 
 Run from the repository root, where `.conclave.yaml` is. The report goes to
 stdout, logs to stderr.

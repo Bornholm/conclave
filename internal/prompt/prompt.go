@@ -97,8 +97,14 @@ type ReviewerInput struct {
 	DiffExcluded []string
 	// DiffFile, when set, is the path of the diff relative to the worktree:
 	// the diff is too large to inline and Diff is then left out.
-	DiffFile    string
-	DiffIndex   DiffIndex
+	DiffFile  string
+	DiffIndex DiffIndex
+	// DiffSince says the review is incremental: the diff is given as a file
+	// whatever its size, and the changes since the previous review are where
+	// the reviewer starts.
+	DiffSince bool
+	// DiffLarge says the diff is too large to inline.
+	DiffLarge   bool
 	MaxFindings int
 	Budget      TimeBudget
 	// Since is set for an incremental review.

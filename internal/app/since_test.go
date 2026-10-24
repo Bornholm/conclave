@@ -124,12 +124,12 @@ func TestReconcilePrevious(t *testing.T) {
 	for _, p := range review.PreviousFindings {
 		got[p.ID] = p
 	}
-	// The first reviewer's still-present gives the status its evidence, and
-	// is no longer a claim; the status replaced goes first among them.
-	if p := got["P1"]; p.Status != domain.PreviousStillPresent || p.Evidence != "a.go:3" || strings.Join(p.ReportedBy, ",") != "r2" {
+	// The status replaced goes first among the claims; the reviewers'
+	// still-present stay claims, with their evidence and their reviewer.
+	if p := got["P1"]; p.Status != domain.PreviousStillPresent || p.Evidence != "" || strings.Join(p.ReportedBy, ",") != "r2" {
 		t.Errorf("a fixed finding that a finding still continues: %+v", p)
 	}
-	if c := got["P1"].Claims; len(c) != 2 || c[0].Status != domain.PreviousFixed || c[0].Evidence != "done" || strings.Join(c[0].ReportedBy, ",") != "r1" || c[1].Evidence != "a.go:4" {
+	if c := got["P1"].Claims; len(c) != 3 || c[0].Status != domain.PreviousFixed || c[0].Evidence != "done" || strings.Join(c[0].ReportedBy, ",") != "r1" || c[1].Evidence != "a.go:3" || c[2].Evidence != "a.go:4" {
 		t.Errorf("the status replaced must stay among the claims: %+v", c)
 	}
 	if got["P2"].Status != domain.PreviousWithdrawn {

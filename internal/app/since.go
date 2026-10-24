@@ -200,20 +200,9 @@ func reconcilePrevious(review *domain.ConsolidatedReview) []string {
 			w += ": " + p.Evidence
 		}
 		warnings = append(warnings, w+")")
-		// A reviewer's still-present among the claims becomes the status's
-		// own evidence: a claim says only what the status does not.
-		next := domain.PreviousStatus{ID: p.ID, Status: domain.PreviousStillPresent, ReportedBy: dedupe(by),
-			Claims: []domain.PreviousClaim{{Status: p.Status, Evidence: p.Evidence, ReportedBy: p.ReportedBy}}}
-		for _, c := range p.Claims {
-			if c.Status == domain.PreviousStillPresent && (c.Evidence == "" || next.Evidence == "") {
-				if next.Evidence == "" {
-					next.Evidence = c.Evidence
-				}
-				continue
-			}
-			next.Claims = append(next.Claims, c)
-		}
-		review.PreviousFindings[i] = next
+		replaced := domain.PreviousClaim{Status: p.Status, Evidence: p.Evidence, ReportedBy: p.ReportedBy}
+		review.PreviousFindings[i] = domain.PreviousStatus{ID: p.ID, Status: domain.PreviousStillPresent, ReportedBy: dedupe(by),
+			Claims: append([]domain.PreviousClaim{replaced}, p.Claims...)}
 	}
 	for _, id := range order {
 		if !seen[id] {

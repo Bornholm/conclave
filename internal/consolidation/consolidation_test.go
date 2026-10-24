@@ -357,6 +357,31 @@ func TestParseLeadReviewTakesAReviewersEvidence(t *testing.T) {
 	}
 }
 
+func TestParseLeadReviewWarnsAboutAnOmittedFinding(t *testing.T) {
+	raw := `{"schema_version":"1","summary":"ok","verdict":"comment","failed_reviewers":[],"findings":[],
+"previous_findings":[{"id":"P1","status":"still-present"}]}`
+	report := func(statuses ...domain.PreviousStatus) *domain.AgentReport {
+		return &domain.AgentReport{PreviousFindings: statuses}
+	}
+	outcomes := []ReviewerOutcome{
+		{ID: "r1", Report: report(domain.PreviousStatus{ID: "P1", Status: domain.PreviousStillPresent},
+			domain.PreviousStatus{ID: "P2", Status: domain.PreviousFixed, Evidence: "locked"})},
+		{ID: "r2", Report: report(domain.PreviousStatus{ID: "P2", Status: domain.PreviousStillPresent})},
+	}
+	review, warnings, err := ParseLeadReview([]byte(raw), []string{"r1", "r2"}, outcomes, nil, nil, 10, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// P2 stays not checked, and the warning keeps what the reviewers said.
+	if len(review.PreviousFindings) != 1 {
+		t.Errorf("statuses: %+v", review.PreviousFindings)
+	}
+	want := "lead: previous finding P2 left without a status, it is not checked; the reviewers said still-present (r2); fixed (r1: locked)"
+	if len(warnings) != 1 || warnings[0] != want {
+		t.Errorf("warnings: %q", warnings)
+	}
+}
+
 func TestMergePreviousSkipsAnUnknownStatus(t *testing.T) {
 	outcomes := []ReviewerOutcome{{ID: "r1", Report: &domain.AgentReport{PreviousFindings: []domain.PreviousStatus{
 		{ID: "P1", Status: "maybe"},

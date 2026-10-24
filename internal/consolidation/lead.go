@@ -72,6 +72,7 @@ func ParseLeadReview(raw []byte, succeeded []string, outcomes []ReviewerOutcome,
 		}
 		review.PreviousFindings[i].Claims = claims(review.PreviousFindings[i], outcomes)
 	}
+	warnings = append(warnings, omittedPrevious(review.PreviousFindings, outcomes)...)
 	review.Findings = kept
 	if review.Findings == nil {
 		review.Findings = []domain.ConsolidatedFinding{}
@@ -112,4 +113,42 @@ func knownOnly(ids []string, known map[string]bool) []string {
 		}
 	}
 	return by
+}
+
+// omittedPrevious warns about the previous findings the reviewers gave a
+// status and the lead did not. They stay not checked: a "fixed" the lead did
+// not verify must not take a problem off the review. The warning keeps what
+// the reviewers said.
+func omittedPrevious(settled []domain.PreviousStatus, outcomes []ReviewerOutcome) []string {
+	given := map[string]bool{}
+	for _, p := range settled {
+		given[p.ID] = true
+	}
+	var warnings []string
+	for _, p := range MergePrevious(outcomes) {
+		if given[p.ID] {
+			continue
+		}
+		said := []string{claimText(domain.PreviousClaim{Status: p.Status, Evidence: p.Evidence, ReportedBy: p.ReportedBy})}
+		for _, c := range p.Claims {
+			said = append(said, claimText(c))
+		}
+		warnings = append(warnings, fmt.Sprintf("lead: previous finding %s left without a status, it is not checked; the reviewers said %s", p.ID, strings.Join(said, "; ")))
+	}
+	return warnings
+}
+
+func claimText(c domain.PreviousClaim) string {
+	s := string(c.Status)
+	if len(c.ReportedBy) > 0 {
+		s += " (" + strings.Join(c.ReportedBy, ", ")
+		if c.Evidence != "" {
+			s += ": " + c.Evidence
+		}
+		return s + ")"
+	}
+	if c.Evidence != "" {
+		s += " (" + c.Evidence + ")"
+	}
+	return s
 }

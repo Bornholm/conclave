@@ -175,3 +175,14 @@ func TestSincePromptWithoutPreviousFindings(t *testing.T) {
 		}
 	}
 }
+
+func TestSincePromptSaysTheDiffFileIsTruncated(t *testing.T) {
+	since := Since{Previous: &domain.PreviousReview{HeadSHA: "prevhead", Findings: []domain.ConsolidatedFinding{{Title: "t"}}}, DiffFile: ".conclave-since.patch", Truncated: true}
+	out, err := Reviewer(ReviewerInput{AgentID: "rev", PR: &domain.PullRequest{}, Since: since})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(out), "CHANGES SINCE THE PREVIOUS REVIEW — TRUNCATED") {
+		t.Errorf("prompt:\n%s", out)
+	}
+}

@@ -88,8 +88,15 @@ func TestLoadPrevious(t *testing.T) {
 	if err := os.WriteFile(anonymous, data, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := loadPrevious(base, repo, pr, anonymous); err == nil || !strings.Contains(err.Error(), "names no pull request URL") {
+	if _, err := loadPrevious(base, repo, pr, anonymous); err == nil || !strings.Contains(err.Error(), "no pull request URL to compare") {
 		t.Errorf("a review.json that names no repository must be refused: %v", err)
+	}
+	noURL := &domain.PullRequest{Number: 7}
+	if _, err := loadPrevious(base, repo, noURL, bare); err == nil || !strings.Contains(err.Error(), "no pull request URL to compare") {
+		t.Errorf("a review.json must be refused when the forge gives no URL to compare: %v", err)
+	}
+	if _, err := loadPrevious(base, repo, noURL, older); err != nil {
+		t.Errorf("a run directory needs no URL: %v", err)
 	}
 	other := &domain.PullRequest{Number: 7, WebURL: "https://github.com/acme/fork/pull/7"}
 	if _, err := loadPrevious(base, repo, other, bare); err == nil || !strings.Contains(err.Error(), "not https://github.com/acme/fork/pull/7") {
@@ -137,5 +144,21 @@ func TestKeepStillPresentWarnsAboutAnUnknownID(t *testing.T) {
 	warnings := keepStillPresent(review, prev, nil)
 	if len(review.Findings) != 0 || len(warnings) != 1 || !strings.Contains(warnings[0], "P4 is still present but is not one of") {
 		t.Errorf("findings=%+v warnings=%v", review.Findings, warnings)
+	}
+}
+
+func TestKeepStillPresentLinksAFindingOnTheSameLines(t *testing.T) {
+	review := &domain.ConsolidatedReview{
+		Verdict:          domain.VerdictComment,
+		Findings:         []domain.ConsolidatedFinding{{Title: "reworded", File: "a.go", StartLine: 12, EndLine: 14}},
+		PreviousFindings: []domain.PreviousStatus{{ID: "P1", Status: domain.PreviousStillPresent}},
+	}
+	prev := &domain.PreviousReview{Findings: []domain.ConsolidatedFinding{{Title: "race", Severity: domain.SeverityHigh, File: "a.go", StartLine: 10, EndLine: 12}}}
+	warnings := keepStillPresent(review, prev, nil)
+	if len(review.Findings) != 1 || review.Findings[0].PreviousID != "P1" || review.Verdict != domain.VerdictComment {
+		t.Errorf("verdict=%s findings=%+v", review.Verdict, review.Findings)
+	}
+	if len(warnings) != 1 || !strings.Contains(warnings[0], `finding "reworded", on the same lines, carried no link`) {
+		t.Errorf("warnings: %v", warnings)
 	}
 }

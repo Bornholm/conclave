@@ -20,7 +20,7 @@ conclave review 42 --since last --responses answers.txt > round3.md
 | a directory | that run directory |
 | a file | that `review.json` |
 
-The previous review must be of the same pull request, in the same repository: measured against another one's findings, every finding would come out fixed. The pull request's URL in the review and the repository in the run's manifest are checked, and `last` skips the runs of another repository. A `review.json` outside its run directory has only its URL to go by, and one without it, written by hand, is refused. A run that failed has no `final/review.json`, and `last` skips it.
+The previous review must be of the same pull request, in the same repository: measured against another one's findings, every finding would come out fixed. The pull request's URL in the review and the repository in the run's manifest are checked, and `last` skips the runs of another repository. A `review.json` outside its run directory has only its URL to go by: it is refused without one, or when the forge gives the pull request none to compare, as Redmine does. Pass its run directory instead. A run that failed has no `final/review.json`, and `last` skips it.
 
 ## What the agents get
 
@@ -60,7 +60,7 @@ The lead settles each status by reading the code, not by majority, and keeps `st
 
 The statuses and the findings are then made to agree. A finding linked to a previous one says the problem is still there: that previous finding is `still-present`, whatever status it was given, with a warning, since a `fixed` next to a finding still in the review would tell the reader to stop looking. A link to a previous finding with no status gives it `still-present`.
 
-A status `still-present` that no finding carries, because the lead forgot to report it again, does not make the problem disappear: Conclave puts the previous finding back as it was written, with a warning, and a critical or high one holds the verdict at `request_changes`.
+A status `still-present` that no finding carries, because the lead forgot to report it again, does not make the problem disappear: Conclave puts the previous finding back as it was written, with a warning, and a critical or high one holds the verdict at `request_changes`. When a finding of the review, in the same file and on lines that overlap, carries no link, it is the same problem reported again without one: it gets the link instead, and the problem is not shown twice.
 
 ## Output
 

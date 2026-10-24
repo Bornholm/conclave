@@ -47,10 +47,10 @@ func loadPrevious(base string, repo domain.Repository, pr *domain.PullRequest, s
 		return nil, fmt.Errorf("--since: %s is a review of %s/%s, not %s/%s", path, m.Owner, m.Repo, repo.Owner, repo.Name)
 	}
 	// Outside a run directory, the pull request's URL is all that ties the
-	// review to a repository. Conclave always writes it: without it, the file
-	// was written by hand and could be of any repository.
-	if !hasManifest && review.Meta.PRURL == "" {
-		return nil, fmt.Errorf("--since: %s is outside a run directory and names no pull request URL: nothing tells it is a review of %s/%s", path, repo.Owner, repo.Name)
+	// review to a repository, and only when both sides have one: Conclave
+	// always writes it, but a forge may give none, Redmine for one.
+	if !hasManifest && (review.Meta.PRURL == "" || pr.WebURL == "") {
+		return nil, fmt.Errorf("--since: %s is outside a run directory and there is no pull request URL to compare: nothing tells it is a review of %s/%s; pass its run directory instead", path, repo.Owner, repo.Name)
 	}
 	if review.Meta.HeadSHA == "" {
 		return nil, fmt.Errorf("--since: %s does not say which revision it reviewed", path)
@@ -253,6 +253,15 @@ func keepStillPresent(review *domain.ConsolidatedReview, prev *domain.PreviousRe
 			continue
 		}
 		f := prev.Findings[i]
+		// A finding of this review on the same lines is the same problem
+		// reported again without its link: it gets the link, rather than the
+		// review showing the problem twice.
+		if j := sameProblem(review.Findings, f); j >= 0 {
+			review.Findings[j].PreviousID = p.ID
+			carried[p.ID] = true
+			warnings = append(warnings, fmt.Sprintf("previous finding %s is still present and finding %q, on the same lines, carried no link: it is linked to %s", p.ID, review.Findings[j].Title, p.ID))
+			continue
+		}
 		f.PreviousID = p.ID
 		f.ReportedBy = append([]string(nil), p.ReportedBy...)
 		f.OutOfScope = len(changed) > 0 && !changed[f.File]
@@ -265,4 +274,17 @@ func keepStillPresent(review *domain.ConsolidatedReview, prev *domain.PreviousRe
 		}
 	}
 	return warnings
+}
+
+// sameProblem is the index of an unlinked finding of findings in the same file
+// as prev, on lines that overlap its own, or -1.
+func sameProblem(findings []domain.ConsolidatedFinding, prev domain.ConsolidatedFinding) int {
+	end := func(f domain.ConsolidatedFinding) int { return max(f.EndLine, f.StartLine) }
+	for i, f := range findings {
+		if f.PreviousID == "" && f.File == prev.File && f.StartLine > 0 && prev.StartLine > 0 &&
+			f.StartLine <= end(prev) && prev.StartLine <= end(f) {
+			return i
+		}
+	}
+	return -1
 }

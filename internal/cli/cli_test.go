@@ -418,3 +418,30 @@ func TestReadResponsesIsBounded(t *testing.T) {
 		t.Errorf("stdin: %d bytes, %v", len(data), err)
 	}
 }
+
+func TestAgentsInstallClaudeAndOpencode(t *testing.T) {
+	repo := t.TempDir()
+	if out, err := exec.Command("git", "init", "-q", repo).CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v %s", err, out)
+	}
+	t.Setenv("HOME", t.TempDir())
+	for agent, dir := range map[string]string{"claude": ".claude", "opencode": ".opencode"} {
+		var out, errb bytes.Buffer
+		if code := Main([]string{"agents", "install", agent, "--project", repo}, &out, &errb); code != 0 {
+			t.Fatalf("%s: %d %s%s", agent, code, out.String(), errb.String())
+		}
+		for _, skill := range []string{"conclave-review", "conclave-ask", "conclave-triage"} {
+			if _, err := os.Stat(filepath.Join(repo, dir, "skills", skill, "SKILL.md")); err != nil {
+				t.Errorf("%s: %v", agent, err)
+			}
+		}
+		if strings.Contains(out.String(), "!") {
+			t.Errorf("%s: unexpected warning: %s", agent, out.String())
+		}
+	}
+	var out bytes.Buffer
+	Main([]string{"help"}, &out, &out)
+	if !strings.Contains(out.String(), "conclave agents install claude|opencode|pi") {
+		t.Errorf("usage does not list the agents:\n%s", out.String())
+	}
+}

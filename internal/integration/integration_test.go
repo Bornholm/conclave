@@ -348,15 +348,152 @@ func TestProjectInstallRefusesALinkedDirectory(t *testing.T) {
 
 func TestProjectInstallWarnsAboutTheUsersInstalledSkills(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
-	t.Setenv("PI_CODING_AGENT_DIR", t.TempDir())
+	user := t.TempDir()
+	t.Setenv("PI_CODING_AGENT_DIR", user)
 	if _, err := Install(pi(t), Options{}); err != nil {
 		t.Fatal(err)
 	}
+	// The same skill, installed by the same Conclave, does not compete.
 	rep, err := Install(pi(t), Options{Project: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rep.Warnings) != 0 {
+		t.Fatalf("warnings = %v, want none for an identical copy", rep.Warnings)
+	}
+	edited := filepath.Join(user, "skills", "conclave-review", "SKILL.md")
+	if err := os.WriteFile(edited, []byte("mine"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	rep, err = Install(pi(t), Options{Project: t.TempDir()})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(strings.Join(rep.Warnings, "\n"), filepath.Join("skills", "conclave-review")) {
 		t.Fatalf("warnings = %v, want one about the user's conclave-review", rep.Warnings)
+	}
+}
+
+func TestInstallClaude(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("CLAUDE_CONFIG_DIR", "")
+	a, err := Lookup("claude")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rep, err := Install(a, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := filepath.Join(home, ".claude"); rep.Root != want {
+		t.Fatalf("root = %s, want %s", rep.Root, want)
+	}
+	if len(rep.Results) != 3 {
+		t.Errorf("Claude gets the skills only: %+v", rep.Results)
+	}
+	for _, r := range rep.Results {
+		if r.Status != Created || !strings.HasPrefix(r.Path, filepath.Join(home, ".claude", "skills")) {
+			t.Errorf("%s: %v", r.Path, r.Status)
+		}
+	}
+	dir := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", dir)
+	if rep, err = Install(a, Options{}); err != nil || rep.Root != dir {
+		t.Errorf("CLAUDE_CONFIG_DIR: root %v, %v", rep, err)
+	}
+	repo := t.TempDir()
+	if rep, err = Install(a, Options{Project: repo}); err != nil || rep.Root != filepath.Join(repo, ".claude") {
+		t.Errorf("project: root %v, %v", rep, err)
+	}
+}
+
+func TestInstallOpencode(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", "")
+	a, err := Lookup("opencode")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// What a Claude install put in ~/.claude/skills is the same skill, which
+	// OpenCode also reads; the user's own copy in ~/.agents/skills is not.
+	t.Setenv("CLAUDE_CONFIG_DIR", "")
+	claude, _ := Lookup("claude")
+	if _, err := Install(claude, Options{}); err != nil {
+		t.Fatal(err)
+	}
+	mine := filepath.Join(home, ".agents", "skills", "conclave-ask")
+	if err := os.MkdirAll(mine, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(mine, "SKILL.md"), []byte("mine"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	rep, err := Install(a, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := filepath.Join(home, ".config", "opencode"); rep.Root != want {
+		t.Fatalf("root = %s, want %s", rep.Root, want)
+	}
+	if len(rep.Warnings) != 1 || !strings.Contains(rep.Warnings[0], mine) {
+		t.Errorf("warnings = %v, want one about %s only", rep.Warnings, mine)
+	}
+	xdg := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", xdg)
+	if rep, err = Install(a, Options{}); err != nil || rep.Root != filepath.Join(xdg, "opencode") {
+		t.Errorf("XDG_CONFIG_HOME: root %v, %v", rep, err)
+	}
+}
+
+func TestInstallOpencodeIntoAProject(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", "")
+	t.Setenv("CLAUDE_CONFIG_DIR", "")
+	opencode, _ := Lookup("opencode")
+	claude, _ := Lookup("claude")
+	repo := t.TempDir()
+	if _, err := Install(claude, Options{Project: repo}); err != nil {
+		t.Fatal(err)
+	}
+	rep, err := Install(opencode, Options{Project: repo})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := filepath.Join(repo, ".opencode"); rep.Root != want {
+		t.Fatalf("root = %s, want %s", rep.Root, want)
+	}
+	if len(rep.Warnings) != 0 {
+		t.Errorf("the identical copy in .claude/skills is the same skill: %v", rep.Warnings)
+	}
+	// A copy that holds the bundled skill and a file of its own is not the
+	// same skill, and OpenCode reads skill/ as well as skills/.
+	extra := filepath.Join(repo, ".claude", "skills", "conclave-ask", "notes.md")
+	if err := os.WriteFile(extra, []byte("mine"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	singular := filepath.Join(home, ".config", "opencode", "skill", "conclave-triage")
+	if err := os.MkdirAll(singular, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if rep, err = Install(opencode, Options{Project: repo}); err != nil {
+		t.Fatal(err)
+	}
+	got := strings.Join(rep.Warnings, "\n")
+	if len(rep.Warnings) != 2 || !strings.Contains(got, filepath.Join(".claude", "skills", "conclave-ask")) || !strings.Contains(got, singular) {
+		t.Errorf("warnings = %v", rep.Warnings)
+	}
+}
+
+func TestRelativeXDGConfigHomeIsIgnored(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", "relative")
+	a, _ := Lookup("opencode")
+	root, err := a.UserRoot()
+	if err != nil || root != filepath.Join(home, ".config", "opencode") {
+		t.Errorf("root = %s, %v", root, err)
 	}
 }

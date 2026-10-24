@@ -99,9 +99,9 @@ type ReviewerInput struct {
 	// the diff is too large to inline and Diff is then left out.
 	DiffFile  string
 	DiffIndex DiffIndex
-	// DiffSince says the diff is given as a file because the review is
-	// incremental, not because of its size: the changes since the previous
-	// review are where the reviewer starts.
+	// DiffSince says the review is incremental: the diff is given as a file
+	// whatever its size, and the changes since the previous review are where
+	// the reviewer starts.
 	DiffSince   bool
 	MaxFindings int
 	Budget      TimeBudget

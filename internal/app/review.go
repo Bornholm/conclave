@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"time"
@@ -57,9 +58,11 @@ type run struct {
 	diffTrunc bool
 	// diffIndex is set when the diff is too large to inline, or when the
 	// review is incremental: reviewers then read it from DiffFileName in
-	// their worktree. diffSince says it is the latter.
+	// their worktree. diffSince says the review is incremental, diffLarge
+	// that the diff is too large to inline.
 	diffIndex *prompt.DiffIndex
 	diffSince bool
+	diffLarge bool
 	changed   map[string]bool
 	runner    *agent.Runner
 	// previous is the review an incremental review is measured against, nil
@@ -230,11 +233,12 @@ func (a *App) Review(ctx context.Context, req ReviewRequest) (*ReviewResult, err
 		// An incremental review starts from the changes since the previous
 		// one: the whole diff, read on every turn of every agent when inlined,
 		// is given as a file, read where those changes lead.
-		large := int64(len(r.diff)) > cfg.InlineDiffBytes()
-		if large || len(r.sinceDiffText) > 0 {
+		r.diffLarge = int64(len(r.diff)) > cfg.InlineDiffBytes()
+		r.diffSince = len(r.sinceDiffText) > 0 && len(r.diff) > 0
+		if r.diffLarge || r.diffSince {
 			idx := prompt.IndexDiff(r.diff)
-			r.diffIndex, r.diffSince = &idx, !large
-			log.Info("diff given as a file", "bytes", idx.Bytes, "lines", idx.Lines, "files", len(idx.Sections)+idx.Omitted, "incremental", !large)
+			r.diffIndex = &idx
+			log.Info("diff given as a file", "bytes", idx.Bytes, "lines", idx.Lines, "files", len(idx.Sections)+idx.Omitted, "incremental", r.diffSince)
 		}
 	}
 
@@ -480,11 +484,18 @@ func (a *App) runReviewer(ctx context.Context, r *run, rv config.AgentConfig, wo
 		Budget: timeBudget(ctx, r.cfg, rv),
 	}
 	if r.diffIndex != nil {
-		if err := writeDiffFile(filepath.Join(worktree, DiffFileName), r.diff); err != nil {
+		err := writeDiffFile(filepath.Join(worktree, DiffFileName), r.diff)
+		switch {
+		case err == nil:
+			in.Diff, in.DiffFile, in.DiffIndex, in.DiffSince = "", DiffFileName, *r.diffIndex, r.diffSince
+		case !r.diffLarge && errors.Is(err, fs.ErrExist):
+			// Only an incremental review asked for the file: a repository
+			// that has one by that name gets the diff inlined, as before.
+			a.logger().Warn("diff inlined: the worktree already has the diff file", "agent", rv.ID, "file", DiffFileName)
+		default:
 			ex.Error = err.Error()
 			return ex, nil, err
 		}
-		in.Diff, in.DiffFile, in.DiffIndex, in.DiffSince = "", DiffFileName, *r.diffIndex, r.diffSince
 	}
 	since, err := r.since(worktree, true)
 	if err != nil {

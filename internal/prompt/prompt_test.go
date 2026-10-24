@@ -55,6 +55,27 @@ func TestReviewerPromptWithDiffFile(t *testing.T) {
 	}
 }
 
+// TestReviewerPromptWithDiffFileInAnIncrementalReview: the file is given
+// because the review is incremental, not for its size, and the reading
+// advice stays.
+func TestReviewerPromptWithDiffFileInAnIncrementalReview(t *testing.T) {
+	idx := IndexDiff([]byte("diff --git a/x.go b/x.go\n--- a/x.go\n+++ b/x.go\n@@ -1 +1 @@\n-a\n+b\n"))
+	out, err := Reviewer(ReviewerInput{AgentID: "rev", PR: &domain.PullRequest{}, MergeBaseSHA: "mb", HeadSHA: "hd",
+		DiffFile: ".conclave-diff.patch", DiffIndex: idx, DiffSince: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(out)
+	for _, want := range []string{"This review is incremental", "verify each section against the worktree", "- x.go: 1-6 (6 lines)"} {
+		if !strings.Contains(s, want) {
+			t.Errorf("prompt lacks %q:\n%s", want, s)
+		}
+	}
+	if strings.Contains(s, "too large to be given here") {
+		t.Error("an incremental review's diff file is not said too large")
+	}
+}
+
 func TestIndexDiffCapsTheIndex(t *testing.T) {
 	var b strings.Builder
 	for i := range maxIndexedFiles + 3 {

@@ -24,7 +24,7 @@ The previous review must be of the same pull request, in the same repository: me
 
 ## What the agents get
 
-Every finding of the previous review, with an id from `P1` to `Pn`, and the diff from the previous head to the current one. The diff of the whole pull request is given as a file, `.conclave-diff.patch`, with its index, whatever its size: inlined, it would be sent again on every turn of every agent, while an incremental review starts from what changed since the previous one. The agents read it where those changes or a previous finding lead them. Each reviewer gives every previous finding a status:
+Every finding of the previous review, with an id from `P1` to `Pn`, and the diff from the previous head to the current one. The reviewers get the diff of the whole pull request as a file, `.conclave-diff.patch`, with its index, whatever its size: inlined, it would be sent again on every turn of every reviewer, while an incremental review starts from what changed since the previous one. They read it where those changes or a previous finding lead them. When there is no diff since the previous review to start from, the whole diff is given as in a full review. So it is when the repository has a file by that name, rather than failing the review. Each reviewer gives every previous finding a status:
 
 | Status | Claims | Needs |
 |---|---|---|

@@ -150,7 +150,9 @@ func claims(p domain.PreviousStatus, outcomes []ReviewerOutcome) []domain.Previo
 			continue
 		}
 		for _, r := range o.Report.PreviousFindings {
-			if r.ID != p.ID || (r.Status == p.Status && (r.Evidence == "" || r.Evidence == p.Evidence)) {
+			// The reports are normalized before they get here, but one built
+			// by hand may still carry an unknown status.
+			if r.ID != p.ID || !r.Status.Valid() || (r.Status == p.Status && (r.Evidence == "" || r.Evidence == p.Evidence)) {
 				continue
 			}
 			i := slices.IndexFunc(out, func(c domain.PreviousClaim) bool { return c.Status == r.Status && c.Evidence == r.Evidence })
@@ -167,19 +169,19 @@ func claims(p domain.PreviousStatus, outcomes []ReviewerOutcome) []domain.Previo
 }
 
 // reviewerEvidence is the first evidence a reviewer gave p's status for p's
-// finding, empty when none did.
-func reviewerEvidence(p domain.PreviousStatus, outcomes []ReviewerOutcome) string {
+// finding, and that reviewer; empty when none did.
+func reviewerEvidence(p domain.PreviousStatus, outcomes []ReviewerOutcome) (evidence, reviewer string) {
 	for _, o := range outcomes {
 		if o.Report == nil {
 			continue
 		}
 		for _, r := range o.Report.PreviousFindings {
 			if r.ID == p.ID && r.Status == p.Status && r.Evidence != "" {
-				return r.Evidence
+				return r.Evidence, o.ID
 			}
 		}
 	}
-	return ""
+	return "", ""
 }
 
 // previousOrder sorts "P2" before "P10", and a malformed id last.

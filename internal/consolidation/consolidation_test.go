@@ -352,8 +352,44 @@ func TestParseLeadReviewTakesAReviewersEvidence(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if p := review.PreviousFindings[0]; p.Evidence != "a.go:1" || len(p.Claims) != 0 {
-		t.Errorf("%+v", p)
+	if p := review.PreviousFindings[0]; p.Evidence != "a.go:1" || strings.Join(p.ReportedBy, ",") != "r2" || len(p.Claims) != 0 {
+		t.Errorf("the reviewer whose evidence is taken must be credited: %+v", p)
+	}
+}
+
+func TestParseLeadReviewSettlesALinkedFindingItLeftOut(t *testing.T) {
+	raw := `{"schema_version":"1","summary":"ok","verdict":"comment","failed_reviewers":[],
+"findings":[{"category":"x","severity":"low","confidence":0.5,"file":"a.go","start_line":1,"end_line":1,"title":"t","description":"d","reported_by":["r2"],"previous_id":"P2"}],
+"previous_findings":[]}`
+	outcomes := []ReviewerOutcome{
+		{ID: "r1", Report: &domain.AgentReport{PreviousFindings: []domain.PreviousStatus{{ID: "P2", Status: domain.PreviousFixed, Evidence: "locked"}}}},
+		{ID: "r2", Report: &domain.AgentReport{PreviousFindings: []domain.PreviousStatus{{ID: "P2", Status: domain.PreviousStillPresent, Evidence: "a.go:1"}}}},
+	}
+	review, warnings, err := ParseLeadReview([]byte(raw), []string{"r1", "r2"}, outcomes, nil, nil, 10, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A finding still continues P2: it is still present, not "not checked",
+	// and r1's fixed stays a claim.
+	if len(warnings) != 0 {
+		t.Errorf("warnings: %q", warnings)
+	}
+	if len(review.PreviousFindings) != 1 {
+		t.Fatalf("statuses: %+v", review.PreviousFindings)
+	}
+	p := review.PreviousFindings[0]
+	if p.ID != "P2" || p.Status != domain.PreviousStillPresent || p.Evidence != "a.go:1" || strings.Join(p.ReportedBy, ",") != "r2" {
+		t.Errorf("status: %+v", p)
+	}
+	if c := claimsString(p.Claims); c != "fixed:locked:r1" {
+		t.Errorf("claims %q", c)
+	}
+}
+
+func TestClaimsSkipAnUnknownStatus(t *testing.T) {
+	outcomes := []ReviewerOutcome{{ID: "r1", Report: &domain.AgentReport{PreviousFindings: []domain.PreviousStatus{{ID: "P1", Status: "maybe", Evidence: "x"}}}}}
+	if c := claims(domain.PreviousStatus{ID: "P1", Status: domain.PreviousFixed, Evidence: "y"}, outcomes); len(c) != 0 {
+		t.Errorf("%+v", c)
 	}
 }
 

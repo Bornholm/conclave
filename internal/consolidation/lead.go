@@ -3,6 +3,8 @@ package consolidation
 import (
 	"encoding/json"
 	"fmt"
+	"slices"
+	"sort"
 	"strings"
 
 	"github.com/bornholm/conclave/internal/agent"
@@ -63,16 +65,40 @@ func ParseLeadReview(raw []byte, succeeded []string, outcomes []ReviewerOutcome,
 	for _, w := range pw {
 		warnings = append(warnings, "lead: "+w)
 	}
-	for i, p := range review.PreviousFindings {
-		review.PreviousFindings[i].ReportedBy = knownOnly(p.ReportedBy, known)
-		// A status the lead gave without evidence takes the first a reviewer
-		// gave for it, as without a lead.
-		if p.Evidence == "" {
-			review.PreviousFindings[i].Evidence = reviewerEvidence(p, outcomes)
-		}
-		review.PreviousFindings[i].Claims = claims(review.PreviousFindings[i], outcomes)
+	given := map[string]bool{}
+	for _, p := range review.PreviousFindings {
+		given[p.ID] = true
 	}
-	warnings = append(warnings, omittedPrevious(review.PreviousFindings, outcomes)...)
+	// A previous finding the lead gave no status but one of its findings
+	// continues is still present: it gets the status here, with the
+	// reviewers' claims, rather than a bare one from the reconciliation.
+	for _, f := range kept {
+		if f.PreviousID != "" && !given[f.PreviousID] {
+			given[f.PreviousID] = true
+			review.PreviousFindings = append(review.PreviousFindings, domain.PreviousStatus{ID: f.PreviousID, Status: domain.PreviousStillPresent})
+		}
+	}
+	for i := range review.PreviousFindings {
+		p := &review.PreviousFindings[i]
+		p.ReportedBy = knownOnly(p.ReportedBy, known)
+		// A status the lead gave without evidence takes the first a reviewer
+		// gave for it, as without a lead, and credits that reviewer.
+		if p.Evidence == "" {
+			if evidence, reviewer := reviewerEvidence(*p, outcomes); evidence != "" {
+				p.Evidence = evidence
+				if !slices.Contains(p.ReportedBy, reviewer) {
+					p.ReportedBy = append(p.ReportedBy, reviewer)
+				}
+			}
+		}
+		p.Claims = claims(*p, outcomes)
+	}
+	sort.SliceStable(review.PreviousFindings, func(i, j int) bool {
+		return previousOrder(review.PreviousFindings[i].ID) < previousOrder(review.PreviousFindings[j].ID)
+	})
+	if previous > 0 {
+		warnings = append(warnings, omittedPrevious(review.PreviousFindings, outcomes)...)
+	}
 	review.Findings = kept
 	if review.Findings == nil {
 		review.Findings = []domain.ConsolidatedFinding{}

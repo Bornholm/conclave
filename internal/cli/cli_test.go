@@ -11,8 +11,27 @@ import (
 	"time"
 
 	"github.com/bornholm/conclave/internal/domain"
+	"github.com/bornholm/conclave/internal/integration"
 	"github.com/bornholm/conclave/internal/testutil"
 )
+
+// isolated starts a configuration a test writes: it inherits nothing from
+// the directories above the test's own.
+const isolated = "inherits: false\n"
+
+func TestConfigValidateListsTheInheritedFiles(t *testing.T) {
+	top := t.TempDir()
+	parent := filepath.Join(top, ".conclave.yaml")
+	os.WriteFile(parent, []byte("version: 1\ninherits: false\nagents: [{id: rev, role: reviewer, command: [echo]}, {id: lead, role: lead, command: [echo]}]\n"), 0o644)
+	os.MkdirAll(filepath.Join(top, "project"), 0o755)
+	project := filepath.Join(top, "project", ".conclave.yaml")
+	os.WriteFile(project, []byte("forge: {provider: github}\n"), 0o644)
+	var out, errb bytes.Buffer
+	Main([]string{"config", "validate", "--config", project}, &out, &errb)
+	if !strings.Contains(out.String(), "valid\n✓ inherits "+parent+"\n") {
+		t.Errorf("validate: %s", out.String())
+	}
+}
 
 func TestMainCommands(t *testing.T) {
 	var out, errb bytes.Buffer
@@ -24,7 +43,7 @@ func TestMainCommands(t *testing.T) {
 		t.Errorf("example: %d", code)
 	}
 	cfg := filepath.Join(t.TempDir(), "c.yaml")
-	os.WriteFile(cfg, out.Bytes(), 0o644)
+	os.WriteFile(cfg, append([]byte(isolated), out.Bytes()...), 0o644)
 	out.Reset()
 	bad := strings.Replace(string(readFile(t, cfg)), "max_parallel", "max_paralel", 1)
 	badPath := filepath.Join(t.TempDir(), "bad.yaml")
@@ -99,6 +118,7 @@ func askConfig(t *testing.T) string {
 	path := filepath.Join(t.TempDir(), "c.yaml")
 	if err := os.WriteFile(path, []byte(`
 version: 1
+inherits: false
 forge:
   provider: github
 agents:
@@ -216,6 +236,7 @@ func askAgentConfig(t *testing.T) string {
 	path := filepath.Join(t.TempDir(), "c.yaml")
 	body := `
 version: 1
+inherits: false
 forge:
   provider: github
 ask:
@@ -365,7 +386,7 @@ func TestAgentsInstall(t *testing.T) {
 	}
 
 	// With --project, the configuration checked is the one at its root.
-	stale := strings.Replace(exampleConfig, "      - --\n    input: argument", "      - --deadline-env-prefix\n      - CONCLAVE\n      - --\n    input: argument", 1)
+	stale := isolated + strings.Replace(exampleConfig, "      - --\n    input: argument", "      - --deadline-env-prefix\n      - CONCLAVE\n      - --\n    input: argument", 1)
 	if err := os.WriteFile(filepath.Join(repo, ".conclave.yaml"), []byte(stale), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -382,8 +403,8 @@ func TestAgentsInstall(t *testing.T) {
 
 func TestAgentsInstallWarnsAboutAStaleConfiguration(t *testing.T) {
 	t.Setenv("PI_CODING_AGENT_DIR", t.TempDir())
-	stale := strings.Replace(exampleConfig, "      - --\n    input: argument", "      - --extension\n      - /x/deadline.ts\n      - --deadline-env-prefix\n      - CONCLAVE\n      - --\n    input: argument", 1)
-	if stale == exampleConfig {
+	stale := isolated + strings.Replace(exampleConfig, "      - --\n    input: argument", "      - --extension\n      - /x/deadline.ts\n      - --deadline-env-prefix\n      - CONCLAVE\n      - --\n    input: argument", 1)
+	if stale == isolated+exampleConfig {
 		t.Fatal("the example no longer has the pi agent this test edits")
 	}
 	cfg := filepath.Join(t.TempDir(), "c.yaml")
@@ -443,5 +464,40 @@ func TestAgentsInstallClaudeAndOpencode(t *testing.T) {
 	Main([]string{"help"}, &out, &out)
 	if !strings.Contains(out.String(), "conclave agents install claude|opencode|pi") {
 		t.Errorf("usage does not list the agents:\n%s", out.String())
+	}
+}
+
+// The example printed by `conclave config example` is the repository's
+// .conclave.example.yaml: the two must not drift apart.
+func TestExampleConfigMatchesTheRepositoryOne(t *testing.T) {
+	if want := readFile(t, filepath.Join("..", "..", ".conclave.example.yaml")); string(want) != exampleConfig {
+		t.Error("internal/cli/example.yaml differs from .conclave.example.yaml: copy one onto the other")
+	}
+}
+
+func TestStaleCommandsSaysWhenTheConfigurationDoesNotLoad(t *testing.T) {
+	pi, err := integration.Lookup("pi")
+	if err != nil {
+		t.Fatal(err)
+	}
+	top := t.TempDir()
+	parent := filepath.Join(top, ".conclave.yaml")
+	os.WriteFile(parent, []byte(isolated+"version: 1\n"), 0o644)
+	if err := os.Chmod(parent, 0o666); err != nil {
+		t.Fatal(err)
+	}
+	os.MkdirAll(filepath.Join(top, "project"), 0o755)
+	project := filepath.Join(top, "project", ".conclave.yaml")
+	stale := strings.Replace(exampleConfig, "      - --\n    input: argument", "      - --deadline-env-prefix\n      - CONCLAVE\n      - --\n    input: argument", 1)
+	os.WriteFile(project, []byte(stale), 0o644)
+	// The parent others can write is refused: the commands go unchecked,
+	// and the install says so instead of saying nothing.
+	if w := staleCommands(pi, project); len(w) != 1 || !strings.Contains(w[0], "agent commands not checked") || !strings.Contains(w[0], parent) {
+		t.Errorf("warnings: %q", w)
+	}
+	// Loaded, a stale command is pointed at the inherited files as well.
+	os.Chmod(parent, 0o644)
+	if w := staleCommands(pi, project); len(w) != 1 || !strings.Contains(w[0], "or a file it inherits ("+parent+")") {
+		t.Errorf("warnings: %q", w)
 	}
 }

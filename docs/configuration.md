@@ -2,6 +2,49 @@
 
 [`.conclave.example.yaml`](../.conclave.example.yaml) is the full reference. `conclave config example` prints it. This page covers the settings that are easy to get wrong, then the contract an agent must honor.
 
+## Inheritance
+
+A `.conclave.yaml` inherits the `.conclave.yaml` files of the directories above it. Declare the agents once at the root of your projects, and in each project only what is its own:
+
+```yaml
+# ~/workspace/.conclave.yaml
+version: 1
+agents:
+  - id: pi-reviewer
+    role: reviewer
+    command: [pi, -p, --mode, json]
+    output: pi-json
+  - id: pi-lead
+    role: lead
+    command: [pi, -p, --mode, json]
+    output: pi-json
+```
+
+```yaml
+# ~/workspace/conclave/.conclave.yaml
+forge:
+  provider: github
+review:
+  diff_exclude: ["*_templ.go"]
+agents:
+  - id: pi-reviewer
+    timeout: 25m
+```
+
+The files are merged from the farthest to the nearest, so the nearest one wins. A mapping merges key by key: a file sets only what it names. A list replaces the inherited one, `diff_exclude` or an agent's `command` alike, with one exception: `agents` merges by `id`. An agent whose id is inherited is merged over it, field by field, and a new id is added after the inherited agents. The exception goes one way only: `agents: []` leaves the inherited agents in place. To leave out an inherited agent, give its id with `disabled: true`:
+
+```yaml
+agents:
+  - id: claude
+    disabled: true
+```
+
+An agent with `disabled: true` is left out whichever file declares it, so it also turns off, without deleting it, an agent a file declares itself. A `disabled` entry with nothing but its id that matches no agent is an error, not a no-op: a mistyped id would leave the agent running. So is a disabled agent that `triage.reviewers`, `plan.planners` or `ask.respondents` still names. Two agents with the same id in one file are an error too, reported against that file. The merged result is validated as one file, so the inherited file need not be complete on its own; each file is still checked alone for unknown fields and for its `version`.
+
+The search goes up to the filesystem root, and the home directory is not special: a `~/.conclave.yaml` applies to every project below it. `inherits: false` stops the search: the directories above that file are not read, the file itself is. The key only steers the search: it is not part of the merged configuration. Put it in a project that must not inherit anything, or in the top file to make sure nothing above it is ever read.
+
+An inherited file can declare agents, that is commands Conclave runs. On Unix, an inherited file must belong to you or to root and be writable by its owner only, or the run stops with an error naming it: a `.conclave.yaml` another user left in `/tmp` is not run as yours. Running as root, only root's files are inherited. An inherited file you cannot read stops the run as well, rather than being skipped. An inherited file with nothing but comments declares nothing. Elsewhere, on Windows, an inherited file is read without that check, and `inherits: false` is the only guard. `conclave config validate` lists every file inherited, every run logs them, and the run's `manifest.json` records them in `config_sources`.
+
 ## Forge
 
 `forge.token_env` is the name of a variable, not the token. For GitHub, when that variable is empty and the `gh` CLI is logged in, Conclave asks `gh auth token` for the forge host instead. `config validate` says which source it used.

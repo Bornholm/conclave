@@ -197,7 +197,7 @@ func (a *App) Review(ctx context.Context, req ReviewRequest) (*ReviewResult, err
 		changed: agent.ChangedSet(pr.ChangedFiles),
 		runner:  &agent.Runner{Process: a.process(), TempDir: runTmp},
 		manifest: &domain.RunManifest{
-			ID: runID, StartedAt: now, Status: domain.RunRunning,
+			ID: runID, StartedAt: now, Status: domain.RunRunning, ConfigSources: a.Config.Sources,
 			Forge: f.Name(), Owner: repo.Owner, Repo: repo.Name, PRNumber: pr.Number,
 			BaseSHA: pr.Base.SHA, HeadSHA: pr.Head.SHA, MergeBaseSHA: mergeBase,
 		},

@@ -1,8 +1,11 @@
 # Conclave configuration. Copy to .conclave.yaml at the repository root.
 version: 1
+# It inherits the .conclave.yaml files of the directories above it, merged
+# under this one (see docs/configuration.md); `inherits: false` stops that.
+# inherits: false
 
 forge:
-  provider: github          # github | gitea
+  provider: github          # github | gitea | redmine
   remote: origin            # git remote naming the repository holding the pull
                             # requests and issues. A pull request opened from a
                             # fork lives in the upstream repository: contributors
@@ -11,8 +14,10 @@ forge:
   # base_url: https://api.github.com          # GitHub.com (default)
   # base_url: https://ghe.example.com/api/v3  # GitHub Enterprise
   # base_url: https://git.example.com         # Gitea / Forgejo (public instance URL)
+  # base_url: https://redmine.example.com   # Redmine (public instance URL)
   token_env: GITHUB_TOKEN   # name of the environment variable holding the token
                             # (GitHub: falls back to `gh auth token` when empty)
+                            # (Redmine: set REDMINE_TOKEN)
 
 review:
   max_parallel: 3
@@ -169,6 +174,9 @@ agents:
     input: argument          # pi reads the message from its arguments
     output: pi-json
     max_output_bytes: 33554432   # the event stream includes every file read
+
+  # A project that inherits these agents leaves one out with its id alone:
+  # - {id: opencode, disabled: true}
 
   - id: claude-lead
     role: lead

@@ -1,5 +1,8 @@
 # Conclave configuration. Copy to .conclave.yaml at the repository root.
 version: 1
+# It inherits the .conclave.yaml files of the directories above it, merged
+# under this one (see docs/configuration.md); `inherits: false` stops that.
+# inherits: false
 
 forge:
   provider: github          # github | gitea | redmine
@@ -45,6 +48,10 @@ review:
   # How many times a reviewer that exited normally without a usable report is
   # asked again for the report alone, with the end of what it wrote. 0 disables.
   report_retries: 1
+  # Time past its own timeout a reviewer that ran out of time gets to turn what
+  # it wrote into a report, on a run of its own. A report already written when
+  # the agent stopped is read without waiting for it. 0 disables.
+  report_grace: 2m
   # Label put on the pull request while a review runs, taken off when it ends,
   # even on failure or interruption. Needs write access to the forge. Empty
   # disables it.
@@ -167,6 +174,9 @@ agents:
     input: argument          # pi reads the message from its arguments
     output: pi-json
     max_output_bytes: 33554432   # the event stream includes every file read
+
+  # A project that inherits these agents leaves one out with its id alone:
+  # - {id: opencode, disabled: true}
 
   - id: claude-lead
     role: lead

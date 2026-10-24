@@ -108,7 +108,7 @@ func (a *App) Plan(ctx context.Context, req PlanRequest) (*PlanResult, error) {
 		return nil, fmt.Errorf("create temporary directory: %w", err)
 	}
 	manifest := &domain.RunManifest{
-		ID: runID, Kind: "plan", StartedAt: now, Status: domain.RunRunning,
+		ID: runID, Kind: "plan", StartedAt: now, Status: domain.RunRunning, ConfigSources: a.Config.Sources,
 		Forge: f.Name(), Owner: repo.Owner, Repo: repo.Name, HeadSHA: headSHA,
 		Issues: []int64{issue.Number},
 	}

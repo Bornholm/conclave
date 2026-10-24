@@ -35,14 +35,22 @@ const (
 
 // Config is the root configuration document.
 type Config struct {
-	Version int           `yaml:"version"`
-	Forge   ForgeConfig   `yaml:"forge"`
-	Review  ReviewConfig  `yaml:"review"`
-	Triage  TriageConfig  `yaml:"triage"`
-	Plan    PlanConfig    `yaml:"plan"`
-	Ask     AskConfig     `yaml:"ask"`
-	Output  OutputConfig  `yaml:"output"`
-	Agents  []AgentConfig `yaml:"agents"`
+	Version int `yaml:"version"`
+	// Inherits false stops the search for the configurations this one
+	// inherits: the .conclave.yaml files of the directories above it are not
+	// read. Nil means true.
+	Inherits *bool         `yaml:"inherits"`
+	Forge    ForgeConfig   `yaml:"forge"`
+	Review   ReviewConfig  `yaml:"review"`
+	Triage   TriageConfig  `yaml:"triage"`
+	Plan     PlanConfig    `yaml:"plan"`
+	Ask      AskConfig     `yaml:"ask"`
+	Output   OutputConfig  `yaml:"output"`
+	Agents   []AgentConfig `yaml:"agents"`
+
+	// Sources are the files this configuration was merged from, the
+	// farthest ancestor first and the file loaded last.
+	Sources []string `yaml:"-"`
 }
 
 // Label sources.
@@ -222,6 +230,18 @@ type AgentConfig struct {
 	InheritEnv        *bool             `yaml:"inherit_env"`
 	AllowProtectedEnv bool              `yaml:"allow_protected_env"`
 	Timeout           time.Duration     `yaml:"timeout"`
+	// Disabled leaves the agent out, typically one a project inherits and
+	// must not run: {id: claude, disabled: true}.
+	Disabled bool `yaml:"disabled"`
+}
+
+// Inherited returns the files this configuration inherited, the farthest
+// first, without the file loaded itself.
+func (c *Config) Inherited() []string {
+	if len(c.Sources) == 0 {
+		return nil
+	}
+	return c.Sources[:len(c.Sources)-1]
 }
 
 // TriageReviewers returns the agents a triage run uses: the ones named in

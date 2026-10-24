@@ -43,6 +43,7 @@ func runPlan(ctx context.Context, args []string, stdout, stderr io.Writer) error
 		cfg.Output.Format = *format
 	}
 	logger := newLogger(stderr, *verbose)
+	logInherited(logger, cfg)
 	for _, w := range config.Warnings(cfg) {
 		logger.Warn(w)
 	}

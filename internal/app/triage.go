@@ -107,7 +107,7 @@ func (a *App) Triage(ctx context.Context, req TriageRequest) (*TriageResult, err
 		return nil, fmt.Errorf("create temporary directory: %w", err)
 	}
 	manifest := &domain.RunManifest{
-		ID: runID, Kind: "triage", StartedAt: now, Status: domain.RunRunning,
+		ID: runID, Kind: "triage", StartedAt: now, Status: domain.RunRunning, ConfigSources: a.Config.Sources,
 		Forge: f.Name(), Owner: repo.Owner, Repo: repo.Name, HeadSHA: headSHA,
 	}
 	for _, i := range issues {

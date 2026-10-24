@@ -36,16 +36,17 @@ const (
 // Config is the root configuration document.
 type Config struct {
 	Version int `yaml:"version"`
-	// Root stops the search for the configurations this one inherits: the
-	// .conclave.yaml files of the directories above it are not read.
-	Root   bool          `yaml:"root"`
-	Forge  ForgeConfig   `yaml:"forge"`
-	Review ReviewConfig  `yaml:"review"`
-	Triage TriageConfig  `yaml:"triage"`
-	Plan   PlanConfig    `yaml:"plan"`
-	Ask    AskConfig     `yaml:"ask"`
-	Output OutputConfig  `yaml:"output"`
-	Agents []AgentConfig `yaml:"agents"`
+	// Inherits false stops the search for the configurations this one
+	// inherits: the .conclave.yaml files of the directories above it are not
+	// read. Nil means true.
+	Inherits *bool         `yaml:"inherits"`
+	Forge    ForgeConfig   `yaml:"forge"`
+	Review   ReviewConfig  `yaml:"review"`
+	Triage   TriageConfig  `yaml:"triage"`
+	Plan     PlanConfig    `yaml:"plan"`
+	Ask      AskConfig     `yaml:"ask"`
+	Output   OutputConfig  `yaml:"output"`
+	Agents   []AgentConfig `yaml:"agents"`
 
 	// Sources are the files this configuration was merged from, the
 	// farthest ancestor first and the file loaded last.

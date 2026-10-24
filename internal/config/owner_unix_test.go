@@ -22,12 +22,12 @@ func TestLoadRefusesAParentOthersCanWrite(t *testing.T) {
 		t.Errorf("a parent others can write must be refused: %v", err)
 	}
 	// The project's own file is the user's choice: it is not checked, and
-	// root: true below the parent leaves it unread.
+	// inherits: false below the parent leaves it unread.
 	if err := os.Chmod(project, 0o666); err != nil {
 		t.Fatal(err)
 	}
-	writeConfig(t, project, "root: true\n"+validYAML)
+	writeConfig(t, project, "inherits: false\n"+validYAML)
 	if _, err := Load(project); err != nil {
-		t.Errorf("root: true must leave the parent unread: %v", err)
+		t.Errorf("inherits: false must leave the parent unread: %v", err)
 	}
 }

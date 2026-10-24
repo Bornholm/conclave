@@ -169,21 +169,21 @@ agents:
 	}
 }
 
-func TestLoadStopsAtARootConfiguration(t *testing.T) {
+func TestLoadStopsWhereInheritsIsFalse(t *testing.T) {
 	top := t.TempDir()
 	writeConfig(t, filepath.Join(top, DefaultFileName), "version: 1\nreview:\n  timeout: 20m\n")
 	project := filepath.Join(top, "project")
-	writeConfig(t, filepath.Join(project, DefaultFileName), "root: true\n"+validYAML)
+	writeConfig(t, filepath.Join(project, DefaultFileName), "inherits: false\n"+validYAML)
 	cfg, err := Load(filepath.Join(project, DefaultFileName))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(cfg.Sources) != 1 || cfg.Review.Timeout != 20*time.Minute {
-		t.Errorf("a root configuration must not inherit: %v %v", cfg.Sources, cfg.Review.Timeout)
+		t.Errorf("a configuration with inherits: false must not inherit: %v %v", cfg.Sources, cfg.Review.Timeout)
 	}
-	// With "root: true" on the parent, its own parents are not read.
+	// With "inherits: false" on the parent, its own parents are not read.
 	writeConfig(t, filepath.Join(top, DefaultFileName), "version: 1\nreview:\n  timeout: nope\n")
-	writeConfig(t, filepath.Join(project, "group", DefaultFileName), "root: true\nreview:\n  timeout: 10m\n")
+	writeConfig(t, filepath.Join(project, "group", DefaultFileName), "inherits: false\nreview:\n  timeout: 10m\n")
 	writeConfig(t, filepath.Join(project, "group", "leaf", DefaultFileName), "forge:\n  provider: github\nagents: [{id: rev, role: reviewer, command: [echo]}, {id: lead, role: lead, command: [echo]}]\nversion: 1\n")
 	cfg, err = Load(filepath.Join(project, "group", "leaf", DefaultFileName))
 	if err != nil {

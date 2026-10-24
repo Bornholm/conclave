@@ -15,27 +15,27 @@ import (
 // Load reads the configuration file at path, merged over the .conclave.yaml
 // files of the directories above it, then defaults and validates the result.
 // The farthest ancestor is merged first and the file at path last, so the
-// nearest file wins; a file with "root: true" is the farthest one read. See
+// nearest file wins; a file with "inherits: false" is the farthest one read. See
 // merge for how two files combine.
 func Load(path string) (*Config, error) {
 	abs, err := filepath.Abs(path)
 	if err != nil {
 		return nil, fmt.Errorf("configuration %q: %w", path, err)
 	}
-	doc, root, err := readFile(abs)
+	doc, inherits, err := readFile(abs)
 	if err != nil {
 		return nil, fmt.Errorf("configuration %q: %w", path, err)
 	}
 	chain := []*yaml.Node{doc}
 	sources := []string{abs}
-	for dir := filepath.Dir(filepath.Dir(abs)); !root; dir = filepath.Dir(dir) {
+	for dir := filepath.Dir(filepath.Dir(abs)); inherits; dir = filepath.Dir(dir) {
 		candidate := filepath.Join(dir, DefaultFileName)
 		if st, err := os.Stat(candidate); err == nil && !st.IsDir() {
 			if err := checkInherited(st); err != nil {
 				return nil, fmt.Errorf("configuration %q, inherited by %q: %w", candidate, path, err)
 			}
 			var parent *yaml.Node
-			if parent, root, err = readFile(candidate); err != nil {
+			if parent, inherits, err = readFile(candidate); err != nil {
 				return nil, fmt.Errorf("configuration %q, inherited by %q: %w", candidate, path, err)
 			}
 			chain = append(chain, parent)
@@ -70,7 +70,7 @@ func Load(path string) (*Config, error) {
 // readFile parses one configuration file on its own: unknown fields and
 // another schema version are reported against the file that has them, not
 // against the merged document. It returns the file's mapping and whether the
-// file says it is the root.
+// file inherits the ones above it.
 func readFile(path string) (*yaml.Node, bool, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -95,7 +95,7 @@ func readFile(path string) (*yaml.Node, bool, error) {
 	if len(doc.Content) != 1 || doc.Content[0].Kind != yaml.MappingNode {
 		return nil, false, errors.New("decode YAML: the document must be a mapping")
 	}
-	return doc.Content[0], cfg.Root, nil
+	return doc.Content[0], boolValue(cfg.Inherits, true), nil
 }
 
 // merge merges src over dst, in place. A mapping merges key by key, so a file

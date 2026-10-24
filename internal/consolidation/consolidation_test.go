@@ -363,9 +363,19 @@ func TestParseLeadReviewSettlesALinkedFindingItLeftOut(t *testing.T) {
 "previous_findings":[]}`
 	outcomes := []ReviewerOutcome{
 		{ID: "r1", Report: &domain.AgentReport{PreviousFindings: []domain.PreviousStatus{{ID: "P2", Status: domain.PreviousFixed, Evidence: "locked"}}}},
-		{ID: "r2", Report: &domain.AgentReport{PreviousFindings: []domain.PreviousStatus{{ID: "P2", Status: domain.PreviousStillPresent, Evidence: "a.go:1"}}}},
+		{ID: "r2", Report: &domain.AgentReport{PreviousFindings: []domain.PreviousStatus{{ID: "P2", Status: domain.PreviousStillPresent}}}},
 	}
 	review, warnings, err := ParseLeadReview([]byte(raw), []string{"r1", "r2"}, outcomes, nil, nil, 10, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Without a reviewer's evidence, the status is credited to the
+	// finding's reporters.
+	if p := review.PreviousFindings[0]; strings.Join(p.ReportedBy, ",") != "r2" || p.Evidence != "" {
+		t.Errorf("status without evidence: %+v", p)
+	}
+	outcomes[1].Report.PreviousFindings[0].Evidence = "a.go:1"
+	review, warnings, err = ParseLeadReview([]byte(raw), []string{"r1", "r2"}, outcomes, nil, nil, 10, 2)
 	if err != nil {
 		t.Fatal(err)
 	}

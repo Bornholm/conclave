@@ -70,12 +70,24 @@ func ParseLeadReview(raw []byte, succeeded []string, outcomes []ReviewerOutcome,
 		given[p.ID] = true
 	}
 	// A previous finding the lead gave no status but one of its findings
-	// continues is still present: it gets the status here, with the
-	// reviewers' claims, rather than a bare one from the reconciliation.
+	// continues is still present: it gets the status here, credited to the
+	// reporters of those findings and with the reviewers' claims, rather
+	// than a bare one from the reconciliation.
+	added := map[string]int{}
 	for _, f := range kept {
-		if f.PreviousID != "" && !given[f.PreviousID] {
-			given[f.PreviousID] = true
+		if f.PreviousID == "" || given[f.PreviousID] {
+			continue
+		}
+		i, ok := added[f.PreviousID]
+		if !ok {
+			i = len(review.PreviousFindings)
+			added[f.PreviousID] = i
 			review.PreviousFindings = append(review.PreviousFindings, domain.PreviousStatus{ID: f.PreviousID, Status: domain.PreviousStillPresent})
+		}
+		for _, id := range f.ReportedBy {
+			if !slices.Contains(review.PreviousFindings[i].ReportedBy, id) {
+				review.PreviousFindings[i].ReportedBy = append(review.PreviousFindings[i].ReportedBy, id)
+			}
 		}
 	}
 	for i := range review.PreviousFindings {

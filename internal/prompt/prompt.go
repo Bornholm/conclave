@@ -102,7 +102,9 @@ type ReviewerInput struct {
 	// DiffSince says the review is incremental: the diff is given as a file
 	// whatever its size, and the changes since the previous review are where
 	// the reviewer starts.
-	DiffSince   bool
+	DiffSince bool
+	// DiffLarge says the diff is too large to inline.
+	DiffLarge   bool
 	MaxFindings int
 	Budget      TimeBudget
 	// Since is set for an incremental review.

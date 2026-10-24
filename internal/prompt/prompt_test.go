@@ -74,6 +74,15 @@ func TestReviewerPromptWithDiffFileInAnIncrementalReview(t *testing.T) {
 	if strings.Contains(s, "too large to be given here") {
 		t.Error("an incremental review's diff file is not said too large")
 	}
+
+	out, err = Reviewer(ReviewerInput{AgentID: "rev", PR: &domain.PullRequest{}, MergeBaseSHA: "mb", HeadSHA: "hd",
+		DiffFile: ".conclave-diff.patch", DiffIndex: idx, DiffSince: true, DiffLarge: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s := string(out); !strings.Contains(s, "This review is incremental") || !strings.Contains(s, "too large to be given here") {
+		t.Errorf("a large diff in an incremental review is both:\n%s", s)
+	}
 }
 
 func TestIndexDiffCapsTheIndex(t *testing.T) {

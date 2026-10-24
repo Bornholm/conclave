@@ -487,11 +487,13 @@ func (a *App) runReviewer(ctx context.Context, r *run, rv config.AgentConfig, wo
 		err := writeDiffFile(filepath.Join(worktree, DiffFileName), r.diff)
 		switch {
 		case err == nil:
-			in.Diff, in.DiffFile, in.DiffIndex, in.DiffSince = "", DiffFileName, *r.diffIndex, r.diffSince
+			in.Diff, in.DiffFile, in.DiffIndex = "", DiffFileName, *r.diffIndex
+			in.DiffSince, in.DiffLarge = r.diffSince, r.diffLarge
 		case !r.diffLarge && errors.Is(err, fs.ErrExist):
 			// Only an incremental review asked for the file: a repository
 			// that has one by that name gets the diff inlined, as before.
 			a.logger().Warn("diff inlined: the worktree already has the diff file", "agent", rv.ID, "file", DiffFileName)
+			ex.Warnings = append(ex.Warnings, "the diff is inlined: the repository has a file named "+DiffFileName)
 		default:
 			ex.Error = err.Error()
 			return ex, nil, err

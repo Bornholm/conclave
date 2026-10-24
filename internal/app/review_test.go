@@ -1341,4 +1341,7 @@ func TestIncrementalReviewGivesTheWholeDiffAsAFile(t *testing.T) {
 	if !strings.Contains(string(p), "DIFF (git diff ") || strings.Contains(string(p), "DIFF FILE (git diff") {
 		t.Errorf("the diff should be inlined:\n%s", p)
 	}
+	if !strings.Contains(strings.Join(res.Review.Warnings, "\n"), "the repository has a file named "+DiffFileName) {
+		t.Errorf("the inlined diff is not in the warnings: %v", res.Review.Warnings)
+	}
 }

@@ -76,6 +76,11 @@ func Markdown(w io.Writer, review *domain.ConsolidatedReview, opts Options) erro
 		writeSince(&b, review, opts)
 	}
 
+	claims := map[string][]domain.PreviousClaim{}
+	for _, p := range review.PreviousFindings {
+		claims[p.ID] = p.Claims
+	}
+
 	var current domain.Severity = "none"
 	inScope, outOfScope := 0, 0
 	for _, f := range review.Findings {
@@ -102,6 +107,14 @@ func Markdown(w io.Writer, review *domain.ConsolidatedReview, opts Options) erro
 		}
 		if f.PreviousID != "" {
 			fmt.Fprintf(&b, "**Still present** from the previous review (%s)  \n", f.PreviousID)
+			// A status overruled is shown with the finding it was given.
+			if cs := claims[f.PreviousID]; len(cs) > 0 {
+				parts := make([]string, len(cs))
+				for i, c := range cs {
+					parts[i] = claimText(c, opts)
+				}
+				fmt.Fprintf(&b, "**Also said:** %s  \n", strings.Join(parts, "; "))
+			}
 		}
 		fmt.Fprintf(&b, "**Location:** `%s`  \n", loc)
 		fmt.Fprintf(&b, "**Category:** %s  \n", f.Category)
@@ -145,6 +158,9 @@ func Markdown(w io.Writer, review *domain.ConsolidatedReview, opts Options) erro
 				b.WriteString(" — " + escape(d))
 			}
 			b.WriteString("\n")
+			if f.PreviousID != "" {
+				writeClaims(&b, claims[f.PreviousID], opts)
+			}
 		}
 	}
 
@@ -245,6 +261,7 @@ func writeSince(b *strings.Builder, review *domain.ConsolidatedReview, opts Opti
 				fmt.Fprintf(b, " (%s)", strings.Join(p.ReportedBy, ", "))
 			}
 			b.WriteString("\n")
+			writeClaims(b, p.Claims, opts)
 		}
 	}
 	if len(unchecked) > 0 {
@@ -254,6 +271,25 @@ func writeSince(b *strings.Builder, review *domain.ConsolidatedReview, opts Opti
 			fmt.Fprintf(b, ", %s\n", prev.Findings[i].Severity)
 		}
 	}
+}
+
+// writeClaims renders, under a previous finding, the statuses its reviewers
+// gave it that the one kept does not show.
+func writeClaims(b *strings.Builder, claims []domain.PreviousClaim, opts Options) {
+	for _, c := range claims {
+		b.WriteString("  - also said " + claimText(c, opts) + "\n")
+	}
+}
+
+func claimText(c domain.PreviousClaim, opts Options) string {
+	s := string(c.Status)
+	if e := strings.TrimSpace(c.Evidence); e != "" {
+		s += ": " + escape(e)
+	}
+	if opts.ShowAttribution && len(c.ReportedBy) > 0 {
+		s += fmt.Sprintf(" (%s)", strings.Join(c.ReportedBy, ", "))
+	}
+	return s
 }
 
 func writePrevious(b *strings.Builder, id string, f domain.ConsolidatedFinding) {

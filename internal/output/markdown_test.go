@@ -81,10 +81,13 @@ func TestMarkdownSince(t *testing.T) {
 	}}
 	review.PreviousFindings = []domain.PreviousStatus{
 		{ID: "P1", Status: domain.PreviousStillPresent},
-		{ID: "P2", Status: domain.PreviousFixed, Evidence: "closed in abc"},
+		{ID: "P2", Status: domain.PreviousFixed, Evidence: "closed in abc", Claims: []domain.PreviousClaim{
+			{Status: domain.PreviousStillPresent, Evidence: "y.go:2 still leaks", ReportedBy: []string{"r2"}},
+		}},
 		{ID: "P3", Status: domain.PreviousWithdrawn, Evidence: "the author's reason holds"},
-		{ID: "P4", Status: domain.PreviousStillPresent},
+		{ID: "P4", Status: domain.PreviousStillPresent, Claims: []domain.PreviousClaim{{Status: domain.PreviousFixed, Evidence: "moved out", ReportedBy: []string{"r1"}}}},
 	}
+	review.PreviousFindings[0].Claims = []domain.PreviousClaim{{Status: domain.PreviousFixed, Evidence: "locked in 3b2", ReportedBy: []string{"r1"}}}
 	// P5 is left without a status.
 	var buf bytes.Buffer
 	if err := Markdown(&buf, review, Options{}); err != nil {
@@ -96,9 +99,13 @@ func TestMarkdownSince(t *testing.T) {
 		"Measured against revision `abcdef0`: 1 fixed, 1 withdrawn, 2 still present, 1 not checked.",
 		"**Not checked**", "w.go", ", high",
 		"**Fixed**", "closed in abc", "**Withdrawn**", "the author's reason holds",
+		// A status overruled is shown under the one kept.
+		"closed in abc\n  - also said still-present: y.go:2 still leaks\n",
 		// An out-of-scope finding keeps its link to the previous review.
 		"**Old bug** (`legacy.go:9`, high, security), still present from the previous review (P4)",
-		"**Still present** from the previous review (P1)",
+		"**Still present** from the previous review (P1)  \n**Also said:** fixed: locked in 3b2  \n",
+		"still present from the previous review (P4) — ",
+		"\n  - also said fixed: moved out\n",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("markdown lacks %q\n%s", want, out)

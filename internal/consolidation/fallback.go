@@ -2,6 +2,7 @@ package consolidation
 
 import (
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 
@@ -119,6 +120,9 @@ func MergePrevious(outcomes []ReviewerOutcome) []domain.PreviousStatus {
 					chosen = &c
 					continue
 				}
+				if chosen.Evidence == "" {
+					chosen.Evidence = p.Evidence
+				}
 				chosen.ReportedBy = append(chosen.ReportedBy, p.ReportedBy...)
 			}
 			if chosen != nil {
@@ -128,11 +132,56 @@ func MergePrevious(outcomes []ReviewerOutcome) []domain.PreviousStatus {
 		// Only an unknown status leaves nothing chosen: NormalizePrevious
 		// drops those, but a report built by hand may still carry one.
 		if chosen != nil {
+			chosen.Claims = claims(*chosen, outcomes)
 			out = append(out, *chosen)
 		}
 	}
 	sort.SliceStable(out, func(i, j int) bool { return previousOrder(out[i].ID) < previousOrder(out[j].ID) })
 	return out
+}
+
+// claims lists the statuses the reviewers gave p's finding that p does not
+// show: another status, or the same one on other evidence. Reviewers that
+// said the same thing on the same evidence share one claim.
+func claims(p domain.PreviousStatus, outcomes []ReviewerOutcome) []domain.PreviousClaim {
+	var out []domain.PreviousClaim
+	for _, o := range outcomes {
+		if o.Report == nil {
+			continue
+		}
+		for _, r := range o.Report.PreviousFindings {
+			// The reports are normalized before they get here, but one built
+			// by hand may still carry an unknown status.
+			if r.ID != p.ID || !r.Status.Valid() || (r.Status == p.Status && (r.Evidence == "" || r.Evidence == p.Evidence)) {
+				continue
+			}
+			i := slices.IndexFunc(out, func(c domain.PreviousClaim) bool { return c.Status == r.Status && c.Evidence == r.Evidence })
+			if i < 0 {
+				out = append(out, domain.PreviousClaim{Status: r.Status, Evidence: r.Evidence})
+				i = len(out) - 1
+			}
+			if !slices.Contains(out[i].ReportedBy, o.ID) {
+				out[i].ReportedBy = append(out[i].ReportedBy, o.ID)
+			}
+		}
+	}
+	return out
+}
+
+// reviewerEvidence is the first evidence a reviewer gave p's status for p's
+// finding, and that reviewer; empty when none did.
+func reviewerEvidence(p domain.PreviousStatus, outcomes []ReviewerOutcome) (evidence, reviewer string) {
+	for _, o := range outcomes {
+		if o.Report == nil {
+			continue
+		}
+		for _, r := range o.Report.PreviousFindings {
+			if r.ID == p.ID && r.Status == p.Status && r.Evidence != "" {
+				return r.Evidence, o.ID
+			}
+		}
+	}
+	return "", ""
 }
 
 // previousOrder sorts "P2" before "P10", and a malformed id last.

@@ -3,6 +3,8 @@ package consolidation
 import (
 	"encoding/json"
 	"fmt"
+	"slices"
+	"sort"
 	"strings"
 
 	"github.com/bornholm/conclave/internal/agent"
@@ -63,8 +65,51 @@ func ParseLeadReview(raw []byte, succeeded []string, outcomes []ReviewerOutcome,
 	for _, w := range pw {
 		warnings = append(warnings, "lead: "+w)
 	}
-	for i, p := range review.PreviousFindings {
-		review.PreviousFindings[i].ReportedBy = knownOnly(p.ReportedBy, known)
+	given := map[string]bool{}
+	for _, p := range review.PreviousFindings {
+		given[p.ID] = true
+	}
+	// A previous finding the lead gave no status but one of its findings
+	// continues is still present: it gets the status here, credited to the
+	// reporters of those findings and with the reviewers' claims, rather
+	// than a bare one from the reconciliation.
+	added := map[string]int{}
+	for _, f := range kept {
+		if f.PreviousID == "" || given[f.PreviousID] {
+			continue
+		}
+		i, ok := added[f.PreviousID]
+		if !ok {
+			i = len(review.PreviousFindings)
+			added[f.PreviousID] = i
+			review.PreviousFindings = append(review.PreviousFindings, domain.PreviousStatus{ID: f.PreviousID, Status: domain.PreviousStillPresent})
+		}
+		for _, id := range f.ReportedBy {
+			if !slices.Contains(review.PreviousFindings[i].ReportedBy, id) {
+				review.PreviousFindings[i].ReportedBy = append(review.PreviousFindings[i].ReportedBy, id)
+			}
+		}
+	}
+	for i := range review.PreviousFindings {
+		p := &review.PreviousFindings[i]
+		p.ReportedBy = knownOnly(p.ReportedBy, known)
+		// A status the lead gave without evidence takes the first a reviewer
+		// gave for it, as without a lead, and credits that reviewer.
+		if p.Evidence == "" {
+			if evidence, reviewer := reviewerEvidence(*p, outcomes); evidence != "" {
+				p.Evidence = evidence
+				if !slices.Contains(p.ReportedBy, reviewer) {
+					p.ReportedBy = append(p.ReportedBy, reviewer)
+				}
+			}
+		}
+		p.Claims = claims(*p, outcomes)
+	}
+	sort.SliceStable(review.PreviousFindings, func(i, j int) bool {
+		return previousOrder(review.PreviousFindings[i].ID) < previousOrder(review.PreviousFindings[j].ID)
+	})
+	if previous > 0 {
+		warnings = append(warnings, omittedPrevious(review.PreviousFindings, outcomes)...)
 	}
 	review.Findings = kept
 	if review.Findings == nil {
@@ -106,4 +151,42 @@ func knownOnly(ids []string, known map[string]bool) []string {
 		}
 	}
 	return by
+}
+
+// omittedPrevious warns about the previous findings the reviewers gave a
+// status and the lead did not. They stay not checked: a "fixed" the lead did
+// not verify must not take a problem off the review. The warning keeps what
+// the reviewers said.
+func omittedPrevious(settled []domain.PreviousStatus, outcomes []ReviewerOutcome) []string {
+	given := map[string]bool{}
+	for _, p := range settled {
+		given[p.ID] = true
+	}
+	var warnings []string
+	for _, p := range MergePrevious(outcomes) {
+		if given[p.ID] {
+			continue
+		}
+		said := []string{claimText(domain.PreviousClaim{Status: p.Status, Evidence: p.Evidence, ReportedBy: p.ReportedBy})}
+		for _, c := range p.Claims {
+			said = append(said, claimText(c))
+		}
+		warnings = append(warnings, fmt.Sprintf("lead: previous finding %s left without a status, it is not checked; the reviewers said %s", p.ID, strings.Join(said, "; ")))
+	}
+	return warnings
+}
+
+func claimText(c domain.PreviousClaim) string {
+	s := string(c.Status)
+	if len(c.ReportedBy) > 0 {
+		s += " (" + strings.Join(c.ReportedBy, ", ")
+		if c.Evidence != "" {
+			s += ": " + c.Evidence
+		}
+		return s + ")"
+	}
+	if c.Evidence != "" {
+		s += " (" + c.Evidence + ")"
+	}
+	return s
 }

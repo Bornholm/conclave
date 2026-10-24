@@ -3,7 +3,6 @@ package consolidation
 import (
 	"fmt"
 	"sort"
-	"strconv"
 	"strings"
 
 	"github.com/bornholm/conclave/internal/domain"
@@ -26,8 +25,11 @@ func Fallback(groups []domain.FindingGroup, outcomes []ReviewerOutcome) *domain.
 			Title: rep.Title, Description: rep.Description, Evidence: rep.Evidence, Suggestion: rep.Suggestion,
 			ReportedBy: append([]string(nil), g.ReportedBy...),
 			OutOfScope: rep.OutOfScope,
-			PreviousID: previousID(g),
+			PreviousID: previousID(g, rep),
 		})
+		if ids := previousIDs(g); len(ids) > 1 {
+			review.Warnings = append(review.Warnings, fmt.Sprintf("finding %q continues several previous findings (%s): it is linked to %s only", rep.Title, strings.Join(ids, ", "), previousID(g, rep)))
+		}
 	}
 	SortConsolidated(review.Findings)
 	var summaries []string
@@ -55,15 +57,32 @@ func Fallback(groups []domain.FindingGroup, outcomes []ReviewerOutcome) *domain.
 	return review
 }
 
-// previousID is the previous finding a group continues: the first link any of
-// its findings gives.
-func previousID(g domain.FindingGroup) string {
+// previousID is the previous finding a group continues: the representative's
+// link, the finding the review shows, or else the first one another of its
+// findings gives.
+func previousID(g domain.FindingGroup, rep domain.NormalizedFinding) string {
+	if rep.PreviousID != "" {
+		return rep.PreviousID
+	}
 	for _, f := range g.Findings {
 		if f.PreviousID != "" {
 			return f.PreviousID
 		}
 	}
 	return ""
+}
+
+// previousIDs lists the distinct links of a group's findings.
+func previousIDs(g domain.FindingGroup) []string {
+	var ids []string
+	seen := map[string]bool{}
+	for _, f := range g.Findings {
+		if f.PreviousID != "" && !seen[f.PreviousID] {
+			seen[f.PreviousID] = true
+			ids = append(ids, f.PreviousID)
+		}
+	}
+	return ids
 }
 
 // MergePrevious merges the reviewers' statuses for the previous findings
@@ -106,19 +125,22 @@ func MergePrevious(outcomes []ReviewerOutcome) []domain.PreviousStatus {
 				break
 			}
 		}
-		out = append(out, *chosen)
+		// Only an unknown status leaves nothing chosen: NormalizePrevious
+		// drops those, but a report built by hand may still carry one.
+		if chosen != nil {
+			out = append(out, *chosen)
+		}
 	}
-	sort.SliceStable(out, func(i, j int) bool { return previousIndex(out[i].ID) < previousIndex(out[j].ID) })
+	sort.SliceStable(out, func(i, j int) bool { return previousOrder(out[i].ID) < previousOrder(out[j].ID) })
 	return out
 }
 
-// previousIndex orders "P2" before "P10".
-func previousIndex(id string) int {
-	n, err := strconv.Atoi(strings.TrimPrefix(id, "P"))
-	if err != nil {
-		return 1 << 30
+// previousOrder sorts "P2" before "P10", and a malformed id last.
+func previousOrder(id string) int {
+	if i, ok := domain.PreviousIndex(id); ok {
+		return i
 	}
-	return n
+	return 1 << 30
 }
 
 func representative(g domain.FindingGroup) domain.NormalizedFinding {

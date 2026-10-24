@@ -67,6 +67,11 @@ type run struct {
 	sinceDiffText  []byte
 	sinceDiffTrunc bool
 	sinceNote      string
+	// sinceByGit: the configuration keeps diffs out of the prompt, and the
+	// agents are told to run git diff since the previous head instead.
+	sinceByGit bool
+	// sinceWarnings are added to the review's warnings.
+	sinceWarnings []string
 }
 
 // previousCount is the number of previous findings, zero for a full review.
@@ -160,12 +165,16 @@ func (a *App) Review(ctx context.Context, req ReviewRequest) (*ReviewResult, err
 	}
 	// Before the new run exists, so that "last" cannot find it.
 	var previous *domain.PreviousReview
+	var sinceWarnings []string
 	if req.Since != "" {
-		previous, err = loadPrevious(runsBase, pr.Number, req.Since)
+		previous, err = loadPrevious(runsBase, repo, pr, req.Since)
 		if err != nil {
 			return nil, err
 		}
 		previous.Responses = truncateBytes(req.Responses, cfg.Review.Limits.MaxCommentBytes)
+		if previous.Responses != req.Responses {
+			sinceWarnings = append(sinceWarnings, fmt.Sprintf("the author's responses were cut to review.limits.max_comment_bytes (%d bytes): the agents did not see the end", cfg.Review.Limits.MaxCommentBytes))
+		}
 		log.Info("incremental review", "since", previous.RunID, "previous_head", previous.HeadSHA, "previous_findings", len(previous.Findings))
 	}
 	now := time.Now()
@@ -183,7 +192,7 @@ func (a *App) Review(ctx context.Context, req ReviewRequest) (*ReviewResult, err
 		return nil, fmt.Errorf("create temporary directory: %w", err)
 	}
 	r := &run{
-		cfg: cfg, git: git, pr: pr, store: store, verdicts: true, previous: previous,
+		cfg: cfg, git: git, pr: pr, store: store, verdicts: true, previous: previous, sinceWarnings: sinceWarnings,
 		wtBase:  filepath.Join(wtBase, runID),
 		changed: agent.ChangedSet(pr.ChangedFiles),
 		runner:  &agent.Runner{Process: a.process(), TempDir: runTmp},
@@ -325,7 +334,7 @@ func (a *App) execute(ctx context.Context, r *run, req ReviewRequest) (*domain.C
 		ReviewersTotal: len(reviewers), ReviewersSucceeded: len(succeeded),
 		LeadID: lead.ID, SucceededReviewers: succeeded, Since: r.previous,
 	}
-	var warnings []string
+	warnings := append([]string(nil), r.sinceWarnings...)
 	meta.Models = map[string]string{}
 	for _, ex := range r.manifest.Agents {
 		for _, w := range ex.Warnings {
@@ -340,12 +349,16 @@ func (a *App) execute(ctx context.Context, r *run, req ReviewRequest) (*domain.C
 		log.Warn("review timed out before the lead, using deterministic consolidation", "lead", lead.ID, "reviewers", len(succeeded))
 		warnings = append(warnings, fmt.Sprintf("review.timeout expired before lead %s could run: the consolidation is the deterministic one, built from the reports the reviewers had written", lead.ID))
 		review := consolidation.Fallback(groups, outcomes)
+		warnings = append(warnings, review.Warnings...)
 		// No lead weighed the reports, and the reviewers stopped may have lost
 		// the findings that would have mattered: an incomplete review must not
 		// approve.
 		if review.Verdict == domain.VerdictApprove {
 			review.Verdict = domain.VerdictComment
 			warnings = append(warnings, "the reports approved, but a review cut short by review.timeout is reported as comment")
+		}
+		if r.previous != nil {
+			warnings = append(warnings, reconcilePrevious(review)...)
 		}
 		warnings = append(warnings, keepStillPresent(review, r.previous, r.changed)...)
 		consolidation.SortConsolidated(review.Findings)
@@ -359,11 +372,15 @@ func (a *App) execute(ctx context.Context, r *run, req ReviewRequest) (*domain.C
 		log.Warn("lead failed, using deterministic consolidation", "lead", lead.ID, "error", err)
 		warnings = append(warnings, fmt.Sprintf("lead %s failed: %v", lead.ID, err))
 		review = consolidation.Fallback(groups, outcomes)
+		warnings = append(warnings, review.Warnings...)
 	} else {
 		meta.LeadUsed = true
 	}
 	if last := r.manifest.Agents[len(r.manifest.Agents)-1]; last.ID == lead.ID && last.Model != "" {
 		meta.Models[lead.ID] = last.Model
+	}
+	if r.previous != nil {
+		warnings = append(warnings, reconcilePrevious(review)...)
 	}
 	warnings = append(warnings, keepStillPresent(review, r.previous, r.changed)...)
 	consolidation.SortConsolidated(review.Findings)
@@ -587,7 +604,7 @@ func (r *run) since(worktree string, changes bool) (prompt.Since, error) {
 	if !changes {
 		return s, nil
 	}
-	s.Note, s.Diff, s.Truncated = r.sinceNote, string(r.sinceDiffText), r.sinceDiffTrunc
+	s.Note, s.Diff, s.Truncated, s.ByGit = r.sinceNote, string(r.sinceDiffText), r.sinceDiffTrunc, r.sinceByGit
 	if int64(len(r.sinceDiffText)) > r.cfg.InlineDiffBytes() {
 		if err := writeDiffFile(filepath.Join(worktree, SinceDiffFileName), r.sinceDiffText); err != nil {
 			return s, err

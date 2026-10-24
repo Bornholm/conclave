@@ -129,6 +129,16 @@ type PreviousReview struct {
 // PreviousID is the id the prompt gives to the i-th previous finding.
 func PreviousID(i int) string { return "P" + strconv.Itoa(i+1) }
 
+// PreviousIndex is the inverse of PreviousID: the 0-based index of a previous
+// finding id, false when id is not one PreviousID gives.
+func PreviousIndex(id string) (int, bool) {
+	n, err := strconv.Atoi(strings.TrimPrefix(id, "P"))
+	if err != nil || n < 1 || PreviousID(n-1) != id {
+		return 0, false
+	}
+	return n - 1, true
+}
+
 // Reviewer identifies the agent that produced a report.
 type Reviewer struct {
 	ID    string `json:"id"`

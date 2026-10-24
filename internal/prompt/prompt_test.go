@@ -157,3 +157,21 @@ func TestTimeBudgetAsksForTheReportEarly(t *testing.T) {
 		}
 	}
 }
+
+func TestSincePromptWithoutPreviousFindings(t *testing.T) {
+	since := Since{Previous: &domain.PreviousReview{HeadSHA: "prevhead"}, ByGit: true}
+	out, err := Reviewer(ReviewerInput{AgentID: "rev", PR: &domain.PullRequest{}, Since: since})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"reviewed this pull request at prevhead. It had no findings.", "git diff prevhead HEAD"} {
+		if !strings.Contains(string(out), want) {
+			t.Errorf("prompt lacks %q:\n%s", want, out)
+		}
+	}
+	for _, bad := range []string{"P1 to P0", "(run", `"previous_findings" has one entry`} {
+		if strings.Contains(string(out), bad) {
+			t.Errorf("prompt has %q:\n%s", bad, out)
+		}
+	}
+}

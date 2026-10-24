@@ -50,6 +50,9 @@ type Since struct {
 	// DiffFile, when set, is the path of the diff relative to the worktree:
 	// too large to inline, Diff is then left out.
 	DiffFile string
+	// ByGit, when the configuration keeps diffs out of the prompt, gives
+	// the agents the git command instead.
+	ByGit bool
 }
 
 // TimeBudget is the wall-clock time an agent has before Conclave stops it.

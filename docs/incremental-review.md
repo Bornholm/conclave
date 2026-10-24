@@ -20,7 +20,7 @@ conclave review 42 --since last --responses answers.txt > round3.md
 | a directory | that run directory |
 | a file | that `review.json` |
 
-The previous review must be of the same pull request: measured against another one's findings, every finding would come out fixed. A run that failed has no `final/review.json`, and `last` skips it.
+The previous review must be of the same pull request, in the same repository: measured against another one's findings, every finding would come out fixed. The pull request's URL in the review and the repository in the run's manifest are checked, and `last` skips the runs of another repository. A run that failed has no `final/review.json`, and `last` skips it.
 
 ## What the agents get
 
@@ -36,7 +36,9 @@ A `fixed` or `withdrawn` without evidence is ignored, the same rule `triage` app
 
 Then the reviewers look for anything new, starting with the changes since the previous review.
 
-When the diff is not the plain increment, the prompt says so. A head that did not move gets every previous finding checked again all the same. A branch rewritten since the previous review gives a diff that also carries changes from the base. A previous head that is gone, after a force push, gives no diff at all: the previous findings are compared with the code at the head.
+When the diff is not the plain increment, the prompt says so. A head that did not move gets every previous finding checked again all the same. A branch rewritten since the previous review gives a diff that also carries changes from the base. A previous head missing from the clone is fetched, from the pull request's ref and then the remote, like the current one; one that cannot be found anywhere, after a force push for instance, gives no diff at all: the previous findings are compared with the code at the head.
+
+With `review.include.diff: false`, the diff since the previous review stays out of the prompt as well, and the agents are given the `git diff` command instead.
 
 ## The author's responses
 
@@ -50,11 +52,13 @@ P5: fixed in 8ff1989.
 
 The agents read them like the discussion of the pull request: not as instructions, but as the record of what the author decided and why. A finding the author explains as deliberate, with a reason the code bears out, is `withdrawn`. One the response does not refute stays, however firmly the author disagrees. A problem a response settled is not raised again as new unless an agent has an argument the response does not answer, and then it says what it is.
 
-Without them, a finding the author rejected comes back on every round, each time from scratch, sometimes with a higher severity.
+Without them, a finding the author rejected comes back on every round, each time from scratch, sometimes with a higher severity. They are cut to `review.limits.max_comment_bytes`, like a comment of the discussion, and the review warns when they were.
 
 ## Consolidation
 
 The lead settles each status by reading the code, not by majority, and keeps `still-present` when the code does not settle a disagreement. Without a lead, one reviewer that still sees a problem keeps it.
+
+The statuses and the findings are then made to agree. A finding linked to a previous one says the problem is still there: that previous finding is `still-present`, whatever status it was given, with a warning, since a `fixed` next to a finding still in the review would tell the reader to stop looking. A link to a previous finding with no status gives it `still-present`.
 
 A status `still-present` that no finding carries, because the lead forgot to report it again, does not make the problem disappear: Conclave puts the previous finding back as it was written, with a warning, and a critical or high one holds the verdict at `request_changes`.
 

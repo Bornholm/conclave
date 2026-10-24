@@ -296,3 +296,31 @@ func TestParseLeadReviewPrevious(t *testing.T) {
 		t.Errorf("warnings: %v", warnings)
 	}
 }
+
+func TestMergePreviousSkipsAnUnknownStatus(t *testing.T) {
+	outcomes := []ReviewerOutcome{{ID: "r1", Report: &domain.AgentReport{PreviousFindings: []domain.PreviousStatus{
+		{ID: "P1", Status: "maybe"},
+		{ID: "P2", Status: domain.PreviousFixed, Evidence: "a"},
+	}}}}
+	if got := MergePrevious(outcomes); len(got) != 1 || got[0].ID != "P2" {
+		t.Errorf("%+v", got)
+	}
+}
+
+func TestFallbackLinksTheRepresentative(t *testing.T) {
+	finding := func(reviewer, previous string, severity domain.Severity) domain.NormalizedFinding {
+		return domain.NormalizedFinding{ReviewerID: reviewer, Finding: domain.Finding{
+			Category: "correctness", Severity: severity, Confidence: 0.8, File: "a.go", StartLine: 1, EndLine: 1, Title: "t", PreviousID: previous}}
+	}
+	groups := []domain.FindingGroup{{
+		Findings:   []domain.NormalizedFinding{finding("r1", "P1", domain.SeverityLow), finding("r2", "P2", domain.SeverityHigh)},
+		ReportedBy: []string{"r1", "r2"},
+	}}
+	review := Fallback(groups, nil)
+	if review.Findings[0].PreviousID != "P2" {
+		t.Errorf("link %q, want the representative's P2", review.Findings[0].PreviousID)
+	}
+	if len(review.Warnings) != 1 || !strings.Contains(review.Warnings[0], "continues several previous findings (P1, P2)") {
+		t.Errorf("warnings: %v", review.Warnings)
+	}
+}

@@ -217,8 +217,12 @@ func writeSince(b *strings.Builder, review *domain.ConsolidatedReview, opts Opti
 		groups[p.Status] = append(groups[p.Status], i)
 	}
 	b.WriteString("\n### Since the previous review\n\n")
-	fmt.Fprintf(b, "Measured against run `%s`, revision `%s`: %d fixed, %d withdrawn, %d still present, %d not checked.\n",
-		prev.RunID, short(prev.HeadSHA), len(groups[domain.PreviousFixed]), len(groups[domain.PreviousWithdrawn]),
+	against := fmt.Sprintf("revision `%s`", short(prev.HeadSHA))
+	if prev.RunID != "" {
+		against = fmt.Sprintf("run `%s`, %s", prev.RunID, against)
+	}
+	fmt.Fprintf(b, "Measured against %s: %d fixed, %d withdrawn, %d still present, %d not checked.\n",
+		against, len(groups[domain.PreviousFixed]), len(groups[domain.PreviousWithdrawn]),
 		len(groups[domain.PreviousStillPresent]), len(unchecked))
 	for _, sec := range []struct {
 		kind  domain.PreviousStatusKind

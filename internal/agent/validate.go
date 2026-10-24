@@ -232,12 +232,8 @@ func NormalizePreviousID(id string, n int) (string, error) {
 }
 
 func validPreviousID(id string, n int) bool {
-	for i := 0; i < n; i++ {
-		if id == domain.PreviousID(i) {
-			return true
-		}
-	}
-	return false
+	i, ok := domain.PreviousIndex(id)
+	return ok && i < n
 }
 
 // NormalizePrevious validates the statuses given to the previous findings.
@@ -249,7 +245,7 @@ func NormalizePrevious(in []domain.PreviousStatus, n, maxFieldBytes int) ([]doma
 		return nil, nil
 	}
 	if n == 0 {
-		return nil, []string{"previous_findings given in a review that is not incremental, ignored"}
+		return nil, []string{"previous_findings given, but there is no previous finding to give a status to, ignored"}
 	}
 	if maxFieldBytes <= 0 {
 		maxFieldBytes = DefaultLimits.MaxFieldBytes

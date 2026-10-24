@@ -67,3 +67,35 @@ func TestJSON(t *testing.T) {
 		t.Fatalf("round trip: %v", err)
 	}
 }
+
+func TestMarkdownSince(t *testing.T) {
+	review := sample()
+	review.Findings[0].PreviousID = "P1"
+	review.Meta.Since = &domain.PreviousReview{HeadSHA: "abcdef0123", Findings: []domain.ConsolidatedFinding{
+		{Severity: "critical", File: "internal/session/store.go", StartLine: 40, Title: "Concurrent access to session map"},
+		{Severity: "medium", File: "y.go", StartLine: 2, Title: "Leak"},
+		{Severity: "low", File: "z.go", StartLine: 3, Title: "Typo"},
+		{Severity: "high", File: "w.go", StartLine: 4, Title: "Race"},
+	}}
+	review.PreviousFindings = []domain.PreviousStatus{
+		{ID: "P1", Status: domain.PreviousStillPresent},
+		{ID: "P2", Status: domain.PreviousFixed, Evidence: "closed in abc"},
+		{ID: "P3", Status: domain.PreviousWithdrawn, Evidence: "the author's reason holds"},
+	}
+	var buf bytes.Buffer
+	if err := Markdown(&buf, review, Options{}); err != nil {
+		t.Fatal(err)
+	}
+	out := buf.String()
+	for _, want := range []string{
+		// No run id: the revision alone, never an invented one.
+		"Measured against revision `abcdef0`: 1 fixed, 1 withdrawn, 1 still present, 1 not checked.",
+		"**Fixed**", "closed in abc", "**Withdrawn**", "the author's reason holds",
+		"**Not checked**", "w.go", ", high",
+		"**Still present** from the previous review (P1)",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("markdown lacks %q\n%s", want, out)
+		}
+	}
+}

@@ -1195,3 +1195,96 @@ func TestIncrementalReviewNeedsAPreviousReviewOfTheSamePullRequest(t *testing.T)
 		t.Fatalf("a review of another pull request must be refused: %v", err)
 	}
 }
+
+func TestIncrementalReviewSaysWhenTheDiffIsNotThePlainIncrement(t *testing.T) {
+	prompt := func(t *testing.T, res *ReviewResult) string {
+		t.Helper()
+		p, err := os.ReadFile(filepath.Join(res.RunDir, "prompts", "reviewer-r1.txt"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(p)
+	}
+	git := func(t *testing.T, dir string, args ...string) string {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir = dir
+		cmd.Env = append(os.Environ(), "GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@t", "GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@t")
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+		return strings.TrimSpace(string(out))
+	}
+
+	t.Run("head not moved", func(t *testing.T) {
+		a, _ := newApp(t, agentCfg(t, "r1", config.RoleReviewer, "valid"), agentCfg(t, "lead", config.RoleLead, "valid"))
+		if _, err := a.Review(context.Background(), ReviewRequest{Number: 7}); err != nil {
+			t.Fatal(err)
+		}
+		res, err := a.Review(context.Background(), ReviewRequest{Number: 7, Since: SinceLast})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if p := prompt(t, res); !strings.Contains(p, "The head has not moved") || strings.Contains(p, "CHANGES SINCE") {
+			t.Errorf("prompt:\n%s", p)
+		}
+	})
+
+	t.Run("branch rewritten", func(t *testing.T) {
+		a, dir := newApp(t, agentCfg(t, "r1", config.RoleReviewer, "valid"), agentCfg(t, "lead", config.RoleLead, "valid"))
+		advanceHead(t, a, dir)
+		first, err := a.Review(context.Background(), ReviewRequest{Number: 7})
+		if err != nil {
+			t.Fatal(err)
+		}
+		git(t, dir, "checkout", "-q", "feature")
+		git(t, dir, "commit", "-q", "--amend", "-m", "take the lock, reworded")
+		a.Forge.(*fakeForge).pr.Head.SHA = git(t, dir, "rev-parse", "HEAD")
+		git(t, dir, "checkout", "-q", "main")
+		res, err := a.Review(context.Background(), ReviewRequest{Number: 7, Since: SinceLast})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if p := prompt(t, res); !strings.Contains(p, first.Review.Meta.HeadSHA+" is not an ancestor of") {
+			t.Errorf("prompt:\n%s", p)
+		}
+	})
+
+	t.Run("diff kept out by the configuration", func(t *testing.T) {
+		a, dir := newApp(t, agentCfg(t, "r1", config.RoleReviewer, "valid"), agentCfg(t, "lead", config.RoleLead, "valid"))
+		first, err := a.Review(context.Background(), ReviewRequest{Number: 7})
+		if err != nil {
+			t.Fatal(err)
+		}
+		advanceHead(t, a, dir)
+		off := false
+		a.Config.Review.Include.Diff = &off
+		res, err := a.Review(context.Background(), ReviewRequest{Number: 7, Since: SinceLast})
+		if err != nil {
+			t.Fatal(err)
+		}
+		p := prompt(t, res)
+		if !strings.Contains(p, "The diff is not included") || !strings.Contains(p, "git diff "+first.Review.Meta.HeadSHA+" HEAD") || strings.Contains(p, "+B locked") {
+			t.Errorf("prompt:\n%s", p)
+		}
+		if _, err := os.Stat(filepath.Join(res.RunDir, "context", "since.patch")); err == nil {
+			t.Error("since.patch written although the configuration keeps diffs out")
+		}
+	})
+
+	t.Run("responses cut", func(t *testing.T) {
+		a, _ := newApp(t, agentCfg(t, "r1", config.RoleReviewer, "valid"), agentCfg(t, "lead", config.RoleLead, "valid"))
+		if _, err := a.Review(context.Background(), ReviewRequest{Number: 7}); err != nil {
+			t.Fatal(err)
+		}
+		a.Config.Review.Limits.MaxCommentBytes = 16
+		res, err := a.Review(context.Background(), ReviewRequest{Number: 7, Since: SinceLast, Responses: strings.Repeat("P1: deliberate. ", 4)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(strings.Join(res.Review.Warnings, "\n"), "the author's responses were cut") {
+			t.Errorf("warnings: %v", res.Review.Warnings)
+		}
+	})
+}

@@ -8,10 +8,9 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"strconv"
-	"strings"
 
 	"github.com/bornholm/conclave/internal/domain"
+	"github.com/bornholm/conclave/internal/gitrepo"
 )
 
 // SinceLast asks for the most recent successful review of the same pull
@@ -20,10 +19,11 @@ const SinceLast = "last"
 
 // loadPrevious finds the review an incremental review is measured against.
 // since is SinceLast, a run id under base, a run directory or the path of a
-// review.json. The review must be of the same pull request: measuring one
-// pull request against another's findings would mark them all as fixed.
-func loadPrevious(base string, number int64, since string) (*domain.PreviousReview, error) {
-	path, err := previousPath(base, number, since)
+// review.json. The review must be of the same pull request, in the same
+// repository: measuring one pull request against another's findings would
+// mark them all as fixed.
+func loadPrevious(base string, repo domain.Repository, pr *domain.PullRequest, since string) (*domain.PreviousReview, error) {
+	path, err := previousPath(base, repo, pr.Number, since)
 	if err != nil {
 		return nil, err
 	}
@@ -35,22 +35,48 @@ func loadPrevious(base string, number int64, since string) (*domain.PreviousRevi
 	if err := json.Unmarshal(data, &review); err != nil {
 		return nil, fmt.Errorf("--since: %s is not a review: %w", path, err)
 	}
-	if review.Meta.PRNumber != number {
-		return nil, fmt.Errorf("--since: %s reviewed pull request #%d, not #%d", path, review.Meta.PRNumber, number)
+	if review.Meta.PRNumber != pr.Number {
+		return nil, fmt.Errorf("--since: %s reviewed pull request #%d, not #%d", path, review.Meta.PRNumber, pr.Number)
+	}
+	if review.Meta.PRURL != "" && pr.WebURL != "" && review.Meta.PRURL != pr.WebURL {
+		return nil, fmt.Errorf("--since: %s reviewed %s, not %s", path, review.Meta.PRURL, pr.WebURL)
+	}
+	m, hasManifest := runManifest(filepath.Dir(filepath.Dir(path)))
+	if hasManifest && !sameRepository(m, repo) {
+		return nil, fmt.Errorf("--since: %s is a review of %s/%s, not %s/%s", path, m.Owner, m.Repo, repo.Owner, repo.Name)
 	}
 	if review.Meta.HeadSHA == "" {
 		return nil, fmt.Errorf("--since: %s does not say which revision it reviewed", path)
 	}
+	// A review.json outside a run directory and without its own run id has
+	// none: it is left empty rather than named after whatever directory
+	// holds the file.
 	runID := review.Meta.RunID
-	if runID == "" {
-		runID = filepath.Base(filepath.Dir(filepath.Dir(path)))
+	if runID == "" && hasManifest {
+		runID = m.ID
 	}
 	return &domain.PreviousReview{RunID: runID, HeadSHA: review.Meta.HeadSHA, Findings: review.Findings}, nil
 }
 
-func previousPath(base string, number int64, since string) (string, error) {
+// runManifest reads the manifest of a run directory, if dir is one.
+func runManifest(dir string) (domain.RunManifest, bool) {
+	var m domain.RunManifest
+	data, err := os.ReadFile(filepath.Join(dir, "manifest.json"))
+	if err != nil || json.Unmarshal(data, &m) != nil {
+		return m, false
+	}
+	return m, true
+}
+
+// sameRepository reports whether a run was of repo. A manifest that names no
+// repository, from a version that did not record it, is not held against it.
+func sameRepository(m domain.RunManifest, repo domain.Repository) bool {
+	return (m.Owner == "" || m.Owner == repo.Owner) && (m.Repo == "" || m.Repo == repo.Name)
+}
+
+func previousPath(base string, repo domain.Repository, number int64, since string) (string, error) {
 	if since == SinceLast {
-		return lastReview(base, number)
+		return lastReview(base, repo, number)
 	}
 	if info, err := os.Stat(since); err == nil {
 		if info.IsDir() {
@@ -66,9 +92,9 @@ func previousPath(base string, number int64, since string) (string, error) {
 }
 
 // lastReview returns the review.json of the most recent successful review of
-// pull request number under base. Run ids start with their UTC start time, so
-// they sort chronologically.
-func lastReview(base string, number int64) (string, error) {
+// pull request number of repo under base. Run ids start with their UTC start
+// time, so they sort chronologically.
+func lastReview(base string, repo domain.Repository, number int64) (string, error) {
 	entries, err := os.ReadDir(base)
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return "", fmt.Errorf("--since last: %w", err)
@@ -81,12 +107,8 @@ func lastReview(base string, number int64) (string, error) {
 	}
 	sort.Sort(sort.Reverse(sort.StringSlice(names)))
 	for _, name := range names {
-		var m domain.RunManifest
-		data, err := os.ReadFile(filepath.Join(base, name, "manifest.json"))
-		if err != nil || json.Unmarshal(data, &m) != nil {
-			continue
-		}
-		if m.PRNumber != number || m.Status != domain.RunSucceeded {
+		m, ok := runManifest(filepath.Join(base, name))
+		if !ok || m.PRNumber != number || m.Status != domain.RunSucceeded || !sameRepository(m, repo) {
 			continue
 		}
 		path := filepath.Join(base, name, "final", "review.json")
@@ -99,19 +121,30 @@ func lastReview(base string, number int64) (string, error) {
 
 // sinceDiff is the diff from the previous review's head to this one, and a
 // note for the prompt when it is not the plain increment: a head that did not
-// move, a branch rewritten since, a previous head that is gone.
+// move, a branch rewritten since, a previous head that cannot be found.
 func (a *App) sinceDiff(ctx context.Context, r *run) {
 	prev := r.previous
 	head := r.pr.Head.SHA
-	switch {
-	case prev.HeadSHA == head:
+	if prev.HeadSHA == head {
 		r.sinceNote = "The head has not moved since the previous review: nothing changed in the code. Re-check each previous finding all the same, and weigh the author's responses."
 		return
-	case !r.git.HasCommit(ctx, prev.HeadSHA):
-		r.sinceNote = fmt.Sprintf("The previous review's head %s is no longer available, most likely rewritten by a force push: there is no diff since it. Compare each previous finding with the code at HEAD.", prev.HeadSHA)
+	}
+	// The previous head may be missing from this clone for reasons other than
+	// a force push: pruned, or reviewed from another clone. The pull request
+	// ref still holds it when the branch was only extended.
+	if err := r.git.EnsureCommit(ctx, prev.HeadSHA, gitrepo.PullRequestRef(r.pr.Number), r.cfg.Forge.Remote, r.pr.Head.CloneURL); err != nil {
+		a.logger().Warn("previous head unavailable", "since", prev.HeadSHA, "error", err)
+		r.sinceNote = fmt.Sprintf("The previous review's head %s is not available, here or from the remote: there is no diff since it. The branch may have been rewritten since. Compare each previous finding with the code at HEAD.", prev.HeadSHA)
 		return
-	case !r.git.IsAncestor(ctx, prev.HeadSHA, head):
-		r.sinceNote = fmt.Sprintf("The branch was rewritten since the previous review (%s is not an ancestor of %s), so the diff below also carries changes that came from the base.", prev.HeadSHA, head)
+	}
+	if !r.git.IsAncestor(ctx, prev.HeadSHA, head) {
+		r.sinceNote = fmt.Sprintf("The branch was rewritten since the previous review (%s is not an ancestor of %s), so the diff since it also carries changes that came from the base.", prev.HeadSHA, head)
+	}
+	if !r.cfg.IncludeDiff() {
+		// The configuration keeps diffs out of the prompt: the agents get the
+		// command, as for the pull request's own diff.
+		r.sinceByGit = true
+		return
 	}
 	diff, trunc, err := r.git.Diff(ctx, prev.HeadSHA, head, r.cfg.Review.Limits.MaxDiffBytes, r.cfg.Review.DiffExclude...)
 	if err != nil {
@@ -120,6 +153,60 @@ func (a *App) sinceDiff(ctx context.Context, r *run) {
 		return
 	}
 	r.sinceDiffText, r.sinceDiffTrunc = diff, trunc
+}
+
+// reconcilePrevious makes the statuses and the findings' links agree. A
+// finding that continues a previous one says the problem is still there,
+// whatever status that previous finding was given: the status becomes
+// still-present, since the finding is in the review either way and a "fixed"
+// next to it would tell the reader to stop looking. A link to a previous
+// finding with no status gives it one.
+func reconcilePrevious(review *domain.ConsolidatedReview) []string {
+	linked := map[string][]string{}
+	var order []string
+	for _, f := range review.Findings {
+		if f.PreviousID == "" {
+			continue
+		}
+		if _, ok := linked[f.PreviousID]; !ok {
+			order = append(order, f.PreviousID)
+		}
+		linked[f.PreviousID] = append(linked[f.PreviousID], f.ReportedBy...)
+	}
+	var warnings []string
+	seen := map[string]bool{}
+	for i, p := range review.PreviousFindings {
+		seen[p.ID] = true
+		by, ok := linked[p.ID]
+		if !ok || p.Status == domain.PreviousStillPresent {
+			continue
+		}
+		warnings = append(warnings, fmt.Sprintf("previous finding %s is %s, but a finding still continues it: it is reported still present", p.ID, p.Status))
+		review.PreviousFindings[i] = domain.PreviousStatus{ID: p.ID, Status: domain.PreviousStillPresent, ReportedBy: dedupe(by)}
+	}
+	for _, id := range order {
+		if !seen[id] {
+			review.PreviousFindings = append(review.PreviousFindings, domain.PreviousStatus{ID: id, Status: domain.PreviousStillPresent, ReportedBy: dedupe(linked[id])})
+		}
+	}
+	sort.SliceStable(review.PreviousFindings, func(i, j int) bool {
+		a, _ := domain.PreviousIndex(review.PreviousFindings[i].ID)
+		b, _ := domain.PreviousIndex(review.PreviousFindings[j].ID)
+		return a < b
+	})
+	return warnings
+}
+
+func dedupe(ids []string) []string {
+	var out []string
+	seen := map[string]bool{}
+	for _, id := range ids {
+		if !seen[id] {
+			seen[id] = true
+			out = append(out, id)
+		}
+	}
+	return out
 }
 
 // keepStillPresent puts back, from the previous review, a finding the
@@ -142,8 +229,9 @@ func keepStillPresent(review *domain.ConsolidatedReview, prev *domain.PreviousRe
 		if p.Status != domain.PreviousStillPresent || carried[p.ID] {
 			continue
 		}
-		i := previousIndex(p.ID)
-		if i < 0 || i >= len(prev.Findings) {
+		i, ok := domain.PreviousIndex(p.ID)
+		if !ok || i >= len(prev.Findings) {
+			warnings = append(warnings, fmt.Sprintf("previous finding %s is still present but is not one of the previous review's findings: nothing could be put back", p.ID))
 			continue
 		}
 		f := prev.Findings[i]
@@ -159,13 +247,4 @@ func keepStillPresent(review *domain.ConsolidatedReview, prev *domain.PreviousRe
 		}
 	}
 	return warnings
-}
-
-// previousIndex is the index of a previous finding id, -1 when malformed.
-func previousIndex(id string) int {
-	n, err := strconv.Atoi(strings.TrimPrefix(id, "P"))
-	if err != nil {
-		return -1
-	}
-	return n - 1
 }

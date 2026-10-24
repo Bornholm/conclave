@@ -20,6 +20,7 @@ conclave config example > .conclave.yaml   # then edit the agents section
 conclave config validate
 conclave agents install pi                 # optional: pacing extension and skills for Pi
 conclave review 123 > review.md
+conclave review 123 --since last > review.md   # after fixes: what was fixed, what remains, what is new
 ```
 
 Only the review goes to `stdout`. Logs go to `stderr`.
@@ -51,6 +52,7 @@ The question comes from an argument, from `--question` or, when neither is given
 ## Read more
 
 - [How a run works](docs/how-it-works.md), from the fetch to the artifacts, and what the prompts impose on the agents.
+- [Incremental review](docs/incremental-review.md), measuring a review against the previous one, with the author's answers.
 - [Triage](docs/triage.md), what a status means and what it takes to earn it.
 - [Plan](docs/plan.md), why several agents plan and only one plan comes out.
 - [Ask](docs/ask.md), how a question is passed, and what happens when the agents disagree.

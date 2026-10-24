@@ -118,7 +118,7 @@ const leadJSON = `{"schema_version":"1","summary":"ok","verdict":"comment","fail
 
 func TestParseLeadReview(t *testing.T) {
 	outcomes := []ReviewerOutcome{{ID: "r1", Report: &domain.AgentReport{}}, {ID: "r2", Err: errors.New("boom")}}
-	review, warnings, err := ParseLeadReview([]byte("```json\n"+leadJSON+"\n```"), []string{"r1"}, outcomes, map[string]bool{"b.go": true}, nil, 10)
+	review, warnings, err := ParseLeadReview([]byte("```json\n"+leadJSON+"\n```"), []string{"r1"}, outcomes, map[string]bool{"b.go": true}, nil, 10, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -134,7 +134,7 @@ func TestParseLeadReview(t *testing.T) {
 	if len(review.FailedReviewers) != 1 || review.FailedReviewers[0].ID != "r2" {
 		t.Errorf("failed reviewers must come from outcomes: %+v", review.FailedReviewers)
 	}
-	if _, _, err := ParseLeadReview([]byte(`{"schema_version":"1","verdict":"maybe"}`), nil, nil, nil, nil, 10); err == nil {
+	if _, _, err := ParseLeadReview([]byte(`{"schema_version":"1","verdict":"maybe"}`), nil, nil, nil, nil, 10, 0); err == nil {
 		t.Error("expected verdict error")
 	}
 }
@@ -245,5 +245,82 @@ func TestApplyStatusLabels(t *testing.T) {
 	}}
 	if w := ApplyStatusLabels(tr3, map[string]string{"obsolete": "ghost"}, known, 2); len(w) != 1 {
 		t.Errorf("warnings: %v", w)
+	}
+}
+
+func TestMergePreviousIsConservative(t *testing.T) {
+	report := func(statuses ...domain.PreviousStatus) *domain.AgentReport {
+		return &domain.AgentReport{Verdict: domain.VerdictComment, PreviousFindings: statuses}
+	}
+	outcomes := []ReviewerOutcome{
+		{ID: "r1", Report: report(
+			domain.PreviousStatus{ID: "P1", Status: domain.PreviousFixed, Evidence: "a"},
+			domain.PreviousStatus{ID: "P10", Status: domain.PreviousWithdrawn, Evidence: "b"},
+			domain.PreviousStatus{ID: "P2", Status: domain.PreviousWithdrawn, Evidence: "c"},
+		)},
+		{ID: "r2", Report: report(
+			domain.PreviousStatus{ID: "P1", Status: domain.PreviousStillPresent},
+			domain.PreviousStatus{ID: "P2", Status: domain.PreviousFixed, Evidence: "d"},
+		)},
+		{ID: "r3", Err: errors.New("boom")},
+	}
+	got := MergePrevious(outcomes)
+	if len(got) != 3 || got[0].ID != "P1" || got[1].ID != "P2" || got[2].ID != "P10" {
+		t.Fatalf("order: %+v", got)
+	}
+	// One reviewer that still sees the problem keeps it.
+	if got[0].Status != domain.PreviousStillPresent || strings.Join(got[0].ReportedBy, ",") != "r2" {
+		t.Errorf("P1: %+v", got[0])
+	}
+	if got[1].Status != domain.PreviousFixed || got[2].Status != domain.PreviousWithdrawn {
+		t.Errorf("P2, P10: %+v %+v", got[1], got[2])
+	}
+}
+
+func TestParseLeadReviewPrevious(t *testing.T) {
+	raw := `{"schema_version":"1","summary":"ok","verdict":"comment","failed_reviewers":[],
+"findings":[{"category":"security","severity":"high","confidence":0.8,"file":"a.go","start_line":1,"end_line":1,"title":"t","description":"d","reported_by":["r1"],"previous_id":"P5"}],
+"previous_findings":[{"id":"P1","status":"fixed","evidence":"e","reported_by":["r1","ghost"]},{"id":"P2","status":"fixed","evidence":""}]}`
+	outcomes := []ReviewerOutcome{{ID: "r1", Report: &domain.AgentReport{}}}
+	review, warnings, err := ParseLeadReview([]byte(raw), []string{"r1"}, outcomes, nil, nil, 10, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if review.Findings[0].PreviousID != "" {
+		t.Errorf("a link past P2 must be dropped: %q", review.Findings[0].PreviousID)
+	}
+	if len(review.PreviousFindings) != 1 || strings.Join(review.PreviousFindings[0].ReportedBy, ",") != "r1" {
+		t.Errorf("statuses: %+v", review.PreviousFindings)
+	}
+	if len(warnings) != 2 {
+		t.Errorf("warnings: %v", warnings)
+	}
+}
+
+func TestMergePreviousSkipsAnUnknownStatus(t *testing.T) {
+	outcomes := []ReviewerOutcome{{ID: "r1", Report: &domain.AgentReport{PreviousFindings: []domain.PreviousStatus{
+		{ID: "P1", Status: "maybe"},
+		{ID: "P2", Status: domain.PreviousFixed, Evidence: "a"},
+	}}}}
+	if got := MergePrevious(outcomes); len(got) != 1 || got[0].ID != "P2" {
+		t.Errorf("%+v", got)
+	}
+}
+
+func TestFallbackLinksTheRepresentative(t *testing.T) {
+	finding := func(reviewer, previous string, severity domain.Severity) domain.NormalizedFinding {
+		return domain.NormalizedFinding{ReviewerID: reviewer, Finding: domain.Finding{
+			Category: "correctness", Severity: severity, Confidence: 0.8, File: "a.go", StartLine: 1, EndLine: 1, Title: "t", PreviousID: previous}}
+	}
+	groups := []domain.FindingGroup{{
+		Findings:   []domain.NormalizedFinding{finding("r1", "P1", domain.SeverityLow), finding("r2", "P2", domain.SeverityHigh)},
+		ReportedBy: []string{"r1", "r2"},
+	}}
+	review := Fallback(groups, nil)
+	if review.Findings[0].PreviousID != "P2" {
+		t.Errorf("link %q, want the representative's P2", review.Findings[0].PreviousID)
+	}
+	if len(review.Warnings) != 1 || !strings.Contains(review.Warnings[0], "continues several previous findings (P1, P2)") {
+		t.Errorf("warnings: %v", review.Warnings)
 	}
 }

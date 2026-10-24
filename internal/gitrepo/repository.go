@@ -130,6 +130,13 @@ func (g *Git) HasCommit(ctx context.Context, sha string) bool {
 	return err == nil
 }
 
+// IsAncestor reports whether ancestor is reachable from descendant: false as
+// well when either commit is unknown.
+func (g *Git) IsAncestor(ctx context.Context, ancestor, descendant string) bool {
+	_, err := g.run(ctx, "merge-base", "--is-ancestor", ancestor, descendant)
+	return err == nil
+}
+
 // Fetch fetches refspecs from a remote name or URL.
 func (g *Git) Fetch(ctx context.Context, remote string, refspecs ...string) error {
 	args := append([]string{"fetch", "--no-tags", "--no-write-fetch-head", remote}, refspecs...)

@@ -25,7 +25,11 @@ Title: {{.PR.Title}}
 Head: {{.HeadSHA}}
 Merge base: {{.MergeBaseSHA}}
 
---- BEGIN YOUR EARLIER OUTPUT (the end of it, reasoning included) ---
+{{with .Since}}{{if .Previous}}{{if .Previous.Findings}}This is an incremental review: your report also gives a status to each
+finding of the previous review, at {{.Previous.HeadSHA}}.
+
+{{template "previous-findings" .}}
+{{end}}{{end}}{{end}}--- BEGIN YOUR EARLIER OUTPUT (the end of it, reasoning included) ---
 {{.Transcript}}
 --- END YOUR EARLIER OUTPUT ---
 

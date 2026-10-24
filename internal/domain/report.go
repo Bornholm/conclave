@@ -3,6 +3,7 @@ package domain
 import (
 	"bytes"
 	"encoding/json"
+	"strconv"
 	"strings"
 )
 
@@ -80,6 +81,62 @@ type AgentReport struct {
 	Findings      []Finding  `json:"findings"`
 	Questions     []Question `json:"questions,omitempty"`
 	Verdict       Verdict    `json:"verdict"`
+	// PreviousFindings gives the status, at this head, of each finding of the
+	// previous review, when the review is incremental.
+	PreviousFindings []PreviousStatus `json:"previous_findings,omitempty"`
+}
+
+// PreviousStatus says what became of one finding of the previous review.
+type PreviousStatus struct {
+	// ID is the previous finding's id in the prompt, "P1" to "Pn".
+	ID       string             `json:"id"`
+	Status   PreviousStatusKind `json:"status"`
+	Evidence string             `json:"evidence"`
+	// ReportedBy lists the reviewers that gave this status; filled by the
+	// lead and by the deterministic consolidation, not by a reviewer.
+	ReportedBy []string `json:"reported_by,omitempty"`
+}
+
+// PreviousStatusKind is what became of a previous finding.
+type PreviousStatusKind string
+
+const (
+	// PreviousFixed: a change since the previous review addressed it.
+	PreviousFixed PreviousStatusKind = "fixed"
+	// PreviousStillPresent: the problem is still in the code at this head.
+	PreviousStillPresent PreviousStatusKind = "still-present"
+	// PreviousWithdrawn: the finding was wrong in the first place, for
+	// instance because the author's response refutes it with evidence.
+	PreviousWithdrawn PreviousStatusKind = "withdrawn"
+)
+
+// Valid reports whether the status is known.
+func (k PreviousStatusKind) Valid() bool {
+	return k == PreviousFixed || k == PreviousStillPresent || k == PreviousWithdrawn
+}
+
+// PreviousReview is the review an incremental review is measured against.
+type PreviousReview struct {
+	RunID   string `json:"run_id"`
+	HeadSHA string `json:"head_sha"`
+	// Findings are the previous review's findings, in its order: the first
+	// is "P1".
+	Findings []ConsolidatedFinding `json:"findings"`
+	// Responses is the author's free-text answer to the previous review.
+	Responses string `json:"responses,omitempty"`
+}
+
+// PreviousID is the id the prompt gives to the i-th previous finding.
+func PreviousID(i int) string { return "P" + strconv.Itoa(i+1) }
+
+// PreviousIndex is the inverse of PreviousID: the 0-based index of a previous
+// finding id, false when id is not one PreviousID gives.
+func PreviousIndex(id string) (int, bool) {
+	n, err := strconv.Atoi(strings.TrimPrefix(id, "P"))
+	if err != nil || n < 1 || PreviousID(n-1) != id {
+		return 0, false
+	}
+	return n - 1, true
 }
 
 // Reviewer identifies the agent that produced a report.
@@ -104,6 +161,9 @@ type Finding struct {
 	// OutOfScope marks a finding located in a file the pull request does not
 	// touch. It is kept for information and must not drive the verdict.
 	OutOfScope bool `json:"out_of_scope,omitempty"`
+	// PreviousID links the finding to the previous review's finding it
+	// continues, in an incremental review.
+	PreviousID string `json:"previous_id,omitempty"`
 }
 
 // Question raised by a reviewer for the author.
@@ -136,6 +196,9 @@ type ConsolidatedReview struct {
 	Questions       []Question            `json:"questions,omitempty"`
 	FailedReviewers []FailedReviewer      `json:"failed_reviewers"`
 	Warnings        []string              `json:"warnings,omitempty"`
+	// PreviousFindings is what became of the previous review's findings, in
+	// an incremental review.
+	PreviousFindings []PreviousStatus `json:"previous_findings,omitempty"`
 	// Meta is filled by the orchestrator, never by the lead.
 	Meta ReviewMeta `json:"meta"`
 }
@@ -154,6 +217,7 @@ type ConsolidatedFinding struct {
 	Suggestion  string   `json:"suggestion,omitempty"`
 	ReportedBy  []string `json:"reported_by"`
 	OutOfScope  bool     `json:"out_of_scope,omitempty"`
+	PreviousID  string   `json:"previous_id,omitempty"`
 }
 
 // FailedReviewer describes a reviewer whose report could not be used.
@@ -178,6 +242,9 @@ type ReviewMeta struct {
 	// Models maps agent ids to the model that actually answered, when known
 	// (from configuration or detected in the agent output).
 	Models map[string]string `json:"models,omitempty"`
+	// Since is the previous review an incremental review is measured
+	// against: its findings, so the rendering can name what was fixed.
+	Since *PreviousReview `json:"since,omitempty"`
 }
 
 // UnmarshalJSON accepts a numeric or string "id": agents disagree on the type

@@ -25,7 +25,11 @@ func Fallback(groups []domain.FindingGroup, outcomes []ReviewerOutcome) *domain.
 			Title: rep.Title, Description: rep.Description, Evidence: rep.Evidence, Suggestion: rep.Suggestion,
 			ReportedBy: append([]string(nil), g.ReportedBy...),
 			OutOfScope: rep.OutOfScope,
+			PreviousID: previousID(g, rep),
 		})
+		if ids := previousIDs(g); len(ids) > 1 {
+			review.Warnings = append(review.Warnings, fmt.Sprintf("finding %q continues several previous findings (%s): it is linked to %s only", rep.Title, strings.Join(ids, ", "), previousID(g, rep)))
+		}
 	}
 	SortConsolidated(review.Findings)
 	var summaries []string
@@ -49,7 +53,94 @@ func Fallback(groups []domain.FindingGroup, outcomes []ReviewerOutcome) *domain.
 		}
 	}
 	review.Summary = "Deterministic consolidation (lead unavailable). " + strings.Join(summaries, " ")
+	review.PreviousFindings = MergePrevious(outcomes)
 	return review
+}
+
+// previousID is the previous finding a group continues: the representative's
+// link, the finding the review shows, or else the first one another of its
+// findings gives.
+func previousID(g domain.FindingGroup, rep domain.NormalizedFinding) string {
+	if rep.PreviousID != "" {
+		return rep.PreviousID
+	}
+	for _, f := range g.Findings {
+		if f.PreviousID != "" {
+			return f.PreviousID
+		}
+	}
+	return ""
+}
+
+// previousIDs lists the distinct links of a group's findings.
+func previousIDs(g domain.FindingGroup) []string {
+	var ids []string
+	seen := map[string]bool{}
+	for _, f := range g.Findings {
+		if f.PreviousID != "" && !seen[f.PreviousID] {
+			seen[f.PreviousID] = true
+			ids = append(ids, f.PreviousID)
+		}
+	}
+	return ids
+}
+
+// MergePrevious merges the reviewers' statuses for the previous findings
+// without a lead, conservatively: one reviewer that still sees a problem keeps
+// it, since a wrong "fixed" buries it and a wrong "still-present" costs a
+// second look. Between "fixed" and "withdrawn", "fixed" wins: it claims less
+// about the previous review. An id no reviewer gave a status is left out, and
+// the rendering lists it as not checked.
+func MergePrevious(outcomes []ReviewerOutcome) []domain.PreviousStatus {
+	byID := map[string][]domain.PreviousStatus{}
+	var order []string
+	for _, o := range outcomes {
+		if o.Report == nil {
+			continue
+		}
+		for _, p := range o.Report.PreviousFindings {
+			if _, ok := byID[p.ID]; !ok {
+				order = append(order, p.ID)
+			}
+			p.ReportedBy = []string{o.ID}
+			byID[p.ID] = append(byID[p.ID], p)
+		}
+	}
+	var out []domain.PreviousStatus
+	for _, id := range order {
+		var chosen *domain.PreviousStatus
+		for _, want := range []domain.PreviousStatusKind{domain.PreviousStillPresent, domain.PreviousFixed, domain.PreviousWithdrawn} {
+			for _, p := range byID[id] {
+				if p.Status != want {
+					continue
+				}
+				if chosen == nil {
+					c := p
+					chosen = &c
+					continue
+				}
+				chosen.ReportedBy = append(chosen.ReportedBy, p.ReportedBy...)
+			}
+			if chosen != nil {
+				break
+			}
+		}
+		// Only an unknown status leaves nothing chosen: NormalizePrevious
+		// drops those, but a report built by hand may still carry one.
+		if chosen != nil {
+			out = append(out, *chosen)
+		}
+	}
+	sort.SliceStable(out, func(i, j int) bool { return previousOrder(out[i].ID) < previousOrder(out[j].ID) })
+	return out
+}
+
+// previousOrder sorts "P2" before "P10", and a malformed id last.
+func previousOrder(id string) int {
+	if i, ok := domain.PreviousIndex(id); ok {
+		return i
+	}
+	return 1 << 30
 }
 
 func representative(g domain.FindingGroup) domain.NormalizedFinding {

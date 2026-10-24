@@ -1,6 +1,6 @@
 ---
 name: conclave-review
-description: Run a Conclave multi-agent review on a pull request, verify its findings in the tree, and report or post them. Use when asked to review a pull request with Conclave, or to relaunch a review.
+description: Run a Conclave multi-agent review on a pull request, verify its findings in the tree, and report or post them; relaunch it after fixes as an incremental review that says what was fixed, what remains and what is new. Use when asked to review a pull request with Conclave, or to relaunch a review.
 ---
 
 # Conclave review loop
@@ -72,9 +72,46 @@ read the code that consumes a value, not only the code that produces it.
 A run stopped by `review.timeout` never approves, and says so under Warnings:
 the verdict is then `comment` at best, whatever the reports said.
 
+## Relaunching after fixes
+
+Once fixes are pushed, measure the new review against the previous one rather
+than starting over:
+
+```bash
+OUT=$(mktemp -d "${TMPDIR:-/tmp}/conclave-review.XXXXXX")
+nohup sh -c 'conclave review "$2" --since last --responses "$1/responses.txt" > "$1/review.md" 2> "$1/review.log"; echo $? > "$1/review.done"' sh "$OUT" N >/dev/null 2>&1 &
+echo "$OUT"
+```
+
+`--since last` gives the agents the previous review's findings, numbered P1
+to Pn, and the diff since the head it reviewed. They mark each one `fixed`,
+`still-present` or `withdrawn`, and the report opens with a "Since the
+previous review" section. Wait for the push to show on the forge before
+launching, or the review measures the old head against itself.
+
+Write `$OUT/responses.txt` before launching, for every previous finding you
+rejected after checking it in the code: its id, then why, with the evidence.
+
+```text
+P2: deliberate. The state is per session, not per run: the continuation
+starts a run of its own and must find the tools still off.
+P4: wrong. ToolCallEventResult declares terminate, see the .d.ts.
+```
+
+Without it, a rejected finding comes back on every round, from scratch and
+sometimes with a higher severity. With it, the agents withdraw the ones the
+code bears out and keep only those your answer does not refute. Leave the
+fixed ones out: the diff shows them. Drop `--responses` when there is nothing
+to answer.
+
+Check the statuses like findings: a `fixed` or `withdrawn` that is wrong takes
+a real problem off the review. Open the change a `fixed` cites.
+
 ## Reporting back
 
-Lead with the verdict and the revision, then rank by what actually matters. Do
+Lead with the verdict and the revision, then rank by what actually matters.
+On an incremental review, say first what the previous round asked for and is
+now fixed or withdrawn, verified, then what remains and what is new. Do
 not transcribe the report, it is already on disk: give its path and spend the
 words on the two or three findings worth acting on, with the mechanism stated
 concretely. Say plainly what is fine, including when nothing is wrong.

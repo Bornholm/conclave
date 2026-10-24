@@ -27,6 +27,11 @@ import (
 type ReviewRequest struct {
 	Number        int64
 	KeepWorktrees bool
+	// Since, when set, makes the review incremental: SinceLast, a run id, a
+	// run directory or a review.json, whose findings each get a status.
+	Since string
+	// Responses is the author's free-text answer to the previous review.
+	Responses string
 }
 
 // ReviewResult carries the consolidated review and where artifacts live.
@@ -55,6 +60,26 @@ type run struct {
 	diffIndex *prompt.DiffIndex
 	changed   map[string]bool
 	runner    *agent.Runner
+	// previous is the review an incremental review is measured against, nil
+	// for a full one. sinceDiffText goes from its head to this one, and
+	// sinceNote says why it is missing or not the plain increment.
+	previous       *domain.PreviousReview
+	sinceDiffText  []byte
+	sinceDiffTrunc bool
+	sinceNote      string
+	// sinceByGit: the configuration keeps diffs out of the prompt, and the
+	// agents are told to run git diff since the previous head instead.
+	sinceByGit bool
+	// sinceWarnings are added to the review's warnings.
+	sinceWarnings []string
+}
+
+// previousCount is the number of previous findings, zero for a full review.
+func (r *run) previousCount() int {
+	if r.previous == nil {
+		return 0
+	}
+	return len(r.previous.Findings)
 }
 
 // Review executes the full pipeline for one pull request.
@@ -134,12 +159,26 @@ func (a *App) Review(ctx context.Context, req ReviewRequest) (*ReviewResult, err
 	}
 	pr.MergeBaseSHA = mergeBase
 
-	now := time.Now()
-	runID := artifact.NewRunID(now, pr.Number)
 	runsBase := a.RunsBase
 	if runsBase == "" {
 		runsBase = filepath.Join(git.CommonDir(), "conclave", "runs")
 	}
+	// Before the new run exists, so that "last" cannot find it.
+	var previous *domain.PreviousReview
+	var sinceWarnings []string
+	if req.Since != "" {
+		previous, err = loadPrevious(runsBase, repo, pr, req.Since)
+		if err != nil {
+			return nil, err
+		}
+		previous.Responses = truncateBytes(req.Responses, cfg.Review.Limits.MaxCommentBytes)
+		if previous.Responses != req.Responses {
+			sinceWarnings = append(sinceWarnings, fmt.Sprintf("the author's responses were cut to review.limits.max_comment_bytes (%d bytes): the agents did not see the end", cfg.Review.Limits.MaxCommentBytes))
+		}
+		log.Info("incremental review", "since", previous.RunID, "previous_head", previous.HeadSHA, "previous_findings", len(previous.Findings))
+	}
+	now := time.Now()
+	runID := artifact.NewRunID(now, pr.Number)
 	store, err := artifact.Open(runsBase, runID)
 	if err != nil {
 		return nil, err
@@ -153,7 +192,7 @@ func (a *App) Review(ctx context.Context, req ReviewRequest) (*ReviewResult, err
 		return nil, fmt.Errorf("create temporary directory: %w", err)
 	}
 	r := &run{
-		cfg: cfg, git: git, pr: pr, store: store, verdicts: true,
+		cfg: cfg, git: git, pr: pr, store: store, verdicts: true, previous: previous, sinceWarnings: sinceWarnings,
 		wtBase:  filepath.Join(wtBase, runID),
 		changed: agent.ChangedSet(pr.ChangedFiles),
 		runner:  &agent.Runner{Process: a.process(), TempDir: runTmp},
@@ -163,12 +202,22 @@ func (a *App) Review(ctx context.Context, req ReviewRequest) (*ReviewResult, err
 			BaseSHA: pr.Base.SHA, HeadSHA: pr.Head.SHA, MergeBaseSHA: mergeBase,
 		},
 	}
+	if previous != nil {
+		r.manifest.SinceRunID, r.manifest.SinceHeadSHA = previous.RunID, previous.HeadSHA
+		a.sinceDiff(ctx, r)
+	}
 	log.Info("run started", "run", runID, "dir", store.Root, "merge_base", mergeBase)
 	_ = store.WriteManifest(r.manifest)
 	_ = store.WriteJSON("context", "pull-request.json", pr)
 	_ = store.WriteJSON("context", "changed-files.json", pr.ChangedFiles)
 	_ = store.WriteJSON("context", "associated-issues.json", pr.Issues)
 	_ = store.WriteJSON("context", "discussion.json", pr.Discussion)
+	if previous != nil {
+		_ = store.WriteJSON("context", "previous-review.json", previous)
+		if len(r.sinceDiffText) > 0 {
+			_ = store.Write("context", "since.patch", r.sinceDiffText)
+		}
+	}
 
 	if cfg.IncludeDiff() {
 		r.diff, r.diffTrunc, err = git.Diff(ctx, mergeBase, pr.Head.SHA, cfg.Review.Limits.MaxDiffBytes, cfg.Review.DiffExclude...)
@@ -283,9 +332,9 @@ func (a *App) execute(ctx context.Context, r *run, req ReviewRequest) (*domain.C
 		RunID: r.manifest.ID, PRNumber: r.pr.Number, PRTitle: r.pr.Title, PRURL: r.pr.WebURL,
 		HeadSHA: r.pr.Head.SHA, MergeBaseSHA: r.pr.MergeBaseSHA,
 		ReviewersTotal: len(reviewers), ReviewersSucceeded: len(succeeded),
-		LeadID: lead.ID, SucceededReviewers: succeeded,
+		LeadID: lead.ID, SucceededReviewers: succeeded, Since: r.previous,
 	}
-	var warnings []string
+	warnings := append([]string(nil), r.sinceWarnings...)
 	meta.Models = map[string]string{}
 	for _, ex := range r.manifest.Agents {
 		for _, w := range ex.Warnings {
@@ -300,6 +349,7 @@ func (a *App) execute(ctx context.Context, r *run, req ReviewRequest) (*domain.C
 		log.Warn("review timed out before the lead, using deterministic consolidation", "lead", lead.ID, "reviewers", len(succeeded))
 		warnings = append(warnings, fmt.Sprintf("review.timeout expired before lead %s could run: the consolidation is the deterministic one, built from the reports the reviewers had written", lead.ID))
 		review := consolidation.Fallback(groups, outcomes)
+		warnings = append(warnings, review.Warnings...)
 		// No lead weighed the reports, and the reviewers stopped may have lost
 		// the findings that would have mattered: an incomplete review must not
 		// approve.
@@ -307,6 +357,11 @@ func (a *App) execute(ctx context.Context, r *run, req ReviewRequest) (*domain.C
 			review.Verdict = domain.VerdictComment
 			warnings = append(warnings, "the reports approved, but a review cut short by review.timeout is reported as comment")
 		}
+		if r.previous != nil {
+			warnings = append(warnings, reconcilePrevious(review)...)
+		}
+		warnings = append(warnings, keepStillPresent(review, r.previous, r.changed)...)
+		consolidation.SortConsolidated(review.Findings)
 		review.Meta = meta
 		review.Warnings = warnings
 		return review, nil
@@ -317,12 +372,18 @@ func (a *App) execute(ctx context.Context, r *run, req ReviewRequest) (*domain.C
 		log.Warn("lead failed, using deterministic consolidation", "lead", lead.ID, "error", err)
 		warnings = append(warnings, fmt.Sprintf("lead %s failed: %v", lead.ID, err))
 		review = consolidation.Fallback(groups, outcomes)
+		warnings = append(warnings, review.Warnings...)
 	} else {
 		meta.LeadUsed = true
 	}
 	if last := r.manifest.Agents[len(r.manifest.Agents)-1]; last.ID == lead.ID && last.Model != "" {
 		meta.Models[lead.ID] = last.Model
 	}
+	if r.previous != nil {
+		warnings = append(warnings, reconcilePrevious(review)...)
+	}
+	warnings = append(warnings, keepStillPresent(review, r.previous, r.changed)...)
+	consolidation.SortConsolidated(review.Findings)
 	review.Meta = meta
 	review.Warnings = warnings
 	return review, nil
@@ -419,6 +480,12 @@ func (a *App) runReviewer(ctx context.Context, r *run, rv config.AgentConfig, wo
 		}
 		in.Diff, in.DiffFile, in.DiffIndex = "", DiffFileName, *r.diffIndex
 	}
+	since, err := r.since(worktree, true)
+	if err != nil {
+		ex.Error = err.Error()
+		return ex, nil, err
+	}
+	in.Since = since
 	p, err := prompt.Reviewer(in)
 	if err != nil {
 		ex.Error = err.Error()
@@ -485,10 +552,13 @@ func (a *App) runReviewer(ctx context.Context, r *run, rv config.AgentConfig, wo
 				break
 			}
 		}
+		// The previous findings only: the retry converts a transcript, it does
+		// not review the changes again.
+		since, _ := r.since(worktree, false)
 		retry, perr := prompt.ReviewerRetry(prompt.ReviewerRetryInput{
 			AgentID: rv.ID, Worktree: worktree, PR: r.pr, MergeBaseSHA: r.pr.MergeBaseSHA, HeadSHA: r.pr.Head.SHA,
 			Problem: "Conclave could not use it: " + ex.Error + ".", Transcript: string(transcript),
-			MaxFindings: r.cfg.Review.Limits.MaxFindings, Budget: budget,
+			MaxFindings: r.cfg.Review.Limits.MaxFindings, Budget: budget, Since: since,
 		})
 		if perr != nil {
 			cancel()
@@ -517,6 +587,31 @@ func (a *App) runReviewer(ctx context.Context, r *run, rv config.AgentConfig, wo
 	ex.Succeeded = true
 	_ = r.store.WriteJSON("reports", rv.ID+".json", report)
 	return ex, report, nil
+}
+
+// SinceDiffFileName is where a diff since the previous review too large to
+// inline is written, next to DiffFileName.
+const SinceDiffFileName = ".conclave-since.patch"
+
+// since is the incremental part of an agent's prompt, empty for a full
+// review. With changes, the diff since the previous review is included, and
+// written to the worktree when too large to inline.
+func (r *run) since(worktree string, changes bool) (prompt.Since, error) {
+	if r.previous == nil {
+		return prompt.Since{}, nil
+	}
+	s := prompt.Since{Previous: r.previous}
+	if !changes {
+		return s, nil
+	}
+	s.Note, s.Diff, s.Truncated, s.ByGit = r.sinceNote, string(r.sinceDiffText), r.sinceDiffTrunc, r.sinceByGit
+	if int64(len(r.sinceDiffText)) > r.cfg.InlineDiffBytes() {
+		if err := writeDiffFile(filepath.Join(worktree, SinceDiffFileName), r.sinceDiffText); err != nil {
+			return s, err
+		}
+		s.Diff, s.DiffFile = "", SinceDiffFileName
+	}
+	return s, nil
 }
 
 // writeDiffFile writes the diff where a reviewer reads it. It refuses to
@@ -675,7 +770,7 @@ func (a *App) salvageTimedOut(ctx context.Context, r *run, rv config.AgentConfig
 	var warnings []string
 	exists := func(p string) bool { return r.git.PathExistsAt(ctx, r.pr.Head.SHA, p) }
 	report, warnings, err := agent.ParseReport(ad.Report, rv.ID, r.changed, exists,
-		agent.Limits{MaxFindings: r.cfg.Review.Limits.MaxFindings, MaxFieldBytes: agent.DefaultLimits.MaxFieldBytes})
+		agent.Limits{MaxFindings: r.cfg.Review.Limits.MaxFindings, MaxFieldBytes: agent.DefaultLimits.MaxFieldBytes, Previous: r.previousCount()})
 	ex.Warnings = append(ex.Warnings, warnings...)
 	if err != nil {
 		ex.Error = fmt.Sprintf("%v; %v", cut.err, err)
@@ -742,7 +837,7 @@ func (a *App) reviewerAttempt(ctx context.Context, r *run, rv config.AgentConfig
 		return nil, transcript, noUsableReport{err}
 	}
 	exists := func(p string) bool { return r.git.PathExistsAt(ctx, r.pr.Head.SHA, p) }
-	report, warnings, err := agent.ParseReport(ad.Report, rv.ID, r.changed, exists, agent.Limits{MaxFindings: r.cfg.Review.Limits.MaxFindings, MaxFieldBytes: agent.DefaultLimits.MaxFieldBytes})
+	report, warnings, err := agent.ParseReport(ad.Report, rv.ID, r.changed, exists, agent.Limits{MaxFindings: r.cfg.Review.Limits.MaxFindings, MaxFieldBytes: agent.DefaultLimits.MaxFieldBytes, Previous: r.previousCount()})
 	ex.Warnings = append(ex.Warnings, warnings...)
 	if err != nil {
 		ex.Error = err.Error()
@@ -760,11 +855,16 @@ func (a *App) runLead(ctx context.Context, r *run, lead config.AgentConfig, work
 		r.manifest.Agents = append(r.manifest.Agents, ex)
 		_ = r.store.WriteManifest(r.manifest)
 	}()
+	since, err := r.since(worktree, true)
+	if err != nil {
+		ex.Error = err.Error()
+		return nil, nil, err
+	}
 	p, err := prompt.Lead(prompt.LeadInput{
 		AgentID: lead.ID, Worktree: worktree, PR: r.pr, MergeBaseSHA: r.pr.MergeBaseSHA, HeadSHA: r.pr.Head.SHA,
 		SucceededReviewers: succeeded, FailedReviewers: consolidation.FailedReviewers(outcomes),
 		Reports: reports, Groups: groups, MaxFindings: r.cfg.Review.Limits.MaxFindings,
-		Budget: timeBudget(ctx, r.cfg, lead),
+		Budget: timeBudget(ctx, r.cfg, lead), Since: since,
 	})
 	if err != nil {
 		ex.Error = err.Error()
@@ -794,7 +894,7 @@ func (a *App) runLead(ctx context.Context, r *run, lead config.AgentConfig, work
 			return nil, nil, res.Err
 		}
 		exists := func(p string) bool { return r.git.PathExistsAt(salvageCtx, r.pr.Head.SHA, p) }
-		review, warnings, perr := consolidation.ParseLeadReview(ad.Report, succeeded, outcomes, r.changed, exists, r.cfg.Review.Limits.MaxFindings)
+		review, warnings, perr := consolidation.ParseLeadReview(ad.Report, succeeded, outcomes, r.changed, exists, r.cfg.Review.Limits.MaxFindings, r.previousCount())
 		// A context that died during validation drops findings silently, so a
 		// consolidation read that way is not trusted.
 		if perr != nil || salvageCtx.Err() != nil {
@@ -821,7 +921,7 @@ func (a *App) runLead(ctx context.Context, r *run, lead config.AgentConfig, work
 		return nil, nil, err
 	}
 	exists := func(p string) bool { return r.git.PathExistsAt(ctx, r.pr.Head.SHA, p) }
-	review, warnings, err := consolidation.ParseLeadReview(ad.Report, succeeded, outcomes, r.changed, exists, r.cfg.Review.Limits.MaxFindings)
+	review, warnings, err := consolidation.ParseLeadReview(ad.Report, succeeded, outcomes, r.changed, exists, r.cfg.Review.Limits.MaxFindings, r.previousCount())
 	ex.Warnings = append(ex.Warnings, warnings...)
 	if err != nil {
 		ex.Error = err.Error()

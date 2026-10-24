@@ -9,6 +9,7 @@ import (
 	"strings"
 	"text/template"
 	"time"
+	"unicode/utf8"
 
 	"github.com/bornholm/conclave/internal/domain"
 )
@@ -19,7 +20,40 @@ var files embed.FS
 var tmpl = template.Must(template.New("").Funcs(template.FuncMap{
 	"join":    strings.Join,
 	"minutes": minutes,
+	"pid":     domain.PreviousID,
+	"clip":    clip,
 }).ParseFS(files, "templates/*.tmpl"))
+
+// clip shortens s to about n bytes, on a rune boundary, on one line: a
+// previous finding is recalled, not restated, and its full text is a read
+// away in the run directory.
+func clip(n int, s string) string {
+	s = strings.Join(strings.Fields(s), " ")
+	if len(s) <= n {
+		return s
+	}
+	cut := n
+	for cut > 0 && !utf8.RuneStart(s[cut]) {
+		cut--
+	}
+	return s[:cut] + "…"
+}
+
+// Since is what an incremental review adds to the prompts: the previous
+// review, and what changed since.
+type Since struct {
+	Previous *domain.PreviousReview
+	// Note says why the diff is missing or is not the plain increment.
+	Note      string
+	Diff      string
+	Truncated bool
+	// DiffFile, when set, is the path of the diff relative to the worktree:
+	// too large to inline, Diff is then left out.
+	DiffFile string
+	// ByGit, when the configuration keeps diffs out of the prompt, gives
+	// the agents the git command instead.
+	ByGit bool
+}
 
 // TimeBudget is the wall-clock time an agent has before Conclave stops it.
 // The zero value leaves the budget out of the prompt.
@@ -67,6 +101,8 @@ type ReviewerInput struct {
 	DiffIndex   DiffIndex
 	MaxFindings int
 	Budget      TimeBudget
+	// Since is set for an incremental review.
+	Since Since
 }
 
 // LeadInput feeds the lead template.
@@ -82,6 +118,7 @@ type LeadInput struct {
 	Groups             []domain.FindingGroup
 	MaxFindings        int
 	Budget             TimeBudget
+	Since              Since
 }
 
 type common struct {
@@ -116,6 +153,7 @@ type ReviewerRetryInput struct {
 	Transcript  string
 	MaxFindings int
 	Budget      TimeBudget
+	Since       Since
 }
 
 // ReviewerRetry renders the prompt asking a reviewer for the report its

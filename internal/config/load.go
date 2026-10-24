@@ -32,6 +32,10 @@ func Load(path string) (*Config, error) {
 	sources := []string{abs}
 	for dir := filepath.Dir(filepath.Dir(abs)); inherits; dir = filepath.Dir(dir) {
 		candidate := filepath.Join(dir, DefaultFileName)
+		if candidate == abs {
+			// A file at the filesystem root is not its own parent.
+			break
+		}
 		parent, parentInherits, found, err := readFile(candidate, true)
 		if err != nil {
 			return nil, fmt.Errorf("configuration %q, inherited by %q: %w", candidate, path, err)
@@ -110,6 +114,11 @@ func readFile(path string, inherited bool) (*yaml.Node, bool, bool, error) {
 	dec.KnownFields(true)
 	if err := dec.Decode(&cfg); err != nil {
 		if errors.Is(err, io.EOF) {
+			// An inherited file with nothing but comments declares
+			// nothing; the file loaded must say something.
+			if inherited {
+				return &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}, true, true, nil
+			}
 			return nil, false, false, errors.New("decode YAML: empty document")
 		}
 		return nil, false, false, fmt.Errorf("decode YAML: %w", err)
@@ -253,6 +262,16 @@ func dropDisabled(cfg *Config) error {
 		}
 		if len(a.Command) == 0 {
 			return fmt.Errorf("agents[%s]: disabled, but no agent %s is declared to disable", a.ID, a.ID)
+		}
+		// Left out, it would only be "not a configured reviewer" there,
+		// which hides why.
+		for _, list := range []struct {
+			field string
+			ids   []string
+		}{{"triage.reviewers", cfg.Triage.Reviewers}, {"plan.planners", cfg.Plan.Planners}, {"ask.respondents", cfg.Ask.Respondents}} {
+			if slices.Contains(list.ids, a.ID) {
+				return fmt.Errorf("agents[%s]: disabled, but %s still names it: remove it there too", a.ID, list.field)
+			}
 		}
 	}
 	cfg.Agents = kept

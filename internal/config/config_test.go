@@ -309,3 +309,21 @@ agents:
 		t.Error("a recursive anchor must be refused")
 	}
 }
+
+func TestLoadEdgeCasesOfInheritance(t *testing.T) {
+	top := t.TempDir()
+	parent := filepath.Join(top, DefaultFileName)
+	project := filepath.Join(top, "project", DefaultFileName)
+	// An inherited file with nothing but comments declares nothing.
+	writeConfig(t, parent, "# placeholder\n")
+	writeConfig(t, project, "inherits: true\n"+validYAML)
+	if _, err := Load(project); err != nil {
+		t.Errorf("a comment-only parent: %v", err)
+	}
+	// A disabled agent a list still names is said as such.
+	writeConfig(t, parent, "inherits: false\ntriage: {reviewers: [rev]}\n"+validYAML+"  - {id: rev2, role: reviewer, command: [echo]}\n")
+	writeConfig(t, project, "agents: [{id: rev, disabled: true}]\n")
+	if _, err := Load(project); err == nil || !strings.Contains(err.Error(), "agents[rev]: disabled, but triage.reviewers still names it") {
+		t.Errorf("a disabled agent still listed: %v", err)
+	}
+}

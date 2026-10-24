@@ -46,6 +46,9 @@ type Agent struct {
 	// also discovers skills. A skill of the same name there competes with the
 	// installed one.
 	SkillDirs []string
+	// RootSkillDirs are other directories, relative to the agent's root, where
+	// it also discovers skills.
+	RootSkillDirs []string
 	// Supersedes are files, relative to the agent's root, that an extension
 	// replaces: left in place, both would act on the same run.
 	Supersedes []string
@@ -57,7 +60,7 @@ type Agent struct {
 var agents = map[string]Agent{
 	"pi": {
 		Name:       "pi",
-		UserRoot:   userRoot("PI_CODING_AGENT_DIR", "", ".pi", "agent"),
+		UserRoot:   userRoot("PI_CODING_AGENT_DIR", "", "", ".pi", "agent"),
 		ProjectDir: ".pi",
 		Extensions: []File{{Asset: "assets/pi/extensions/conclave.ts", Path: "extensions/conclave.ts"}},
 		SkillDirs:  []string{filepath.Join(".agents", "skills")},
@@ -71,23 +74,26 @@ var agents = map[string]Agent{
 	// Claude Code reads skills from its own directories only.
 	"claude": {
 		Name:       "claude",
-		UserRoot:   userRoot("CLAUDE_CONFIG_DIR", "", ".claude"),
+		UserRoot:   userRoot("CLAUDE_CONFIG_DIR", "", "", ".claude"),
 		ProjectDir: ".claude",
 	},
 	// OpenCode also reads the skills of Claude Code and of the agents
-	// convention, for the user and for the project alike.
+	// convention, for the user and for the project alike, at fixed paths:
+	// ~/.claude/skills whatever CLAUDE_CONFIG_DIR says. It reads skill/ as
+	// well as skills/ below its own directories.
 	"opencode": {
-		Name:       "opencode",
-		UserRoot:   userRoot("", "XDG_CONFIG_HOME", ".config", "opencode"),
-		ProjectDir: ".opencode",
-		SkillDirs:  []string{filepath.Join(".claude", "skills"), filepath.Join(".agents", "skills")},
+		Name:          "opencode",
+		UserRoot:      userRoot("", "XDG_CONFIG_HOME", "opencode", ".config", "opencode"),
+		ProjectDir:    ".opencode",
+		SkillDirs:     []string{filepath.Join(".claude", "skills"), filepath.Join(".agents", "skills")},
+		RootSkillDirs: []string{"skill"},
 	},
 }
 
 // userRoot returns an agent's configuration directory: the one env names, or
-// else dir below xdg when it is set, or else dir below the home directory.
-// xdg names the base directory, so the last element of dir is kept below it.
-func userRoot(env, xdg string, dir ...string) func() (string, error) {
+// else xdgName below the base directory xdg names, or else dir below the home
+// directory. A relative xdg base is ignored, as the XDG specification asks.
+func userRoot(env, xdg, xdgName string, dir ...string) func() (string, error) {
 	return func() (string, error) {
 		if env != "" {
 			if d := os.Getenv(env); d != "" {
@@ -96,8 +102,8 @@ func userRoot(env, xdg string, dir ...string) func() (string, error) {
 			}
 		}
 		if xdg != "" {
-			if d := os.Getenv(xdg); d != "" {
-				return filepath.Abs(filepath.Join(d, dir[len(dir)-1]))
+			if d := os.Getenv(xdg); filepath.IsAbs(d) {
+				return filepath.Join(d, xdgName), nil
 			}
 		}
 		home, err := os.UserHomeDir()
@@ -213,11 +219,12 @@ func Install(a Agent, opts Options) (*Report, error) {
 	// skill of the same name in another of its directories, or one a user
 	// install put there.
 	superseded := []string{root}
-	skillDirs := a.skillDirs(base)
+	skillDirs := append(a.skillDirs(base), a.rootSkillDirs(root)...)
 	if opts.Project != "" {
 		if user, err := a.UserRoot(); err == nil {
 			superseded = append(superseded, user)
 			skillDirs = append(skillDirs, filepath.Join(user, "skills"))
+			skillDirs = append(skillDirs, a.rootSkillDirs(user)...)
 		}
 		if home, err := os.UserHomeDir(); err == nil {
 			skillDirs = append(skillDirs, a.skillDirs(home)...)
@@ -300,6 +307,15 @@ func (a Agent) skillDirs(base string) []string {
 	dirs := make([]string, 0, len(a.SkillDirs))
 	for _, dir := range a.SkillDirs {
 		dirs = append(dirs, filepath.Join(base, dir))
+	}
+	return dirs
+}
+
+// rootSkillDirs returns the agent's other skill directories below root.
+func (a Agent) rootSkillDirs(root string) []string {
+	dirs := make([]string, 0, len(a.RootSkillDirs))
+	for _, dir := range a.RootSkillDirs {
+		dirs = append(dirs, filepath.Join(root, dir))
 	}
 	return dirs
 }
@@ -408,24 +424,37 @@ func write(asset, dst string, force, follow bool) (Status, error) {
 }
 
 // sameSkill reports whether dir holds exactly the files of the bundled skill
-// name.
+// name: the same contents, and no file the bundle does not have.
 func sameSkill(name, dir string) bool {
+	want := map[string][]byte{}
 	root := path.Join(skillsDir, name)
-	same := true
 	err := fs.WalkDir(assets, root, func(p string, d fs.DirEntry, err error) error {
 		if err != nil || d.IsDir() {
 			return err
 		}
-		want, err := assets.ReadFile(p)
-		if err != nil {
+		data, err := assets.ReadFile(p)
+		want[strings.TrimPrefix(p, root+"/")] = data
+		return err
+	})
+	if err != nil {
+		return false
+	}
+	// os.DirFS follows dir itself when it is a link, as a skills directory
+	// linked into a dotfiles repository often is.
+	got := os.DirFS(dir)
+	same, seen := true, 0
+	err = fs.WalkDir(got, ".", func(p string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
 			return err
 		}
-		got, err := os.ReadFile(filepath.Join(dir, filepath.FromSlash(strings.TrimPrefix(p, root+"/"))))
-		if err != nil || !bytes.Equal(got, want) {
+		data, ok := want[p]
+		current, err := fs.ReadFile(got, p)
+		if !ok || err != nil || !bytes.Equal(current, data) {
 			same = false
 			return fs.SkipAll
 		}
+		seen++
 		return nil
 	})
-	return err == nil && same
+	return err == nil && same && seen == len(want)
 }

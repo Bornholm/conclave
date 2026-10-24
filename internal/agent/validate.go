@@ -258,7 +258,10 @@ func NormalizePrevious(in []domain.PreviousStatus, n, maxFieldBytes int) ([]doma
 		p.Status = domain.PreviousStatusKind(strings.ToLower(strings.TrimSpace(string(p.Status))))
 		p.Evidence = truncate(strings.TrimSpace(p.Evidence), maxFieldBytes)
 		// Conclave fills the claims from the reviewers' own reports.
-		p.Claims = nil
+		if len(p.Claims) > 0 {
+			warnings = append(warnings, fmt.Sprintf("previous finding %s: claims are filled by Conclave, those given ignored", p.ID))
+			p.Claims = nil
+		}
 		switch {
 		case !validPreviousID(p.ID, n):
 			warnings = append(warnings, fmt.Sprintf("previous finding %q is not one of P1 to P%d, ignored", p.ID, n))

@@ -166,6 +166,22 @@ func claims(p domain.PreviousStatus, outcomes []ReviewerOutcome) []domain.Previo
 	return out
 }
 
+// reviewerEvidence is the first evidence a reviewer gave p's status for p's
+// finding, empty when none did.
+func reviewerEvidence(p domain.PreviousStatus, outcomes []ReviewerOutcome) string {
+	for _, o := range outcomes {
+		if o.Report == nil {
+			continue
+		}
+		for _, r := range o.Report.PreviousFindings {
+			if r.ID == p.ID && r.Status == p.Status && r.Evidence != "" {
+				return r.Evidence
+			}
+		}
+	}
+	return ""
+}
+
 // previousOrder sorts "P2" before "P10", and a malformed id last.
 func previousOrder(id string) int {
 	if i, ok := domain.PreviousIndex(id); ok {

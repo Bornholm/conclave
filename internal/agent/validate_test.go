@@ -89,7 +89,7 @@ const incrementalReport = `{
   {"id":"b","category":"x","severity":"low","confidence":0.5,"file":"src/a.go","start_line":1,"end_line":1,"title":"bad link","previous_id":"P9"}
  ],
  "previous_findings": [
-  {"id":"P1","status":"fixed","evidence":"the nil check is in 3b2"},
+  {"id":"P1","status":"fixed","evidence":"the nil check is in 3b2","claims":[{"status":"withdrawn","evidence":"made up"}]},
   {"id":"p2","status":"Still-Present","evidence":""},
   {"id":"P3","status":"withdrawn","evidence":""},
   {"id":"P1","status":"still-present"},
@@ -116,7 +116,10 @@ func TestParseReportPreviousFindings(t *testing.T) {
 	if len(got) != 2 || got["P1"] != "fixed" || got["P2"] != "still-present" {
 		t.Errorf("statuses: %v (%v)", got, warnings)
 	}
-	if len(warnings) != 5 {
+	if len(rep.PreviousFindings[0].Claims) != 0 {
+		t.Errorf("a reviewer's own claims must be dropped: %+v", rep.PreviousFindings[0])
+	}
+	if len(warnings) != 6 {
 		t.Errorf("warnings: %d %v", len(warnings), warnings)
 	}
 

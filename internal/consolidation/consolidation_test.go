@@ -336,8 +336,24 @@ func TestParseLeadReviewPrevious(t *testing.T) {
 	if c := claimsString(review.PreviousFindings[0].Claims); c != "still-present:a.go:1:r1" {
 		t.Errorf("claims %q", c)
 	}
-	if len(warnings) != 2 {
+	if len(warnings) != 3 || !strings.Contains(strings.Join(warnings, "\n"), "claims are filled by Conclave") {
 		t.Errorf("warnings: %v", warnings)
+	}
+}
+
+func TestParseLeadReviewTakesAReviewersEvidence(t *testing.T) {
+	raw := `{"schema_version":"1","summary":"ok","verdict":"comment","failed_reviewers":[],"findings":[],
+"previous_findings":[{"id":"P1","status":"still-present"}]}`
+	outcomes := []ReviewerOutcome{
+		{ID: "r1", Report: &domain.AgentReport{PreviousFindings: []domain.PreviousStatus{{ID: "P1", Status: domain.PreviousStillPresent}}}},
+		{ID: "r2", Report: &domain.AgentReport{PreviousFindings: []domain.PreviousStatus{{ID: "P1", Status: domain.PreviousStillPresent, Evidence: "a.go:1"}}}},
+	}
+	review, _, err := ParseLeadReview([]byte(raw), []string{"r1", "r2"}, outcomes, nil, nil, 10, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p := review.PreviousFindings[0]; p.Evidence != "a.go:1" || len(p.Claims) != 0 {
+		t.Errorf("%+v", p)
 	}
 }
 

@@ -65,6 +65,11 @@ func ParseLeadReview(raw []byte, succeeded []string, outcomes []ReviewerOutcome,
 	}
 	for i, p := range review.PreviousFindings {
 		review.PreviousFindings[i].ReportedBy = knownOnly(p.ReportedBy, known)
+		// A status the lead gave without evidence takes the first a reviewer
+		// gave for it, as without a lead.
+		if p.Evidence == "" {
+			review.PreviousFindings[i].Evidence = reviewerEvidence(p, outcomes)
+		}
 		review.PreviousFindings[i].Claims = claims(review.PreviousFindings[i], outcomes)
 	}
 	review.Findings = kept

@@ -35,6 +35,11 @@ type RunManifest struct {
 	SinceRunID   string `json:"since_run_id,omitempty"`
 	SinceHeadSHA string `json:"since_head_sha,omitempty"`
 
+	// ConfigSources are the configuration files the run was configured
+	// from, the farthest inherited one first: an inherited file can declare
+	// the agents that ran.
+	ConfigSources []string `json:"config_sources,omitempty"`
+
 	Agents []AgentExecution `json:"agents"`
 }
 

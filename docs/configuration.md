@@ -33,9 +33,9 @@ agents:
 
 The files are merged from the farthest to the nearest, so the nearest one wins. A mapping merges key by key: a file sets only what it names. A list replaces the inherited one, `diff_exclude` or an agent's `command` alike, with one exception: `agents` merges by `id`. An agent whose id is inherited is merged over it, field by field, and a new id is added after the inherited agents. The merged result is validated as one file, so the inherited file need not be complete on its own; each file is still checked alone for unknown fields and for its `version`.
 
-`inherits: false` stops the search: the directories above that file are not read, the file itself is. Put it in a project that must not inherit anything, or in the top file to make sure nothing above it is ever read.
+The search goes up to the filesystem root, and the home directory is not special: a `~/.conclave.yaml` applies to every project below it. `inherits: false` stops the search: the directories above that file are not read, the file itself is. Put it in a project that must not inherit anything, or in the top file to make sure nothing above it is ever read.
 
-An inherited file can declare agents, that is commands Conclave runs. So an inherited file must belong to you or to root and be writable by its owner only, or the run stops with an error naming it: a `.conclave.yaml` another user left in `/tmp` is not run as yours. `conclave config validate` lists every file inherited, and every run logs them.
+An inherited file can declare agents, that is commands Conclave runs. On Unix, an inherited file must belong to you or to root and be writable by its owner only, or the run stops with an error naming it: a `.conclave.yaml` another user left in `/tmp` is not run as yours. Running as root, only root's files are inherited. Elsewhere, on Windows, an inherited file is read without that check, and `inherits: false` is the only guard. `conclave config validate` lists every file inherited, every run logs them, and the run's `manifest.json` records them in `config_sources`.
 
 ## Forge
 

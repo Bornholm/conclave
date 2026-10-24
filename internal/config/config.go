@@ -232,6 +232,15 @@ type AgentConfig struct {
 	Timeout           time.Duration     `yaml:"timeout"`
 }
 
+// Inherited returns the files this configuration inherited, the farthest
+// first, without the file loaded itself.
+func (c *Config) Inherited() []string {
+	if len(c.Sources) == 0 {
+		return nil
+	}
+	return c.Sources[:len(c.Sources)-1]
+}
+
 // TriageReviewers returns the agents a triage run uses: the ones named in
 // triage.reviewers, or the first configured reviewer.
 func (c *Config) TriageReviewers() []AgentConfig {

@@ -84,7 +84,7 @@ func (a *App) Ask(ctx context.Context, req AskRequest) (*AskResult, error) {
 
 	now := time.Now()
 	runID := artifact.NewAskRunID(now)
-	manifest := &domain.RunManifest{ID: runID, Kind: "ask", StartedAt: now, Status: domain.RunRunning}
+	manifest := &domain.RunManifest{ID: runID, Kind: "ask", StartedAt: now, Status: domain.RunRunning, ConfigSources: a.Config.Sources}
 
 	// A question attached to a project is answered against a checkout of it,
 	// exactly as a review or a plan would be. Without one, nothing git is

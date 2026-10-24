@@ -106,8 +106,11 @@ func writeConfig(t *testing.T, path, content string) {
 
 func TestLoadInheritsTheParentDirectories(t *testing.T) {
 	top := t.TempDir()
+	// The top file stops the search, so that nothing above the test's
+	// directory is read.
 	writeConfig(t, filepath.Join(top, DefaultFileName), `
 version: 1
+inherits: false
 review:
   timeout: 20m
   diff_exclude: ["*.min.css"]
@@ -171,7 +174,7 @@ agents:
 
 func TestLoadStopsWhereInheritsIsFalse(t *testing.T) {
 	top := t.TempDir()
-	writeConfig(t, filepath.Join(top, DefaultFileName), "version: 1\nreview:\n  timeout: 20m\n")
+	writeConfig(t, filepath.Join(top, DefaultFileName), "version: 1\ninherits: false\nreview:\n  timeout: 20m\n")
 	project := filepath.Join(top, "project")
 	writeConfig(t, filepath.Join(project, DefaultFileName), "inherits: false\n"+validYAML)
 	cfg, err := Load(filepath.Join(project, DefaultFileName))
@@ -182,7 +185,7 @@ func TestLoadStopsWhereInheritsIsFalse(t *testing.T) {
 		t.Errorf("a configuration with inherits: false must not inherit: %v %v", cfg.Sources, cfg.Review.Timeout)
 	}
 	// With "inherits: false" on the parent, its own parents are not read.
-	writeConfig(t, filepath.Join(top, DefaultFileName), "version: 1\nreview:\n  timeout: nope\n")
+	writeConfig(t, filepath.Join(top, DefaultFileName), "version: 1\ninherits: false\nreview:\n  timeout: nope\n")
 	writeConfig(t, filepath.Join(project, "group", DefaultFileName), "inherits: false\nreview:\n  timeout: 10m\n")
 	writeConfig(t, filepath.Join(project, "group", "leaf", DefaultFileName), "forge:\n  provider: github\nagents: [{id: rev, role: reviewer, command: [echo]}, {id: lead, role: lead, command: [echo]}]\nversion: 1\n")
 	cfg, err = Load(filepath.Join(project, "group", "leaf", DefaultFileName))
@@ -197,21 +200,48 @@ func TestLoadStopsWhereInheritsIsFalse(t *testing.T) {
 func TestLoadNamesTheInheritedFileAtFault(t *testing.T) {
 	top := t.TempDir()
 	parent := filepath.Join(top, DefaultFileName)
-	writeConfig(t, parent, "version: 1\nreveiw: {}\n")
+	writeConfig(t, parent, "version: 1\ninherits: false\nreveiw: {}\n")
 	project := filepath.Join(top, "project", DefaultFileName)
 	writeConfig(t, project, validYAML)
 	if _, err := Load(project); err == nil || !strings.Contains(err.Error(), parent) || !strings.Contains(err.Error(), "reveiw") {
 		t.Errorf("an unknown field in a parent must name the parent: %v", err)
 	}
-	writeConfig(t, parent, "version: 2\n")
+	writeConfig(t, parent, "version: 2\ninherits: false\n")
 	if _, err := Load(project); err == nil || !strings.Contains(err.Error(), parent) || !strings.Contains(err.Error(), "version: must be 1") {
 		t.Errorf("another version in a parent: %v", err)
 	}
 	// The merged result is validated: a parent cannot be left incomplete
 	// unless the project completes it, and the error names both.
-	writeConfig(t, parent, "version: 1\n")
+	writeConfig(t, parent, "version: 1\ninherits: false\n")
 	writeConfig(t, project, "agents: []\n")
 	if _, err := Load(project); err == nil || !strings.Contains(err.Error(), "merged with "+parent) || !strings.Contains(err.Error(), "forge.provider") {
 		t.Errorf("merged validation: %v", err)
+	}
+}
+
+func TestLoadExpandsAnAliasWhoseAnchorIsReplaced(t *testing.T) {
+	top := t.TempDir()
+	// The parent's agents alias the command its review section anchors;
+	// the project replaces that section, anchor and all.
+	writeConfig(t, filepath.Join(top, DefaultFileName), `
+version: 1
+inherits: false
+review:
+  diff_exclude: &cmd [pi, -p]
+agents:
+  - {id: rev, role: reviewer, command: *cmd}
+  - {id: lead, role: lead, command: *cmd}
+`)
+	project := filepath.Join(top, "project", DefaultFileName)
+	writeConfig(t, project, "forge: {provider: github}\nreview:\n  diff_exclude: []\n")
+	cfg, err := Load(project)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(cfg.Agents[0].Command, " ") != "pi -p" || len(cfg.Review.DiffExclude) != 0 {
+		t.Errorf("agents %+v, diff_exclude %v", cfg.Agents, cfg.Review.DiffExclude)
+	}
+	if cfg.Inherits != nil {
+		t.Errorf("inherits is not part of the merged configuration: %v", *cfg.Inherits)
 	}
 }

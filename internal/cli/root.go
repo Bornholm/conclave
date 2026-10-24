@@ -97,7 +97,7 @@ func newLogger(w io.Writer, verbose bool) *slog.Logger {
 // logInherited names the configuration files inherited, on every run: they
 // can declare agents, that is commands the run executes.
 func logInherited(logger *slog.Logger, cfg *config.Config) {
-	for _, src := range cfg.Sources[:max(len(cfg.Sources)-1, 0)] {
+	for _, src := range cfg.Inherited() {
 		logger.Info("configuration inherited", "file", src)
 	}
 }

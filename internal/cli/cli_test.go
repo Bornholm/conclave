@@ -17,7 +17,7 @@ import (
 func TestConfigValidateListsTheInheritedFiles(t *testing.T) {
 	top := t.TempDir()
 	parent := filepath.Join(top, ".conclave.yaml")
-	os.WriteFile(parent, []byte("version: 1\nagents: [{id: rev, role: reviewer, command: [echo]}, {id: lead, role: lead, command: [echo]}]\n"), 0o644)
+	os.WriteFile(parent, []byte("version: 1\ninherits: false\nagents: [{id: rev, role: reviewer, command: [echo]}, {id: lead, role: lead, command: [echo]}]\n"), 0o644)
 	os.MkdirAll(filepath.Join(top, "project"), 0o755)
 	project := filepath.Join(top, "project", ".conclave.yaml")
 	os.WriteFile(project, []byte("forge: {provider: github}\n"), 0o644)
@@ -457,5 +457,13 @@ func TestAgentsInstallClaudeAndOpencode(t *testing.T) {
 	Main([]string{"help"}, &out, &out)
 	if !strings.Contains(out.String(), "conclave agents install claude|opencode|pi") {
 		t.Errorf("usage does not list the agents:\n%s", out.String())
+	}
+}
+
+// The example printed by `conclave config example` is the repository's
+// .conclave.example.yaml: the two must not drift apart.
+func TestExampleConfigMatchesTheRepositoryOne(t *testing.T) {
+	if want := readFile(t, filepath.Join("..", "..", ".conclave.example.yaml")); string(want) != exampleConfig {
+		t.Error("internal/cli/example.yaml differs from .conclave.example.yaml: copy one onto the other")
 	}
 }

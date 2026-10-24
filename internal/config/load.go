@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -22,7 +23,7 @@ func Load(path string) (*Config, error) {
 	if err != nil {
 		return nil, fmt.Errorf("configuration %q: %w", path, err)
 	}
-	doc, inherits, err := readFile(abs)
+	doc, inherits, _, err := readFile(abs, false)
 	if err != nil {
 		return nil, fmt.Errorf("configuration %q: %w", path, err)
 	}
@@ -30,16 +31,14 @@ func Load(path string) (*Config, error) {
 	sources := []string{abs}
 	for dir := filepath.Dir(filepath.Dir(abs)); inherits; dir = filepath.Dir(dir) {
 		candidate := filepath.Join(dir, DefaultFileName)
-		if st, err := os.Stat(candidate); err == nil && !st.IsDir() {
-			if err := checkInherited(st); err != nil {
-				return nil, fmt.Errorf("configuration %q, inherited by %q: %w", candidate, path, err)
-			}
-			var parent *yaml.Node
-			if parent, inherits, err = readFile(candidate); err != nil {
-				return nil, fmt.Errorf("configuration %q, inherited by %q: %w", candidate, path, err)
-			}
+		parent, parentInherits, found, err := readFile(candidate, true)
+		if err != nil {
+			return nil, fmt.Errorf("configuration %q, inherited by %q: %w", candidate, path, err)
+		}
+		if found {
 			chain = append(chain, parent)
 			sources = append(sources, candidate)
+			inherits = parentInherits
 		}
 		if filepath.Dir(dir) == dir {
 			break
@@ -48,6 +47,11 @@ func Load(path string) (*Config, error) {
 	merged := chain[len(chain)-1]
 	for i := len(chain) - 2; i >= 0; i-- {
 		merge(merged, chain[i], "")
+	}
+	// inherits says where the search stops, for one file: it is not part of
+	// the configuration they make together.
+	if i := mappingIndex(merged, "inherits"); i >= 0 {
+		merged.Content = append(merged.Content[:i], merged.Content[i+2:]...)
 	}
 	data, err := yaml.Marshal(merged)
 	if err != nil {
@@ -70,32 +74,71 @@ func Load(path string) (*Config, error) {
 // readFile parses one configuration file on its own: unknown fields and
 // another schema version are reported against the file that has them, not
 // against the merged document. It returns the file's mapping and whether the
-// file inherits the ones above it.
-func readFile(path string) (*yaml.Node, bool, error) {
-	data, err := os.ReadFile(path)
+// file inherits the ones above it. An inherited file that does not exist, or
+// is a directory, is not found; one that exists is checked on the descriptor
+// it is read from, so the file judged is the file read.
+func readFile(path string, inherited bool) (*yaml.Node, bool, bool, error) {
+	f, err := os.Open(path)
 	if err != nil {
-		return nil, false, fmt.Errorf("open: %w", err)
+		if inherited && errors.Is(err, fs.ErrNotExist) {
+			return nil, false, false, nil
+		}
+		return nil, false, false, fmt.Errorf("open: %w", err)
+	}
+	defer f.Close()
+	st, err := f.Stat()
+	if err != nil {
+		return nil, false, false, fmt.Errorf("open: %w", err)
+	}
+	if inherited {
+		if st.IsDir() {
+			return nil, false, false, nil
+		}
+		if err := checkInherited(st); err != nil {
+			return nil, false, false, err
+		}
+	}
+	data, err := io.ReadAll(f)
+	if err != nil {
+		return nil, false, false, fmt.Errorf("read: %w", err)
 	}
 	var cfg Config
 	dec := yaml.NewDecoder(bytes.NewReader(data))
 	dec.KnownFields(true)
 	if err := dec.Decode(&cfg); err != nil {
 		if errors.Is(err, io.EOF) {
-			return nil, false, errors.New("decode YAML: empty document")
+			return nil, false, false, errors.New("decode YAML: empty document")
 		}
-		return nil, false, fmt.Errorf("decode YAML: %w", err)
+		return nil, false, false, fmt.Errorf("decode YAML: %w", err)
 	}
 	if cfg.Version != 0 && cfg.Version != CurrentVersion {
-		return nil, false, fmt.Errorf("version: must be %d, got %d", CurrentVersion, cfg.Version)
+		return nil, false, false, fmt.Errorf("version: must be %d, got %d", CurrentVersion, cfg.Version)
 	}
 	var doc yaml.Node
 	if err := yaml.Unmarshal(data, &doc); err != nil {
-		return nil, false, fmt.Errorf("decode YAML: %w", err)
+		return nil, false, false, fmt.Errorf("decode YAML: %w", err)
 	}
 	if len(doc.Content) != 1 || doc.Content[0].Kind != yaml.MappingNode {
-		return nil, false, errors.New("decode YAML: the document must be a mapping")
+		return nil, false, false, errors.New("decode YAML: the document must be a mapping")
 	}
-	return doc.Content[0], boolValue(cfg.Inherits, true), nil
+	// Aliases are expanded: once merged, the anchor an alias points to may
+	// belong to a subtree another file replaced.
+	return expandAliases(doc.Content[0]), boolValue(cfg.Inherits, true), true, nil
+}
+
+// expandAliases replaces every alias under n by a copy of the node it points
+// to, so that the tree no longer depends on where its anchors are.
+func expandAliases(n *yaml.Node) *yaml.Node {
+	if n.Kind == yaml.AliasNode {
+		n = expandAliases(n.Alias)
+	}
+	c := *n
+	c.Anchor = ""
+	c.Content = make([]*yaml.Node, len(n.Content))
+	for i, child := range n.Content {
+		c.Content[i] = expandAliases(child)
+	}
+	return &c
 }
 
 // merge merges src over dst, in place. A mapping merges key by key, so a file

@@ -19,6 +19,7 @@ cd my-repo
 conclave config example > .conclave.yaml   # then edit the agents section
 conclave config validate
 conclave agents install pi                 # optional: pacing extension and skills for Pi
+conclave agents install claude             # optional: skills for Claude Code (or opencode)
 conclave review 123 > review.md
 conclave review 123 --since last > review.md   # after fixes: what was fixed, what remains, what is new
 ```

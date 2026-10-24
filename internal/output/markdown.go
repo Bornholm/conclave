@@ -138,6 +138,9 @@ func Markdown(w io.Writer, review *domain.ConsolidatedReview, opts Options) erro
 				fmt.Fprintf(&b, ", reported by %s", strings.Join(f.ReportedBy, ", "))
 			}
 			b.WriteString(")")
+			if f.PreviousID != "" {
+				fmt.Fprintf(&b, ", still present from the previous review (%s)", f.PreviousID)
+			}
 			if d := strings.TrimSpace(f.Description); d != "" {
 				b.WriteString(" — " + escape(d))
 			}

@@ -32,20 +32,20 @@ func runReview(ctx context.Context, args []string, stdout, stderr io.Writer) err
 	if err != nil || number <= 0 {
 		return fmt.Errorf("invalid pull request number %q", positional[0])
 	}
-	var answers string
-	if *responses != "" {
-		if *since == "" {
-			return errors.New("--responses answers a previous review: it needs --since")
-		}
-		data, err := readResponses(*responses)
-		if err != nil {
-			return err
-		}
-		answers = string(data)
+	if *responses != "" && *since == "" {
+		return errors.New("--responses answers a previous review: it needs --since")
 	}
 	cfg, err := config.Load(*configPath)
 	if err != nil {
 		return err
+	}
+	var answers string
+	if *responses != "" {
+		data, err := readResponses(*responses, cfg.Review.Limits.MaxCommentBytes)
+		if err != nil {
+			return err
+		}
+		answers = string(data)
 	}
 	if *format != "" {
 		if *format != config.FormatMarkdown && *format != config.FormatJSON {
@@ -74,16 +74,22 @@ func runReview(ctx context.Context, args []string, stdout, stderr io.Writer) err
 }
 
 // readResponses reads the author's answers from a file or, with "-", from
-// standard input.
-func readResponses(path string) ([]byte, error) {
+// standard input, at most max bytes plus one: the app cuts them to max and
+// warns, and the rest is never held in memory.
+func readResponses(path string, max int) ([]byte, error) {
 	if path == "-" {
-		data, err := io.ReadAll(os.Stdin)
+		data, err := readAllStdin(max)
 		if err != nil {
 			return nil, fmt.Errorf("--responses: %w", err)
 		}
 		return data, nil
 	}
-	data, err := os.ReadFile(path)
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, fmt.Errorf("--responses: %w", err)
+	}
+	defer f.Close()
+	data, err := readLimited(f, max)
 	if err != nil {
 		return nil, fmt.Errorf("--responses: %w", err)
 	}

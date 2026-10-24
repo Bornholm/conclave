@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 
 	"github.com/bornholm/conclave/internal/domain"
 	"github.com/bornholm/conclave/internal/gitrepo"
@@ -44,6 +45,12 @@ func loadPrevious(base string, repo domain.Repository, pr *domain.PullRequest, s
 	m, hasManifest := runManifest(filepath.Dir(filepath.Dir(path)))
 	if hasManifest && !sameRepository(m, repo) {
 		return nil, fmt.Errorf("--since: %s is a review of %s/%s, not %s/%s", path, m.Owner, m.Repo, repo.Owner, repo.Name)
+	}
+	// Outside a run directory, the pull request's URL is all that ties the
+	// review to a repository. Conclave always writes it: without it, the file
+	// was written by hand and could be of any repository.
+	if !hasManifest && review.Meta.PRURL == "" {
+		return nil, fmt.Errorf("--since: %s is outside a run directory and names no pull request URL: nothing tells it is a review of %s/%s", path, repo.Owner, repo.Name)
 	}
 	if review.Meta.HeadSHA == "" {
 		return nil, fmt.Errorf("--since: %s does not say which revision it reviewed", path)
@@ -181,7 +188,18 @@ func reconcilePrevious(review *domain.ConsolidatedReview) []string {
 		if !ok || p.Status == domain.PreviousStillPresent {
 			continue
 		}
-		warnings = append(warnings, fmt.Sprintf("previous finding %s is %s, but a finding still continues it: it is reported still present", p.ID, p.Status))
+		// The status replaced is kept in the warning, so the review still
+		// shows what it claimed and on what grounds.
+		w := fmt.Sprintf("previous finding %s is %s, but a finding still continues it: it is reported still present", p.ID, p.Status)
+		if len(p.ReportedBy) > 0 {
+			w += fmt.Sprintf(" (%s said %s", strings.Join(p.ReportedBy, ", "), p.Status)
+		} else {
+			w += fmt.Sprintf(" (%s", p.Status)
+		}
+		if p.Evidence != "" {
+			w += ": " + p.Evidence
+		}
+		warnings = append(warnings, w+")")
 		review.PreviousFindings[i] = domain.PreviousStatus{ID: p.ID, Status: domain.PreviousStillPresent, ReportedBy: dedupe(by)}
 	}
 	for _, id := range order {

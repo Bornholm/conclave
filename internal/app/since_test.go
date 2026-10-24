@@ -83,6 +83,14 @@ func TestLoadPrevious(t *testing.T) {
 			t.Errorf("%s: err = %v, want %q", tc.since, err, tc.want)
 		}
 	}
+	anonymous := filepath.Join(t.TempDir(), "review.json")
+	data, _ = json.Marshal(domain.ConsolidatedReview{Meta: domain.ReviewMeta{PRNumber: 7, HeadSHA: "fff"}})
+	if err := os.WriteFile(anonymous, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := loadPrevious(base, repo, pr, anonymous); err == nil || !strings.Contains(err.Error(), "names no pull request URL") {
+		t.Errorf("a review.json that names no repository must be refused: %v", err)
+	}
 	other := &domain.PullRequest{Number: 7, WebURL: "https://github.com/acme/fork/pull/7"}
 	if _, err := loadPrevious(base, repo, other, bare); err == nil || !strings.Contains(err.Error(), "not https://github.com/acme/fork/pull/7") {
 		t.Errorf("a review of another repository's pull request must be refused: %v", err)
@@ -118,7 +126,7 @@ func TestReconcilePrevious(t *testing.T) {
 	if ids := []string{review.PreviousFindings[0].ID, review.PreviousFindings[1].ID, review.PreviousFindings[2].ID}; strings.Join(ids, ",") != "P1,P2,P3" {
 		t.Errorf("order: %v", ids)
 	}
-	if len(warnings) != 1 || !strings.Contains(warnings[0], "P1 is fixed, but a finding still continues it") {
+	if len(warnings) != 1 || !strings.Contains(warnings[0], "P1 is fixed, but a finding still continues it") || !strings.Contains(warnings[0], "(r1 said fixed: done)") {
 		t.Errorf("warnings: %v", warnings)
 	}
 }

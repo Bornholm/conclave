@@ -20,7 +20,7 @@ conclave review 42 --since last --responses answers.txt > round3.md
 | a directory | that run directory |
 | a file | that `review.json` |
 
-The previous review must be of the same pull request, in the same repository: measured against another one's findings, every finding would come out fixed. The pull request's URL in the review and the repository in the run's manifest are checked, and `last` skips the runs of another repository. A run that failed has no `final/review.json`, and `last` skips it.
+The previous review must be of the same pull request, in the same repository: measured against another one's findings, every finding would come out fixed. The pull request's URL in the review and the repository in the run's manifest are checked, and `last` skips the runs of another repository. A `review.json` outside its run directory has only its URL to go by, and one without it, written by hand, is refused. A run that failed has no `final/review.json`, and `last` skips it.
 
 ## What the agents get
 

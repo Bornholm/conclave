@@ -402,3 +402,19 @@ func TestAgentsInstallWarnsAboutAStaleConfiguration(t *testing.T) {
 		t.Fatal("--project with an empty path must fail")
 	}
 }
+
+func TestReadResponsesIsBounded(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "answers.txt")
+	if err := os.WriteFile(path, []byte(strings.Repeat("x", 100)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	data, err := readResponses(path, 10)
+	if err != nil || len(data) != 11 {
+		t.Errorf("file: %d bytes, %v", len(data), err)
+	}
+	stdinReader = strings.NewReader(strings.Repeat("y", 100))
+	defer func() { stdinReader = nil }()
+	if data, err = readResponses("-", 10); err != nil || len(data) != 11 {
+		t.Errorf("stdin: %d bytes, %v", len(data), err)
+	}
+}

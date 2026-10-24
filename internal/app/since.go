@@ -188,8 +188,8 @@ func reconcilePrevious(review *domain.ConsolidatedReview) []string {
 		if !ok || p.Status == domain.PreviousStillPresent {
 			continue
 		}
-		// The status replaced is kept in the warning, so the review still
-		// shows what it claimed and on what grounds.
+		// The status replaced is kept in the warning and among the claims,
+		// so the review still shows what it claimed and on what grounds.
 		w := fmt.Sprintf("previous finding %s is %s, but a finding still continues it: it is reported still present", p.ID, p.Status)
 		if len(p.ReportedBy) > 0 {
 			w += fmt.Sprintf(" (%s said %s", strings.Join(p.ReportedBy, ", "), p.Status)
@@ -200,7 +200,9 @@ func reconcilePrevious(review *domain.ConsolidatedReview) []string {
 			w += ": " + p.Evidence
 		}
 		warnings = append(warnings, w+")")
-		review.PreviousFindings[i] = domain.PreviousStatus{ID: p.ID, Status: domain.PreviousStillPresent, ReportedBy: dedupe(by)}
+		replaced := domain.PreviousClaim{Status: p.Status, Evidence: p.Evidence, ReportedBy: p.ReportedBy}
+		review.PreviousFindings[i] = domain.PreviousStatus{ID: p.ID, Status: domain.PreviousStillPresent, ReportedBy: dedupe(by),
+			Claims: append([]domain.PreviousClaim{replaced}, p.Claims...)}
 	}
 	for _, id := range order {
 		if !seen[id] {

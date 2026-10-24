@@ -95,6 +95,18 @@ type PreviousStatus struct {
 	// ReportedBy lists the reviewers that gave this status; filled by the
 	// lead and by the deterministic consolidation, not by a reviewer.
 	ReportedBy []string `json:"reported_by,omitempty"`
+	// Claims are the statuses given to this finding that Status and Evidence
+	// do not show: a status overruled, by the consolidation or because a
+	// finding still continues it, and a reviewer's evidence for the same
+	// status beyond the one kept. Filled by Conclave, never by an agent.
+	Claims []PreviousClaim `json:"claims,omitempty"`
+}
+
+// PreviousClaim is a status that some reviewers gave a previous finding.
+type PreviousClaim struct {
+	Status     PreviousStatusKind `json:"status"`
+	Evidence   string             `json:"evidence,omitempty"`
+	ReportedBy []string           `json:"reported_by,omitempty"`
 }
 
 // PreviousStatusKind is what became of a previous finding.

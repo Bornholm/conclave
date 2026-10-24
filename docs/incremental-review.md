@@ -58,12 +58,14 @@ Without them, a finding the author rejected comes back on every round, each time
 
 The lead settles each status by reading the code, not by majority, and keeps `still-present` when the code does not settle a disagreement. Without a lead, one reviewer that still sees a problem keeps it.
 
-The statuses and the findings are then made to agree. A finding linked to a previous one says the problem is still there: that previous finding is `still-present`, whatever status it was given, with a warning, since a `fixed` next to a finding still in the review would tell the reader to stop looking. A link to a previous finding with no status gives it `still-present`.
+A status overruled is not lost. Each previous finding's `claims` lists what the reviewers said that its status and evidence do not show: another status, with its evidence and who gave it, or the same status on other evidence. Conclave fills them from the reviewers' own reports, never from what an agent says about another.
+
+The statuses and the findings are then made to agree. A finding linked to a previous one says the problem is still there: that previous finding is `still-present`, whatever status it was given, with a warning, since a `fixed` next to a finding still in the review would tell the reader to stop looking. The status replaced goes first among its claims. A link to a previous finding with no status gives it `still-present`.
 
 A status `still-present` that no finding carries, because the lead forgot to report it again, does not make the problem disappear: Conclave puts the previous finding back as it was written, with a warning, and a critical or high one holds the verdict at `request_changes`. When a finding of the review, in the same file and on lines that overlap, carries no link, it is the same problem reported again without one: it gets the link instead, and the problem is not shown twice.
 
 ## Output
 
-The Markdown gets a "Since the previous review" section: how many findings were fixed, withdrawn, still present and not checked, then the fixed and withdrawn ones with their evidence, and the ones no agent gave a status. A still-present finding is marked as such where it appears. The JSON carries `previous_findings`, each finding's `previous_id`, and `meta.since` with the previous run, its head and its findings.
+The Markdown gets a "Since the previous review" section: how many findings were fixed, withdrawn, still present and not checked, then the fixed and withdrawn ones with their evidence and, under each, the claims it overruled, and the ones no agent gave a status. A still-present finding is marked as such where it appears. The JSON carries `previous_findings` with their `claims`, each finding's `previous_id`, and `meta.since` with the previous run, its head and its findings.
 
 The run directory keeps `context/previous-review.json` and `context/since.patch`, and the manifest records `since_run_id` and `since_head_sha`.

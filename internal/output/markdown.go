@@ -245,6 +245,7 @@ func writeSince(b *strings.Builder, review *domain.ConsolidatedReview, opts Opti
 				fmt.Fprintf(b, " (%s)", strings.Join(p.ReportedBy, ", "))
 			}
 			b.WriteString("\n")
+			writeClaims(b, p.Claims, opts)
 		}
 	}
 	if len(unchecked) > 0 {
@@ -253,6 +254,21 @@ func writeSince(b *strings.Builder, review *domain.ConsolidatedReview, opts Opti
 			writePrevious(b, domain.PreviousID(i), prev.Findings[i])
 			fmt.Fprintf(b, ", %s\n", prev.Findings[i].Severity)
 		}
+	}
+}
+
+// writeClaims renders, under a previous finding, the statuses its reviewers
+// gave it that the one kept does not show.
+func writeClaims(b *strings.Builder, claims []domain.PreviousClaim, opts Options) {
+	for _, c := range claims {
+		b.WriteString("  - also said " + string(c.Status))
+		if e := strings.TrimSpace(c.Evidence); e != "" {
+			b.WriteString(": " + escape(e))
+		}
+		if opts.ShowAttribution && len(c.ReportedBy) > 0 {
+			fmt.Fprintf(b, " (%s)", strings.Join(c.ReportedBy, ", "))
+		}
+		b.WriteString("\n")
 	}
 }
 

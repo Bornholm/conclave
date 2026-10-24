@@ -2,6 +2,7 @@ package consolidation
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -275,13 +276,51 @@ func TestMergePreviousIsConservative(t *testing.T) {
 	if got[1].Status != domain.PreviousFixed || got[2].Status != domain.PreviousWithdrawn {
 		t.Errorf("P2, P10: %+v %+v", got[1], got[2])
 	}
+	// The statuses overruled stay in the review, with their evidence.
+	for i, want := range []string{"fixed:a:r1", "withdrawn:c:r1", ""} {
+		if c := claimsString(got[i].Claims); c != want {
+			t.Errorf("%s claims %q, want %q", got[i].ID, c, want)
+		}
+	}
+}
+
+func claimsString(cs []domain.PreviousClaim) string {
+	var out []string
+	for _, c := range cs {
+		out = append(out, fmt.Sprintf("%s:%s:%s", c.Status, c.Evidence, strings.Join(c.ReportedBy, ",")))
+	}
+	return strings.Join(out, " ")
+}
+
+func TestMergePreviousKeepsEveryReviewersEvidence(t *testing.T) {
+	report := func(evidence string) *domain.AgentReport {
+		return &domain.AgentReport{PreviousFindings: []domain.PreviousStatus{{ID: "P1", Status: domain.PreviousFixed, Evidence: evidence}}}
+	}
+	outcomes := []ReviewerOutcome{{ID: "r1", Report: report("a")}, {ID: "r2", Report: report("b")}, {ID: "r3", Report: report("a")}, {ID: "r4", Report: report("b")}}
+	got := MergePrevious(outcomes)
+	if len(got) != 1 || got[0].Evidence != "a" || strings.Join(got[0].ReportedBy, ",") != "r1,r2,r3,r4" {
+		t.Fatalf("%+v", got)
+	}
+	if c := claimsString(got[0].Claims); c != "fixed:b:r2,r4" {
+		t.Errorf("claims %q", c)
+	}
+	// A status given without evidence takes the first evidence there is.
+	outcomes = []ReviewerOutcome{
+		{ID: "r1", Report: &domain.AgentReport{PreviousFindings: []domain.PreviousStatus{{ID: "P1", Status: domain.PreviousStillPresent}}}},
+		{ID: "r2", Report: &domain.AgentReport{PreviousFindings: []domain.PreviousStatus{{ID: "P1", Status: domain.PreviousStillPresent, Evidence: "a.go:3"}}}},
+	}
+	if got := MergePrevious(outcomes); got[0].Evidence != "a.go:3" || len(got[0].Claims) != 0 {
+		t.Errorf("%+v", got[0])
+	}
 }
 
 func TestParseLeadReviewPrevious(t *testing.T) {
 	raw := `{"schema_version":"1","summary":"ok","verdict":"comment","failed_reviewers":[],
 "findings":[{"category":"security","severity":"high","confidence":0.8,"file":"a.go","start_line":1,"end_line":1,"title":"t","description":"d","reported_by":["r1"],"previous_id":"P5"}],
-"previous_findings":[{"id":"P1","status":"fixed","evidence":"e","reported_by":["r1","ghost"]},{"id":"P2","status":"fixed","evidence":""}]}`
-	outcomes := []ReviewerOutcome{{ID: "r1", Report: &domain.AgentReport{}}}
+"previous_findings":[{"id":"P1","status":"fixed","evidence":"e","reported_by":["r1","ghost"],"claims":[{"status":"withdrawn","evidence":"made up"}]},{"id":"P2","status":"fixed","evidence":""}]}`
+	outcomes := []ReviewerOutcome{{ID: "r1", Report: &domain.AgentReport{PreviousFindings: []domain.PreviousStatus{
+		{ID: "P1", Status: domain.PreviousStillPresent, Evidence: "a.go:1"},
+	}}}}
 	review, warnings, err := ParseLeadReview([]byte(raw), []string{"r1"}, outcomes, nil, nil, 10, 2)
 	if err != nil {
 		t.Fatal(err)
@@ -291,6 +330,11 @@ func TestParseLeadReviewPrevious(t *testing.T) {
 	}
 	if len(review.PreviousFindings) != 1 || strings.Join(review.PreviousFindings[0].ReportedBy, ",") != "r1" {
 		t.Errorf("statuses: %+v", review.PreviousFindings)
+	}
+	// The lead overruled r1: what r1 said stays in the review, and claims
+	// the lead made up are not kept.
+	if c := claimsString(review.PreviousFindings[0].Claims); c != "still-present:a.go:1:r1" {
+		t.Errorf("claims %q", c)
 	}
 	if len(warnings) != 2 {
 		t.Errorf("warnings: %v", warnings)

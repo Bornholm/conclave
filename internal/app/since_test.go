@@ -124,6 +124,9 @@ func TestReconcilePrevious(t *testing.T) {
 	if p := got["P1"]; p.Status != domain.PreviousStillPresent || p.Evidence != "" || strings.Join(p.ReportedBy, ",") != "r2" {
 		t.Errorf("a fixed finding that a finding still continues: %+v", p)
 	}
+	if c := got["P1"].Claims; len(c) != 1 || c[0].Status != domain.PreviousFixed || c[0].Evidence != "done" || strings.Join(c[0].ReportedBy, ",") != "r1" {
+		t.Errorf("the status replaced must stay among the claims: %+v", c)
+	}
 	if got["P2"].Status != domain.PreviousWithdrawn {
 		t.Errorf("an unlinked status must be left alone: %+v", got["P2"])
 	}

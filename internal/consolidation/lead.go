@@ -65,6 +65,7 @@ func ParseLeadReview(raw []byte, succeeded []string, outcomes []ReviewerOutcome,
 	}
 	for i, p := range review.PreviousFindings {
 		review.PreviousFindings[i].ReportedBy = knownOnly(p.ReportedBy, known)
+		review.PreviousFindings[i].Claims = claims(review.PreviousFindings[i], outcomes)
 	}
 	review.Findings = kept
 	if review.Findings == nil {

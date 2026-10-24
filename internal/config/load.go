@@ -83,6 +83,9 @@ func readFile(path string, inherited bool) (*yaml.Node, bool, bool, error) {
 		if inherited && errors.Is(err, fs.ErrNotExist) {
 			return nil, false, false, nil
 		}
+		if inherited && errors.Is(err, fs.ErrPermission) {
+			return nil, false, false, fmt.Errorf("open: %w: add inherits: false below it to stop inheriting it", err)
+		}
 		return nil, false, false, fmt.Errorf("open: %w", err)
 	}
 	defer f.Close()
@@ -113,6 +116,16 @@ func readFile(path string, inherited bool) (*yaml.Node, bool, bool, error) {
 	}
 	if cfg.Version != 0 && cfg.Version != CurrentVersion {
 		return nil, false, false, fmt.Errorf("version: must be %d, got %d", CurrentVersion, cfg.Version)
+	}
+	// Agents merge by id: two with the same id in one file would be folded
+	// into one by the merge, where the merged validation can no longer see
+	// them.
+	ids := map[string]bool{}
+	for _, a := range cfg.Agents {
+		if a.ID != "" && ids[a.ID] {
+			return nil, false, false, fmt.Errorf("agents[%s].id: duplicate", a.ID)
+		}
+		ids[a.ID] = true
 	}
 	var doc yaml.Node
 	if err := yaml.Unmarshal(data, &doc); err != nil {
@@ -216,9 +229,30 @@ func Decode(r io.Reader) (*Config, error) {
 		}
 		return nil, fmt.Errorf("decode YAML: %w", err)
 	}
+	if err := dropDisabled(&cfg); err != nil {
+		return nil, err
+	}
 	applyDefaults(&cfg)
 	if err := Validate(&cfg); err != nil {
 		return nil, err
 	}
 	return &cfg, nil
+}
+
+// dropDisabled leaves out the agents marked disabled. One with no command is
+// only the mark, an entry of its own that matched no inherited agent: its id
+// is wrong, and saying nothing would leave the agent it meant running.
+func dropDisabled(cfg *Config) error {
+	kept := cfg.Agents[:0]
+	for _, a := range cfg.Agents {
+		if !a.Disabled {
+			kept = append(kept, a)
+			continue
+		}
+		if len(a.Command) == 0 {
+			return fmt.Errorf("agents[%s]: disabled, but no agent %s is declared to disable", a.ID, a.ID)
+		}
+	}
+	cfg.Agents = kept
+	return nil
 }

@@ -230,6 +230,9 @@ type AgentConfig struct {
 	InheritEnv        *bool             `yaml:"inherit_env"`
 	AllowProtectedEnv bool              `yaml:"allow_protected_env"`
 	Timeout           time.Duration     `yaml:"timeout"`
+	// Disabled leaves the agent out, typically one a project inherits and
+	// must not run: {id: claude, disabled: true}.
+	Disabled bool `yaml:"disabled"`
 }
 
 // Inherited returns the files this configuration inherited, the farthest

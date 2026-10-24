@@ -14,6 +14,10 @@ import (
 	"github.com/bornholm/conclave/internal/testutil"
 )
 
+// isolated starts a configuration a test writes: it inherits nothing from
+// the directories above the test's own.
+const isolated = "inherits: false\n"
+
 func TestConfigValidateListsTheInheritedFiles(t *testing.T) {
 	top := t.TempDir()
 	parent := filepath.Join(top, ".conclave.yaml")
@@ -38,7 +42,7 @@ func TestMainCommands(t *testing.T) {
 		t.Errorf("example: %d", code)
 	}
 	cfg := filepath.Join(t.TempDir(), "c.yaml")
-	os.WriteFile(cfg, out.Bytes(), 0o644)
+	os.WriteFile(cfg, append([]byte(isolated), out.Bytes()...), 0o644)
 	out.Reset()
 	bad := strings.Replace(string(readFile(t, cfg)), "max_parallel", "max_paralel", 1)
 	badPath := filepath.Join(t.TempDir(), "bad.yaml")
@@ -113,6 +117,7 @@ func askConfig(t *testing.T) string {
 	path := filepath.Join(t.TempDir(), "c.yaml")
 	if err := os.WriteFile(path, []byte(`
 version: 1
+inherits: false
 forge:
   provider: github
 agents:
@@ -230,6 +235,7 @@ func askAgentConfig(t *testing.T) string {
 	path := filepath.Join(t.TempDir(), "c.yaml")
 	body := `
 version: 1
+inherits: false
 forge:
   provider: github
 ask:
@@ -379,7 +385,7 @@ func TestAgentsInstall(t *testing.T) {
 	}
 
 	// With --project, the configuration checked is the one at its root.
-	stale := strings.Replace(exampleConfig, "      - --\n    input: argument", "      - --deadline-env-prefix\n      - CONCLAVE\n      - --\n    input: argument", 1)
+	stale := isolated + strings.Replace(exampleConfig, "      - --\n    input: argument", "      - --deadline-env-prefix\n      - CONCLAVE\n      - --\n    input: argument", 1)
 	if err := os.WriteFile(filepath.Join(repo, ".conclave.yaml"), []byte(stale), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -396,8 +402,8 @@ func TestAgentsInstall(t *testing.T) {
 
 func TestAgentsInstallWarnsAboutAStaleConfiguration(t *testing.T) {
 	t.Setenv("PI_CODING_AGENT_DIR", t.TempDir())
-	stale := strings.Replace(exampleConfig, "      - --\n    input: argument", "      - --extension\n      - /x/deadline.ts\n      - --deadline-env-prefix\n      - CONCLAVE\n      - --\n    input: argument", 1)
-	if stale == exampleConfig {
+	stale := isolated + strings.Replace(exampleConfig, "      - --\n    input: argument", "      - --extension\n      - /x/deadline.ts\n      - --deadline-env-prefix\n      - CONCLAVE\n      - --\n    input: argument", 1)
+	if stale == isolated+exampleConfig {
 		t.Fatal("the example no longer has the pi agent this test edits")
 	}
 	cfg := filepath.Join(t.TempDir(), "c.yaml")

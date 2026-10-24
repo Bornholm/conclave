@@ -245,3 +245,44 @@ agents:
 		t.Errorf("inherits is not part of the merged configuration: %v", *cfg.Inherits)
 	}
 }
+
+func TestLoadDisablesAnInheritedAgent(t *testing.T) {
+	top := t.TempDir()
+	writeConfig(t, filepath.Join(top, DefaultFileName), `
+version: 1
+inherits: false
+agents:
+  - {id: rev, role: reviewer, command: [pi]}
+  - {id: claude, role: reviewer, command: [claude]}
+  - {id: lead, role: lead, command: [pi]}
+`)
+	project := filepath.Join(top, "project", DefaultFileName)
+	writeConfig(t, project, "forge: {provider: github}\nagents:\n  - {id: claude, disabled: true}\n")
+	cfg, err := Load(project)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var ids []string
+	for _, a := range cfg.Agents {
+		ids = append(ids, a.ID)
+	}
+	if strings.Join(ids, ",") != "rev,lead" {
+		t.Errorf("agents: %v", ids)
+	}
+	// A mark that matches no inherited agent is a wrong id, not a no-op.
+	writeConfig(t, project, "forge: {provider: github}\nagents:\n  - {id: cluade, disabled: true}\n")
+	if _, err := Load(project); err == nil || !strings.Contains(err.Error(), "no agent cluade is declared") {
+		t.Errorf("a disabled id that matches nothing: %v", err)
+	}
+}
+
+func TestLoadRefusesTwoAgentsWithOneIDInAFile(t *testing.T) {
+	top := t.TempDir()
+	writeConfig(t, filepath.Join(top, DefaultFileName), "version: 1\ninherits: false\nagents: [{id: lead, role: lead, command: [pi]}]\n")
+	project := filepath.Join(top, "project", DefaultFileName)
+	// Merged over the parent's agents, the two would be folded into one.
+	writeConfig(t, project, "forge: {provider: github}\nagents:\n  - {id: rev, role: reviewer, command: [pi]}\n  - {id: rev, model: x}\n")
+	if _, err := Load(project); err == nil || !strings.Contains(err.Error(), project) || !strings.Contains(err.Error(), "agents[rev].id: duplicate") {
+		t.Errorf("a duplicate id must be refused against its file: %v", err)
+	}
+}

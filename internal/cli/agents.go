@@ -126,6 +126,10 @@ func runAgentsCheck(ctx context.Context, args []string, stdout, stderr io.Writer
 	if err != nil {
 		return err
 	}
+	// An inherited file can declare the commands checked below.
+	for _, src := range cfg.Inherited() {
+		fmt.Fprintf(stdout, "✓ inherits %s\n", src)
+	}
 	failed := 0
 	for _, a := range cfg.Agents {
 		path, err := agent.Check(a)

@@ -10,13 +10,20 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
+
+	"github.com/bornholm/conclave/internal/integration"
 )
 
 // Version is set at build time with -ldflags "-X .../cli.Version=x".
 var Version = "dev"
 
-const usage = `conclave — multi-agent pull request review
+// usage lists the installable agents from the integration package, so that
+// adding one never leaves this text behind.
+var usage = strings.Replace(usageText, "AGENTS", strings.Join(integration.Agents(), "|"), 1)
+
+const usageText = `conclave — multi-agent pull request review
 
 Usage:
   conclave review <number> [--config PATH] [--format markdown|json] [--keep-worktrees] [--verbose]
@@ -30,7 +37,7 @@ Usage:
   conclave config validate [--config PATH]
   conclave config example
   conclave agents check [--config PATH]
-  conclave agents install pi|claude|opencode [--project PATH] [--force]
+  conclave agents install AGENTS [--project PATH] [--force]
   conclave version
 `
 

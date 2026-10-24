@@ -97,7 +97,9 @@ func userRoot(env, xdg, xdgName string, dir ...string) func() (string, error) {
 	return func() (string, error) {
 		if env != "" {
 			if d := os.Getenv(env); d != "" {
-				// Absolute, so the install does not depend on where it is run.
+				// A relative value is the agent's own reading of it, against
+				// the current directory; made absolute so that the paths
+				// reported and written do not change if the directory does.
 				return filepath.Abs(d)
 			}
 		}

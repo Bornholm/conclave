@@ -89,20 +89,28 @@ func runAgentsInstall(ctx context.Context, args []string, stdout, stderr io.Writ
 }
 
 // staleCommands warns about agents of the configuration at path whose command
-// still loads or configures what the install replaces. A missing or invalid
-// configuration is not this command's concern: it says nothing then.
+// still loads or configures what the install replaces. A missing
+// configuration is not this command's concern: it says nothing then. One
+// that does not load, an inherited file refused for instance, is said, since
+// its commands then go unchecked.
 func staleCommands(a integration.Agent, path string) []string {
 	if _, err := os.Stat(path); err != nil {
 		return nil
 	}
 	cfg, err := config.Load(path)
 	if err != nil {
-		return nil
+		return []string{fmt.Sprintf("agent commands not checked: %v", err)}
+	}
+	// A stale command may come from an inherited file, which is where it
+	// must be removed.
+	where := path
+	if inherited := cfg.Inherited(); len(inherited) > 0 {
+		where = fmt.Sprintf("%s or a file it inherits (%s)", path, strings.Join(inherited, ", "))
 	}
 	var warnings []string
 	for _, ag := range cfg.Agents {
 		if stale := a.StaleArgs(ag.Command); len(stale) > 0 {
-			warnings = append(warnings, fmt.Sprintf("%s: agent %s still passes %s, which the installed files replace: remove it from its command", path, ag.ID, strings.Join(stale, " ")))
+			warnings = append(warnings, fmt.Sprintf("%s: agent %s still passes %s, which the installed files replace: remove it from its command", where, ag.ID, strings.Join(stale, " ")))
 		}
 	}
 	return warnings

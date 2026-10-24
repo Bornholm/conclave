@@ -286,3 +286,26 @@ func TestLoadRefusesTwoAgentsWithOneIDInAFile(t *testing.T) {
 		t.Errorf("a duplicate id must be refused against its file: %v", err)
 	}
 }
+
+func TestLoadKeepsMergeKeysAndRefusesARecursiveAnchor(t *testing.T) {
+	p := filepath.Join(t.TempDir(), DefaultFileName)
+	writeConfig(t, p, `
+version: 1
+inherits: false
+forge: {provider: github}
+agents:
+  - &base {id: rev, role: reviewer, command: [pi]}
+  - {<<: *base, id: rev2}
+  - {id: lead, role: lead, command: [pi]}
+`)
+	cfg, err := Load(p)
+	if err != nil || len(cfg.Agents) != 3 || cfg.Agents[1].Role != RoleReviewer || cfg.Agents[1].Command[0] != "pi" {
+		t.Fatalf("a merge key must survive the alias expansion: %v %+v", err, cfg)
+	}
+	// No field of the configuration can hold itself: the typed decode
+	// refuses a recursive anchor before the aliases are expanded.
+	writeConfig(t, p, "version: 1\ninherits: false\nagents: &a [*a]\n")
+	if _, err := Load(p); err == nil {
+		t.Error("a recursive anchor must be refused")
+	}
+}

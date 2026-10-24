@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -57,15 +58,14 @@ func Load(path string) (*Config, error) {
 	if err != nil {
 		return nil, fmt.Errorf("configuration %q: %w", path, err)
 	}
+	// From here the sources read the farthest first, as everywhere else.
+	slices.Reverse(sources)
 	cfg, err := Decode(bytes.NewReader(data))
 	if err != nil {
 		if len(sources) > 1 {
-			return nil, fmt.Errorf("configuration %q, merged with %s: %w", path, strings.Join(sources[1:], ", "), err)
+			return nil, fmt.Errorf("configuration %q, merged with %s: %w", path, strings.Join(sources[:len(sources)-1], ", "), err)
 		}
 		return nil, fmt.Errorf("configuration %q: %w", path, err)
-	}
-	for i, j := 0, len(sources)-1; i < j; i, j = i+1, j-1 {
-		sources[i], sources[j] = sources[j], sources[i]
 	}
 	cfg.Sources = sources
 	return cfg, nil
@@ -140,7 +140,9 @@ func readFile(path string, inherited bool) (*yaml.Node, bool, bool, error) {
 }
 
 // expandAliases replaces every alias under n by a copy of the node it points
-// to, so that the tree no longer depends on where its anchors are.
+// to, so that the tree no longer depends on where its anchors are. A
+// recursive anchor never gets here: no field of Config can hold itself, so
+// the typed decode before it refuses one.
 func expandAliases(n *yaml.Node) *yaml.Node {
 	if n.Kind == yaml.AliasNode {
 		n = expandAliases(n.Alias)

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/bornholm/conclave/internal/domain"
+	"github.com/bornholm/conclave/internal/integration"
 	"github.com/bornholm/conclave/internal/testutil"
 )
 
@@ -471,5 +472,32 @@ func TestAgentsInstallClaudeAndOpencode(t *testing.T) {
 func TestExampleConfigMatchesTheRepositoryOne(t *testing.T) {
 	if want := readFile(t, filepath.Join("..", "..", ".conclave.example.yaml")); string(want) != exampleConfig {
 		t.Error("internal/cli/example.yaml differs from .conclave.example.yaml: copy one onto the other")
+	}
+}
+
+func TestStaleCommandsSaysWhenTheConfigurationDoesNotLoad(t *testing.T) {
+	pi, err := integration.Lookup("pi")
+	if err != nil {
+		t.Fatal(err)
+	}
+	top := t.TempDir()
+	parent := filepath.Join(top, ".conclave.yaml")
+	os.WriteFile(parent, []byte(isolated+"version: 1\n"), 0o644)
+	if err := os.Chmod(parent, 0o666); err != nil {
+		t.Fatal(err)
+	}
+	os.MkdirAll(filepath.Join(top, "project"), 0o755)
+	project := filepath.Join(top, "project", ".conclave.yaml")
+	stale := strings.Replace(exampleConfig, "      - --\n    input: argument", "      - --deadline-env-prefix\n      - CONCLAVE\n      - --\n    input: argument", 1)
+	os.WriteFile(project, []byte(stale), 0o644)
+	// The parent others can write is refused: the commands go unchecked,
+	// and the install says so instead of saying nothing.
+	if w := staleCommands(pi, project); len(w) != 1 || !strings.Contains(w[0], "agent commands not checked") || !strings.Contains(w[0], parent) {
+		t.Errorf("warnings: %q", w)
+	}
+	// Loaded, a stale command is pointed at the inherited files as well.
+	os.Chmod(parent, 0o644)
+	if w := staleCommands(pi, project); len(w) != 1 || !strings.Contains(w[0], "or a file it inherits ("+parent+")") {
+		t.Errorf("warnings: %q", w)
 	}
 }

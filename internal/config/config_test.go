@@ -1,6 +1,8 @@
 package config
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -88,5 +90,128 @@ func TestProtectedEnvAllowed(t *testing.T) {
 	y := strings.Replace(validYAML, "command: [echo]", "command: [echo]\n    environment: {HOME: /x}\n    allow_protected_env: true", 1)
 	if _, err := Decode(strings.NewReader(y)); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// writeConfig writes a configuration file, creating its directory.
+func writeConfig(t *testing.T, path, content string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestLoadInheritsTheParentDirectories(t *testing.T) {
+	top := t.TempDir()
+	writeConfig(t, filepath.Join(top, DefaultFileName), `
+version: 1
+review:
+  timeout: 20m
+  diff_exclude: ["*.min.css"]
+agents:
+  - id: rev
+    role: reviewer
+    command: [pi, --model, a]
+    environment: {A: "1"}
+  - id: lead
+    role: lead
+    command: [pi]
+`)
+	// A directory between the two without a configuration is skipped.
+	project := filepath.Join(top, "group", "middle", "project")
+	writeConfig(t, filepath.Join(top, "group", DefaultFileName), `
+review:
+  agent_timeout: 5m
+`)
+	writeConfig(t, filepath.Join(project, DefaultFileName), `
+forge:
+  provider: github
+review:
+  diff_exclude: ["*_templ.go"]
+agents:
+  - id: rev
+    model: b
+    environment: {B: "2"}
+  - id: rev2
+    role: reviewer
+    command: [claude]
+`)
+	cfg, err := Load(filepath.Join(project, DefaultFileName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{filepath.Join(top, DefaultFileName), filepath.Join(top, "group", DefaultFileName), filepath.Join(project, DefaultFileName)}
+	if strings.Join(cfg.Sources, "\n") != strings.Join(want, "\n") {
+		t.Errorf("sources: %v", cfg.Sources)
+	}
+	if cfg.Forge.Provider != ProviderGitHub || cfg.Review.Timeout != 20*time.Minute || cfg.Review.AgentTimeout != 5*time.Minute {
+		t.Errorf("fields: %+v %+v", cfg.Forge, cfg.Review)
+	}
+	// A list other than the agents replaces the inherited one.
+	if strings.Join(cfg.Review.DiffExclude, ",") != "*_templ.go" {
+		t.Errorf("diff_exclude: %v", cfg.Review.DiffExclude)
+	}
+	// The agents merge by id: rev keeps its command and gains a model,
+	// rev2 is added after the inherited ones.
+	var ids []string
+	for _, a := range cfg.Agents {
+		ids = append(ids, a.ID)
+	}
+	if strings.Join(ids, ",") != "rev,lead,rev2" {
+		t.Fatalf("agents: %v", ids)
+	}
+	rev := cfg.Agents[0]
+	if strings.Join(rev.Command, " ") != "pi --model a" || rev.Model != "b" || rev.Environment["A"] != "1" || rev.Environment["B"] != "2" {
+		t.Errorf("rev: %+v", rev)
+	}
+}
+
+func TestLoadStopsAtARootConfiguration(t *testing.T) {
+	top := t.TempDir()
+	writeConfig(t, filepath.Join(top, DefaultFileName), "version: 1\nreview:\n  timeout: 20m\n")
+	project := filepath.Join(top, "project")
+	writeConfig(t, filepath.Join(project, DefaultFileName), "root: true\n"+validYAML)
+	cfg, err := Load(filepath.Join(project, DefaultFileName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.Sources) != 1 || cfg.Review.Timeout != 20*time.Minute {
+		t.Errorf("a root configuration must not inherit: %v %v", cfg.Sources, cfg.Review.Timeout)
+	}
+	// With "root: true" on the parent, its own parents are not read.
+	writeConfig(t, filepath.Join(top, DefaultFileName), "version: 1\nreview:\n  timeout: nope\n")
+	writeConfig(t, filepath.Join(project, "group", DefaultFileName), "root: true\nreview:\n  timeout: 10m\n")
+	writeConfig(t, filepath.Join(project, "group", "leaf", DefaultFileName), "forge:\n  provider: github\nagents: [{id: rev, role: reviewer, command: [echo]}, {id: lead, role: lead, command: [echo]}]\nversion: 1\n")
+	cfg, err = Load(filepath.Join(project, "group", "leaf", DefaultFileName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.Sources) != 2 || cfg.Review.Timeout != 10*time.Minute {
+		t.Errorf("sources %v timeout %v", cfg.Sources, cfg.Review.Timeout)
+	}
+}
+
+func TestLoadNamesTheInheritedFileAtFault(t *testing.T) {
+	top := t.TempDir()
+	parent := filepath.Join(top, DefaultFileName)
+	writeConfig(t, parent, "version: 1\nreveiw: {}\n")
+	project := filepath.Join(top, "project", DefaultFileName)
+	writeConfig(t, project, validYAML)
+	if _, err := Load(project); err == nil || !strings.Contains(err.Error(), parent) || !strings.Contains(err.Error(), "reveiw") {
+		t.Errorf("an unknown field in a parent must name the parent: %v", err)
+	}
+	writeConfig(t, parent, "version: 2\n")
+	if _, err := Load(project); err == nil || !strings.Contains(err.Error(), parent) || !strings.Contains(err.Error(), "version: must be 1") {
+		t.Errorf("another version in a parent: %v", err)
+	}
+	// The merged result is validated: a parent cannot be left incomplete
+	// unless the project completes it, and the error names both.
+	writeConfig(t, parent, "version: 1\n")
+	writeConfig(t, project, "agents: []\n")
+	if _, err := Load(project); err == nil || !strings.Contains(err.Error(), "merged with "+parent) || !strings.Contains(err.Error(), "forge.provider") {
+		t.Errorf("merged validation: %v", err)
 	}
 }

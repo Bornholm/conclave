@@ -88,6 +88,7 @@ func runTriage(ctx context.Context, args []string, stdout, stderr io.Writer) err
 		cfg.Output.Format = *format
 	}
 	logger := newLogger(stderr, *verbose)
+	logInherited(logger, cfg)
 	for _, w := range config.Warnings(cfg) {
 		logger.Warn(w)
 	}

@@ -14,6 +14,20 @@ import (
 	"github.com/bornholm/conclave/internal/testutil"
 )
 
+func TestConfigValidateListsTheInheritedFiles(t *testing.T) {
+	top := t.TempDir()
+	parent := filepath.Join(top, ".conclave.yaml")
+	os.WriteFile(parent, []byte("version: 1\nagents: [{id: rev, role: reviewer, command: [echo]}, {id: lead, role: lead, command: [echo]}]\n"), 0o644)
+	os.MkdirAll(filepath.Join(top, "project"), 0o755)
+	project := filepath.Join(top, "project", ".conclave.yaml")
+	os.WriteFile(project, []byte("forge: {provider: github}\n"), 0o644)
+	var out, errb bytes.Buffer
+	Main([]string{"config", "validate", "--config", project}, &out, &errb)
+	if !strings.Contains(out.String(), "valid\n✓ inherits "+parent+"\n") {
+		t.Errorf("validate: %s", out.String())
+	}
+}
+
 func TestMainCommands(t *testing.T) {
 	var out, errb bytes.Buffer
 	if code := Main([]string{"version"}, &out, &errb); code != 0 || !strings.Contains(out.String(), "conclave") {

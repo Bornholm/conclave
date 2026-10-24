@@ -1,5 +1,8 @@
 # Conclave configuration. Copy to .conclave.yaml at the repository root.
 version: 1
+# It inherits the .conclave.yaml files of the directories above it, merged
+# under this one (see docs/configuration.md); `root: true` stops that.
+# root: true
 
 forge:
   provider: github          # github | gitea | redmine

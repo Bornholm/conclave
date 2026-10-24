@@ -13,6 +13,7 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/bornholm/conclave/internal/config"
 	"github.com/bornholm/conclave/internal/integration"
 )
 
@@ -91,6 +92,14 @@ func newLogger(w io.Writer, verbose bool) *slog.Logger {
 		level = slog.LevelDebug
 	}
 	return slog.New(slog.NewTextHandler(w, &slog.HandlerOptions{Level: level}))
+}
+
+// logInherited names the configuration files inherited, on every run: they
+// can declare agents, that is commands the run executes.
+func logInherited(logger *slog.Logger, cfg *config.Config) {
+	for _, src := range cfg.Sources[:max(len(cfg.Sources)-1, 0)] {
+		logger.Info("configuration inherited", "file", src)
+	}
 }
 
 func newFlagSet(name string, stderr io.Writer) *flag.FlagSet {

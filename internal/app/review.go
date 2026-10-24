@@ -55,9 +55,11 @@ type run struct {
 	wtBase    string
 	diff      []byte
 	diffTrunc bool
-	// diffIndex is set when the diff is too large to inline: reviewers
-	// then read it from DiffFileName in their worktree.
+	// diffIndex is set when the diff is too large to inline, or when the
+	// review is incremental: reviewers then read it from DiffFileName in
+	// their worktree. diffSince says it is the latter.
 	diffIndex *prompt.DiffIndex
+	diffSince bool
 	changed   map[string]bool
 	runner    *agent.Runner
 	// previous is the review an incremental review is measured against, nil
@@ -225,10 +227,14 @@ func (a *App) Review(ctx context.Context, req ReviewRequest) (*ReviewResult, err
 			return nil, err
 		}
 		_ = store.Write("context", "diff.patch", r.diff)
-		if int64(len(r.diff)) > cfg.InlineDiffBytes() {
+		// An incremental review starts from the changes since the previous
+		// one: the whole diff, read on every turn of every agent when inlined,
+		// is given as a file, read where those changes lead.
+		large := int64(len(r.diff)) > cfg.InlineDiffBytes()
+		if large || len(r.sinceDiffText) > 0 {
 			idx := prompt.IndexDiff(r.diff)
-			r.diffIndex = &idx
-			log.Info("diff given as a file", "bytes", idx.Bytes, "lines", idx.Lines, "files", len(idx.Sections)+idx.Omitted)
+			r.diffIndex, r.diffSince = &idx, !large
+			log.Info("diff given as a file", "bytes", idx.Bytes, "lines", idx.Lines, "files", len(idx.Sections)+idx.Omitted, "incremental", !large)
 		}
 	}
 
@@ -478,7 +484,7 @@ func (a *App) runReviewer(ctx context.Context, r *run, rv config.AgentConfig, wo
 			ex.Error = err.Error()
 			return ex, nil, err
 		}
-		in.Diff, in.DiffFile, in.DiffIndex = "", DiffFileName, *r.diffIndex
+		in.Diff, in.DiffFile, in.DiffIndex, in.DiffSince = "", DiffFileName, *r.diffIndex, r.diffSince
 	}
 	since, err := r.since(worktree, true)
 	if err != nil {

@@ -1135,6 +1135,11 @@ func TestIncrementalReview(t *testing.T) {
 			t.Errorf("reviewer prompt lacks %q", want)
 		}
 	}
+	// The whole diff is a file away: the changes since the previous review
+	// are what the reviewer starts from.
+	if !strings.Contains(string(p), "DIFF FILE (git diff") || !strings.Contains(string(p), "review is incremental") || strings.Contains(string(p), "DIFF (git diff "+rv.Meta.MergeBaseSHA) {
+		t.Errorf("the whole diff is not given as a file:\n%s", p)
+	}
 	if lp, _ := os.ReadFile(filepath.Join(res.RunDir, "prompts", "lead.txt")); !strings.Contains(string(lp), "Settle each one") {
 		t.Error("the lead prompt lacks the previous review")
 	}

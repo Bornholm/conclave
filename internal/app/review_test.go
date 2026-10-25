@@ -23,6 +23,7 @@ import (
 	"github.com/bornholm/conclave/internal/domain"
 	"github.com/bornholm/conclave/internal/forge"
 	"github.com/bornholm/conclave/internal/output"
+	"github.com/bornholm/conclave/internal/prompt"
 	"github.com/bornholm/conclave/internal/testutil"
 )
 
@@ -1681,5 +1682,20 @@ func TestCollectExcerpts(t *testing.T) {
 	// A finding given whole has no note.
 	if strings.Contains(all, "z.go:4-4") || strings.Contains(all, "wide.go:1-1") {
 		t.Errorf("a finding given whole is noted:\n%s", all)
+	}
+}
+
+// TestLeadPromptLeavesTheExcerptsOutOverTheArgumentLimit: given as an
+// argument, a prompt over the limit fails the lead outright.
+func TestLeadPromptLeavesTheExcerptsOutOverTheArgumentLimit(t *testing.T) {
+	in := prompt.LeadInput{AgentID: "lead", PR: &domain.PullRequest{},
+		Excerpts: []prompt.Excerpt{{File: "a.go", Start: 1, End: 1, Text: strings.Repeat("x", config.MaxArgBytes)}}}
+	p, dropped, err := leadPrompt(in, config.InputArgument)
+	if err != nil || !dropped || strings.Contains(string(p), "CODE AT THE CITED LINES") {
+		t.Errorf("argument: dropped=%v err=%v", dropped, err)
+	}
+	p, dropped, err = leadPrompt(in, config.InputStdin)
+	if err != nil || dropped || !strings.Contains(string(p), "CODE AT THE CITED LINES") {
+		t.Errorf("stdin: dropped=%v err=%v", dropped, err)
 	}
 }

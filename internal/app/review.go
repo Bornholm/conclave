@@ -986,14 +986,17 @@ func (a *App) runLead(ctx context.Context, r *run, lead config.AgentConfig, work
 		return nil, nil, err
 	}
 	a.warnSince(r, warning)
-	excerpts, notes := r.excerpts(ctx, log, reports)
-	p, err := prompt.Lead(prompt.LeadInput{
+	in := prompt.LeadInput{
 		AgentID: lead.ID, Worktree: worktree, PR: r.pr, MergeBaseSHA: r.pr.MergeBaseSHA, HeadSHA: r.pr.Head.SHA,
 		SucceededReviewers: succeeded, FailedReviewers: consolidation.FailedReviewers(outcomes),
 		Reports: reports, Groups: groups, MaxFindings: r.cfg.Review.Limits.MaxFindings,
 		Budget: timeBudget(ctx, r.cfg, lead), Since: since,
-		Excerpts: excerpts, ExcerptNotes: notes,
-	})
+	}
+	in.Excerpts, in.ExcerptNotes = r.excerpts(ctx, log, reports)
+	p, dropped, err := leadPrompt(in, lead.Input)
+	if dropped {
+		log.Warn("lead prompt over the single-argument limit, the cited lines are left out", "agent", lead.ID)
+	}
 	if err != nil {
 		ex.Error = err.Error()
 		return nil, nil, err

@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/bornholm/conclave/internal/config"
 	"github.com/bornholm/conclave/internal/domain"
 	"github.com/bornholm/conclave/internal/prompt"
 )
@@ -185,4 +186,17 @@ func mergeRanges(in []lineRange) []lineRange {
 		out = append(out, lr)
 	}
 	return out
+}
+
+// leadPrompt renders the lead prompt, without the excerpts when they would
+// put a prompt passed as an argument over the single-argument limit: they
+// save the lead reads, they must not cost it the run.
+func leadPrompt(in prompt.LeadInput, input string) ([]byte, bool, error) {
+	p, err := prompt.Lead(in)
+	if err != nil || input != config.InputArgument || len(p) < config.MaxArgBytes || len(in.Excerpts) == 0 {
+		return p, false, err
+	}
+	in.Excerpts, in.ExcerptNotes = nil, nil
+	p, err = prompt.Lead(in)
+	return p, true, err
 }

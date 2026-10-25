@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -286,6 +287,24 @@ func (g *Git) WorktreeHead(ctx context.Context, path string) (string, error) {
 func (g *Git) PathExistsAt(ctx context.Context, sha, path string) bool {
 	_, err := g.run(ctx, "cat-file", "-e", sha+":"+path)
 	return err == nil
+}
+
+// FileAt returns the content of path in the tree of the given commit, or an
+// error when it is not a file there or is larger than limit bytes.
+func (g *Git) FileAt(ctx context.Context, sha, path string, limit int64) ([]byte, error) {
+	obj := sha + ":" + path
+	size, err := g.run(ctx, "cat-file", "-s", obj)
+	if err != nil {
+		return nil, err
+	}
+	if n, err := strconv.ParseInt(strings.TrimSpace(size), 10, 64); err != nil || n > limit {
+		return nil, fmt.Errorf("%s: larger than %d bytes", path, limit)
+	}
+	out, err := g.run(ctx, "cat-file", "blob", obj)
+	if err != nil {
+		return nil, err
+	}
+	return []byte(out), nil
 }
 
 // PullRequestRef returns the hidden ref forges expose for a pull request head.

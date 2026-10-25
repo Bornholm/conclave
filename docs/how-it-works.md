@@ -43,6 +43,8 @@ The prompt names the worktree as the only directory the agent may use. That sent
 
 The lead's prompt is strict on purpose. It drops a finding only after verifying in the code that it is wrong. It does not lower the severity of a finding two reviewers agree on without citing the code. It judges the merged state on its own merits, so "it was already broken before" is not a reason to accept a new failure. When it hesitates between two verdicts, it takes the stricter one.
 
+The lead is given the lines each finding cites, at the head commit, with six lines around them, up to 64 KB in all. Measured on real runs, it spent 6 to 11 minutes in 11 to 16 turns, most of each one reasoning again before reading the cited lines once more: a turn cost it close to a minute, a read a few seconds. It is told to check the findings against those lines first, to open a file only for what they cannot settle (code elsewhere, a contradiction between reviewers, a critical or high finding whose mechanism they do not show), and to ask for all its reads in one message.
+
 ## Why several agents
 
 On the pull request this tool was built against, no single reviewer found every real problem, and the one that found the most was not the same from one run to the next. Three reviewers with different models and tools, plus a lead that has to justify what it drops, catch more than one agent asked three times.

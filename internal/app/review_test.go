@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -235,6 +236,11 @@ func TestReviewEndToEnd(t *testing.T) {
 		if !strings.Contains(string(p), want) {
 			t.Errorf("prompt lacks %q", want)
 		}
+	}
+	// The lead is given the lines the findings cite, at the head commit.
+	lp, _ := os.ReadFile(filepath.Join(res.RunDir, "prompts", "lead.txt"))
+	if !strings.Contains(string(lp), "--- BEGIN UNTRUSTED CODE changed.txt:1-2 ---\n     1  a\n     2  B\n--- END UNTRUSTED CODE ---") {
+		t.Errorf("the lead prompt lacks the cited lines:\n%s", lp)
 	}
 	// Worktrees removed.
 	entries, _ := os.ReadDir(a.WorktreeBase)
@@ -1578,5 +1584,13 @@ func TestReviewDoesNotAskAgainAReviewerStoppedDuringItsRetry(t *testing.T) {
 	}
 	if r1 := execution(res, "r1"); r1.Succeeded || r1.ReportRetries != 1 || !strings.Contains(r1.Error, "stopped once the other reviewers had reported") {
 		t.Errorf("manifest: %+v", r1)
+	}
+}
+
+func TestMergeRanges(t *testing.T) {
+	got := mergeRanges([]lineRange{{20, 30}, {1, 5}, {6, 8}, {25, 40}, {50, 52}})
+	want := []lineRange{{1, 8}, {20, 40}, {50, 52}}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("got %v, want %v", got, want)
 	}
 }

@@ -152,6 +152,23 @@ func TestLeadPrompt(t *testing.T) {
 	}
 }
 
+func TestLeadPromptExcerpts(t *testing.T) {
+	out, err := Lead(LeadInput{AgentID: "lead", PR: &domain.PullRequest{},
+		Excerpts: []Excerpt{{File: "a.go", Start: 3, End: 4, Text: "     3  x\n     4  y\n"}}, ExcerptsOmitted: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"Start from CODE AT THE CITED LINES", "--- BEGIN UNTRUSTED CODE a.go:3-4 ---\n     3  x\n     4  y\n--- END UNTRUSTED CODE ---", "2 more ranges were left out"} {
+		if !strings.Contains(string(out), want) {
+			t.Errorf("prompt lacks %q", want)
+		}
+	}
+	out, _ = Lead(LeadInput{AgentID: "lead", PR: &domain.PullRequest{}})
+	if strings.Contains(string(out), "CODE AT THE CITED LINES\nThe lines") {
+		t.Error("an empty excerpts section is rendered")
+	}
+}
+
 func TestReviewerRetryPrompt(t *testing.T) {
 	out, err := ReviewerRetry(ReviewerRetryInput{AgentID: "rev", Worktree: "/tmp/wt/rev", PR: &domain.PullRequest{Number: 7, Title: "T"},
 		MergeBaseSHA: "mb", HeadSHA: "hd", Problem: "It ended on prose.", Transcript: "[reasoning]\nthree findings", MaxFindings: 5})

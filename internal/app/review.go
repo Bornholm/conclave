@@ -986,11 +986,13 @@ func (a *App) runLead(ctx context.Context, r *run, lead config.AgentConfig, work
 		return nil, nil, err
 	}
 	a.warnSince(r, warning)
+	excerpts, omitted := r.excerpts(ctx, reports)
 	p, err := prompt.Lead(prompt.LeadInput{
 		AgentID: lead.ID, Worktree: worktree, PR: r.pr, MergeBaseSHA: r.pr.MergeBaseSHA, HeadSHA: r.pr.Head.SHA,
 		SucceededReviewers: succeeded, FailedReviewers: consolidation.FailedReviewers(outcomes),
 		Reports: reports, Groups: groups, MaxFindings: r.cfg.Review.Limits.MaxFindings,
 		Budget: timeBudget(ctx, r.cfg, lead), Since: since,
+		Excerpts: excerpts, ExcerptsOmitted: omitted,
 	})
 	if err != nil {
 		ex.Error = err.Error()

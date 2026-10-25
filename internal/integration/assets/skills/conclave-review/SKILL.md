@@ -25,8 +25,11 @@ Values reach the inner shell as positional arguments, never pasted into its
 script: a value holding a quote would otherwise end the string and run the rest
 as a command.
 
-A review takes 5 to 10 minutes: reviewers run in parallel, and the lead starts
-only once the slowest one finishes. A background-task mechanism of the agent
+A review takes 5 to 20 minutes: reviewers run in parallel, and the lead starts
+once they have all ended or been stopped. A reviewer still running
+`review.straggler_grace` (3 minutes) after the others have reported is stopped,
+and asked for its report on `report_grace` (2 minutes more) if it had none: a
+warning says so. A background-task mechanism of the agent
 running this skill can kill a process that outlives the tool call; `nohup`
 detaches it so it survives. Keep that mechanism for the short wait loop below,
 not for Conclave itself.

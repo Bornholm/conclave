@@ -52,6 +52,10 @@ review:
   # it wrote into a report, on a run of its own. A report already written when
   # the agent stopped is read without waiting for it. 0 disables.
   report_grace: 2m
+  # Once this many reviewers have reported, the others get straggler_grace
+  # more, then are stopped and keep what they had written.
+  quorum: 0                   # 0, the default: every reviewer but one
+  straggler_grace: 3m         # 0 waits for every reviewer
   # Label put on the pull request while a review runs, taken off when it ends,
   # even on failure or interruption. Needs write access to the forge. Empty
   # disables it.

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"os/exec"
@@ -824,7 +825,7 @@ func TestSalvageRefusesToReportAnUnvalidatedReport(t *testing.T) {
 
 	var ex domain.AgentExecution
 	report, _, err := a.salvageTimedOut(dead, &run{cfg: a.Config, git: nil, changed: nil, store: nil},
-		a.Config.Agents[0], t.TempDir(), "r1", time.Minute, []byte(validPiStreamFor("r1")), &ex)
+		a.Config.Agents[0], t.TempDir(), "r1", stopReason(context.Background(), time.Minute), []byte(validPiStreamFor("r1")), &ex)
 	if err == nil {
 		t.Errorf("a report that could not be validated must not be reported as salvaged: %+v", report)
 	}
@@ -853,7 +854,7 @@ func TestSalvageReportsTheConfiguredTimeout(t *testing.T) {
 	a, _ := newApp(t, agentCfg(t, "r1", config.RoleReviewer, "valid"), agentCfg(t, "lead", config.RoleLead, "valid"))
 	var ex domain.AgentExecution
 	_, _, err := a.salvageTimedOut(context.Background(), &run{cfg: a.Config, store: nil},
-		a.Config.Agents[0], t.TempDir(), "r1", 15*time.Minute,
+		a.Config.Agents[0], t.TempDir(), "r1", stopReason(context.Background(), 15*time.Minute),
 		[]byte(validPiStreamFor("someone-else")), &ex)
 	if err == nil {
 		t.Fatal("a report naming another reviewer must be refused")
@@ -1388,5 +1389,194 @@ func TestIncrementalReviewWithLargeDiffsAndFilesByTheirNames(t *testing.T) {
 	commitFile(t, a, dir, DiffFileName)
 	if _, err := a.Review(context.Background(), ReviewRequest{Number: 7, Since: SinceLast}); err == nil || !strings.Contains(err.Error(), "reviewers failed") {
 		t.Errorf("a whole diff too large to inline and a file by its name should fail the reviewer: %v", err)
+	}
+}
+
+// TestReviewStopsAStragglerOnceTheOthersHaveReported: once the quorum has
+// reported, a reviewer still running gets the straggler grace, then is
+// stopped like one out of time: a report it had written is kept, and one that
+// had none is asked for it on report_grace.
+func TestReviewStopsAStragglerOnceTheOthersHaveReported(t *testing.T) {
+	grace := 300 * time.Millisecond
+	slow := agentCfg(t, "r1", config.RoleReviewer, "timeout-with-report")
+	slow.Output = config.OutputPiJSON
+	silent := agentCfg(t, "r3", config.RoleReviewer, "straggler")
+	silent.Output = config.OutputPiJSON
+	a, _ := newApp(t, slow, agentCfg(t, "r2", config.RoleReviewer, "valid"), silent, agentCfg(t, "lead", config.RoleLead, "valid"))
+	a.Config.Review.MaxParallel = 3
+	a.Config.Review.Quorum = 1
+	a.Config.Review.StragglerGrace = &grace
+	a.Config.Review.FailFast = true
+	start := time.Now()
+	res, err := a.Review(context.Background(), ReviewRequest{Number: 7})
+	if err != nil {
+		t.Fatalf("a straggler stopped by the quorum failed the review: %v", err)
+	}
+	if d := time.Since(start); d > 8*time.Second {
+		t.Errorf("the review waited for the stragglers: %s", d)
+	}
+	execs := map[string]domain.AgentExecution{}
+	for _, ex := range res.Manifest.Agents {
+		execs[ex.ID] = ex
+	}
+	if r1 := execs["r1"]; !r1.Succeeded || !r1.Salvaged || !strings.Contains(strings.Join(r1.Warnings, "\n"), "once the other reviewers had reported") {
+		t.Errorf("the straggler's report should be kept: %+v", r1)
+	}
+	if r3 := execs["r3"]; !r3.Succeeded || r3.ReportRetries != 1 {
+		t.Errorf("the straggler without a report should be asked for it: %+v", r3)
+	}
+	p, _ := os.ReadFile(filepath.Join(res.RunDir, "prompts", "reviewer-r3.retry1.txt"))
+	if !strings.Contains(string(p), "stopped once the other reviewers had reported") || !strings.Contains(string(p), "still reading the changed files") {
+		t.Errorf("the retry prompt should say why and carry the transcript:\n%s", p)
+	}
+}
+
+func TestNewQuorumIsOffWhenThereIsNothingToStop(t *testing.T) {
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	for _, c := range []struct {
+		need, total int
+		grace       time.Duration
+	}{{1, 2, 0}, {0, 2, time.Minute}, {2, 2, time.Minute}, {3, 2, time.Minute}} {
+		if q := newQuorum(c.need, c.total, c.grace, log); q != nil {
+			t.Errorf("%+v: a quorum that stops nothing should be off", c)
+		}
+	}
+	if newQuorum(1, 2, time.Minute, log) == nil {
+		t.Error("one report out of two with a grace should stop the other")
+	}
+}
+
+// stragglerApp is a review where r2 reports at once and r1, in mode, is left
+// behind, with a quorum of one and a short straggler grace.
+func stragglerApp(t *testing.T, mode string, grace time.Duration) *App {
+	t.Helper()
+	slow := agentCfg(t, "r1", config.RoleReviewer, mode)
+	slow.Output = config.OutputPiJSON
+	a, _ := newApp(t, agentCfg(t, "r2", config.RoleReviewer, "valid"), slow, agentCfg(t, "lead", config.RoleLead, "valid"))
+	a.Config.Review.Quorum = 1
+	a.Config.Review.StragglerGrace = &grace
+	return a
+}
+
+func execution(res *ReviewResult, id string) domain.AgentExecution {
+	for _, ex := range res.Manifest.Agents {
+		if ex.ID == id {
+			return ex
+		}
+	}
+	return domain.AgentExecution{}
+}
+
+// TestReviewStopsAStragglerHeldBackByMaxParallel: a reviewer max_parallel
+// holds back counts as one still running, so the quorum arms on the first
+// report and the reviewer started after it is stopped all the same.
+func TestReviewStopsAStragglerHeldBackByMaxParallel(t *testing.T) {
+	a := stragglerApp(t, "timeout-with-report", 300*time.Millisecond)
+	a.Config.Review.MaxParallel = 1
+	res, err := a.Review(context.Background(), ReviewRequest{Number: 7})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r1 := execution(res, "r1"); !r1.Salvaged || !strings.Contains(strings.Join(r1.Warnings, "\n"), "once the other reviewers had reported") {
+		t.Errorf("the held-back reviewer should be stopped as a straggler: %+v", r1)
+	}
+}
+
+// TestReviewWaitsForEveryReviewerWithoutAStragglerGrace: straggler_grace: 0
+// leaves a slow reviewer to its own timeout.
+func TestReviewWaitsForEveryReviewerWithoutAStragglerGrace(t *testing.T) {
+	a := stragglerApp(t, "timeout-with-report", 0)
+	a.Config.Agents[1].Timeout = 700 * time.Millisecond
+	res, err := a.Review(context.Background(), ReviewRequest{Number: 7})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r1 := execution(res, "r1"); !r1.Salvaged || !strings.Contains(strings.Join(r1.Warnings, "\n"), "by its time budget") {
+		t.Errorf("the reviewer should run to its own timeout: %+v", r1)
+	}
+}
+
+// TestReviewSaysAStragglerThatWroteNothingWasStopped: the manifest names the
+// stop, not the cancellation behind it.
+func TestReviewSaysAStragglerThatWroteNothingWasStopped(t *testing.T) {
+	a := stragglerApp(t, "timeout-silent", 300*time.Millisecond)
+	res, err := a.Review(context.Background(), ReviewRequest{Number: 7})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r1 := execution(res, "r1"); r1.Succeeded || !strings.Contains(r1.Error, "stopped once the other reviewers had reported") {
+		t.Errorf("manifest: %+v", r1)
+	}
+}
+
+// TestReviewStopsAStragglerDuringItsRetry: a reviewer asked again for its
+// report is stopped as a straggler too; a retry that wrote nothing leaves
+// nothing to ask for again.
+func TestReviewStopsAStragglerDuringItsRetry(t *testing.T) {
+	a := stragglerApp(t, "prose-then-timeout", 300*time.Millisecond)
+	a.Config.Review.ReportRetries = new(int)
+	*a.Config.Review.ReportRetries = 2
+	start := time.Now()
+	res, err := a.Review(context.Background(), ReviewRequest{Number: 7})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d := time.Since(start); d > 8*time.Second {
+		t.Errorf("the retry was waited for: %s", d)
+	}
+	if r1 := execution(res, "r1"); r1.Succeeded || r1.ReportRetries != 1 || !strings.Contains(r1.Error, "stopped once the other reviewers had reported") {
+		t.Errorf("manifest: %+v", r1)
+	}
+}
+
+// TestReviewKeepsTheStragglerStopWhenItsRetryIsCutShort: a straggler's retry
+// runs on report_grace and the review's own context; stopped in turn, the
+// reviewer is still one the quorum stopped, so fail_fast does not fail the
+// review.
+func TestReviewKeepsTheStragglerStopWhenItsRetryIsCutShort(t *testing.T) {
+	reportGrace := 300 * time.Millisecond
+	a := stragglerApp(t, "timeout-no-report", 300*time.Millisecond)
+	a.Config.Review.ReportGrace = &reportGrace
+	a.Config.Review.FailFast = true
+	a.Config.Review.ReportRetries = new(int)
+	*a.Config.Review.ReportRetries = 3
+	res, err := a.Review(context.Background(), ReviewRequest{Number: 7})
+	if err != nil {
+		t.Fatalf("a straggler whose retry was cut short failed the review: %v", err)
+	}
+	r1 := execution(res, "r1")
+	if r1.Succeeded || r1.ReportRetries != 1 || !strings.Contains(r1.Error, "stopped once the other reviewers had reported, then its report retry: timed out after") {
+		t.Errorf("manifest: %+v", r1)
+	}
+}
+
+// TestReviewAsksAStragglerForItsReportWithoutReportRetries: report_retries: 0
+// disables the retries of a reviewer that ran to its end, not the one ask of
+// a straggler.
+func TestReviewAsksAStragglerForItsReportWithoutReportRetries(t *testing.T) {
+	a := stragglerApp(t, "straggler", 300*time.Millisecond)
+	a.Config.Review.ReportRetries = new(int)
+	res, err := a.Review(context.Background(), ReviewRequest{Number: 7})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r1 := execution(res, "r1"); !r1.Succeeded || r1.ReportRetries != 1 {
+		t.Errorf("the straggler should be asked for its report: %+v", r1)
+	}
+}
+
+// TestReviewDoesNotAskAgainAReviewerStoppedDuringItsRetry: a reviewer the
+// quorum stops while it is being asked again is not asked a second time,
+// whatever report_retries allows.
+func TestReviewDoesNotAskAgainAReviewerStoppedDuringItsRetry(t *testing.T) {
+	a := stragglerApp(t, "prose-then-slow-retry", 300*time.Millisecond)
+	a.Config.Review.ReportRetries = new(int)
+	*a.Config.Review.ReportRetries = 3
+	res, err := a.Review(context.Background(), ReviewRequest{Number: 7})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r1 := execution(res, "r1"); r1.Succeeded || r1.ReportRetries != 1 || !strings.Contains(r1.Error, "stopped once the other reviewers had reported") {
+		t.Errorf("manifest: %+v", r1)
 	}
 }

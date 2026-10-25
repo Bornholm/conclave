@@ -22,6 +22,11 @@ const MaxArgBytes = 128 << 10
 // and logged when a run starts.
 func Warnings(cfg *Config) []string {
 	var out []string
+	if n := len(cfg.Reviewers()); cfg.Review.Quorum > 0 && n > 0 && cfg.Review.Quorum >= n && cfg.ReviewStragglerGrace() > 0 {
+		out = append(out, fmt.Sprintf(
+			"review.quorum is %d with %d reviewers: no reviewer is ever stopped as a straggler, every one is waited for; set it below %d, or set straggler_grace: 0",
+			cfg.Review.Quorum, n, n))
+	}
 	for _, a := range cfg.Agents {
 		// A diff over max_inline_diff_bytes goes to a file, so the prompt
 		// carries at most the smaller of the two limits.

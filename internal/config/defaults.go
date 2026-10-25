@@ -24,6 +24,9 @@ const (
 	// DefaultReportGrace is the extra time a reviewer gets to convert what it
 	// wrote into a report once its own timeout has passed.
 	DefaultReportGrace = 2 * time.Minute
+	// DefaultStragglerGrace is how long the reviewers still running get once
+	// all the others have reported.
+	DefaultStragglerGrace = 3 * time.Minute
 
 	DefaultTriageMaxParallel = 3
 	DefaultMaxTriageIssues   = 50

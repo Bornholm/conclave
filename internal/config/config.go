@@ -178,6 +178,15 @@ type ReviewConfig struct {
 	// with its tools. Nil means DefaultReportGrace; 0 disables it, which is
 	// what a run whose agents pace themselves needs.
 	ReportGrace *time.Duration `yaml:"report_grace"`
+	// Quorum is how many reviewer reports are enough for the lead to start
+	// soon: once that many reviewers have reported, the others get
+	// StragglerGrace more and are then stopped, keeping what they had
+	// written. 0 means every reviewer but one.
+	Quorum int `yaml:"quorum"`
+	// StragglerGrace is how long the reviewers still running get once the
+	// quorum is reached. Nil means DefaultStragglerGrace; 0 waits for every
+	// reviewer.
+	StragglerGrace *time.Duration `yaml:"straggler_grace"`
 	// RunningLabel is put on the pull request while the review runs and
 	// taken off when it ends, whether it succeeded, failed or was
 	// interrupted. Empty disables it.
@@ -396,6 +405,24 @@ func (c *Config) ReviewReportGrace() time.Duration {
 		return DefaultReportGrace
 	}
 	return *c.Review.ReportGrace
+}
+
+// ReviewQuorum returns how many of total reviewers must have reported
+// before the others are given the straggler grace.
+func (c *Config) ReviewQuorum(total int) int {
+	if c.Review.Quorum <= 0 {
+		return total - 1
+	}
+	return c.Review.Quorum
+}
+
+// ReviewStragglerGrace returns how long the reviewers still running get once
+// the quorum is reached; 0 waits for every reviewer.
+func (c *Config) ReviewStragglerGrace() time.Duration {
+	if c.Review.StragglerGrace == nil {
+		return DefaultStragglerGrace
+	}
+	return *c.Review.StragglerGrace
 }
 
 // ReviewReportRetries returns how many times a reviewer without a usable

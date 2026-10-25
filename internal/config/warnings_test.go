@@ -34,3 +34,15 @@ func TestWarnings(t *testing.T) {
 		}
 	}
 }
+
+func TestWarningsOnAQuorumThatStopsNoReviewer(t *testing.T) {
+	cfg := &Config{Agents: []AgentConfig{{ID: "r1", Role: RoleReviewer}, {ID: "r2", Role: RoleReviewer}, {ID: "lead", Role: RoleLead}}}
+	cfg.Review.Quorum = 2
+	if got := strings.Join(Warnings(cfg), "\n"); !strings.Contains(got, "review.quorum is 2 with 2 reviewers") {
+		t.Errorf("missing the quorum warning in:\n%s", got)
+	}
+	cfg.Review.Quorum = 1
+	if got := strings.Join(Warnings(cfg), "\n"); strings.Contains(got, "review.quorum") {
+		t.Errorf("unexpected quorum warning in:\n%s", got)
+	}
+}

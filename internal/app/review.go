@@ -516,9 +516,9 @@ func (a *App) runReviewer(ctx, actx context.Context, r *run, rv config.AgentConf
 	ex := domain.AgentExecution{ID: rv.ID, Role: rv.Role, Worktree: worktree}
 	if isStraggler(actx) {
 		// Held back by max_parallel until after the straggler grace: it is
-		// not started at all.
-		ex.Error = errStraggler.Error()
-		return ex, nil, cutShort{err: errStraggler}
+		// not started at all, and there is nothing to ask it for.
+		ex.Error = "not started: " + errStraggler.Error()
+		return ex, nil, fmt.Errorf("not started: %w", errStraggler)
 	}
 	in := prompt.ReviewerInput{
 		AgentID: rv.ID, Worktree: worktree, Specialties: rv.Specialties, PR: r.pr,
@@ -578,7 +578,10 @@ func (a *App) runReviewer(ctx, actx context.Context, r *run, rv config.AgentConf
 	// more for the report alone, with what it wrote. A timeout is retried too
 	// when there is a transcript to convert, on time set aside for the purpose:
 	// within the agent timeout it would only happen again.
-	for attempt := 1; isRecoverable(err) && attempt <= r.cfg.ReviewReportRetries() && ctx.Err() == nil; attempt++ {
+	// A straggler is asked once after its stop, whatever report_retries says:
+	// the point of the quorum is to bound the wait.
+	stragglerAsked := false
+	for attempt := 1; isRecoverable(err) && attempt <= r.cfg.ReviewReportRetries() && ctx.Err() == nil && !stragglerAsked; attempt++ {
 		// A run that wrote almost nothing left no review to convert: asked
 		// again, the reviewer returns an empty report or starts over without
 		// the diff, and neither is the review Conclave asked for. The reason
@@ -611,7 +614,7 @@ func (a *App) runReviewer(ctx, actx context.Context, r *run, rv config.AgentConf
 		retryTimeout := r.cfg.EffectiveTimeout(rv)
 		parent := actx
 		if isStraggler(actx) {
-			parent = ctx
+			parent, stragglerAsked = ctx, true
 		}
 		if isCutShort(err) || isStraggler(actx) {
 			if grace := r.cfg.ReviewReportGrace(); grace > 0 {
@@ -655,6 +658,13 @@ func (a *App) runReviewer(ctx, actx context.Context, r *run, rv config.AgentConf
 		cancel()
 	}
 	if err != nil {
+		// A straggler's retry runs on the review's context, so whatever
+		// stopped it, the reviewer was stopped by the quorum first: the error
+		// says so, for fail_fast and for the manifest.
+		if isStraggler(actx) && !errors.Is(err, errStraggler) {
+			err = fmt.Errorf("%w, then its report retry: %w", errStraggler, err)
+			ex.Error = err.Error()
+		}
 		return ex, nil, err
 	}
 	ex.Succeeded = true
@@ -813,7 +823,8 @@ func withGrace(ctx context.Context, d time.Duration) (context.Context, context.C
 	// a retry nothing can interrupt outlives Ctrl-C and review.timeout. The
 	// reviewer's own deadline is replaced by d; the parent ending, whether by a
 	// Ctrl-C or by review.timeout expiring, still ends the retry.
-	// The cause goes along, so that a retry of a straggler is stopped as one.
+	// The cause goes along, so that a retry the quorum stops, one that
+	// started before its reviewer became a straggler, is stopped as one.
 	base, cancelBase := context.WithCancelCause(context.WithoutCancel(ctx))
 	stop := context.AfterFunc(ctx, func() { cancelBase(context.Cause(ctx)) })
 	if d <= 0 {

@@ -1528,3 +1528,24 @@ func TestReviewStopsAStragglerDuringItsRetry(t *testing.T) {
 		t.Errorf("manifest: %+v", r1)
 	}
 }
+
+// TestReviewKeepsTheStragglerStopWhenItsRetryIsCutShort: a straggler's retry
+// runs on report_grace and the review's own context; stopped in turn, the
+// reviewer is still one the quorum stopped, so fail_fast does not fail the
+// review.
+func TestReviewKeepsTheStragglerStopWhenItsRetryIsCutShort(t *testing.T) {
+	reportGrace := 300 * time.Millisecond
+	a := stragglerApp(t, "timeout-no-report", 300*time.Millisecond)
+	a.Config.Review.ReportGrace = &reportGrace
+	a.Config.Review.FailFast = true
+	a.Config.Review.ReportRetries = new(int)
+	*a.Config.Review.ReportRetries = 3
+	res, err := a.Review(context.Background(), ReviewRequest{Number: 7})
+	if err != nil {
+		t.Fatalf("a straggler whose retry was cut short failed the review: %v", err)
+	}
+	r1 := execution(res, "r1")
+	if r1.Succeeded || r1.ReportRetries != 1 || !strings.Contains(r1.Error, "stopped once the other reviewers had reported, then its report retry: timed out after") {
+		t.Errorf("manifest: %+v", r1)
+	}
+}

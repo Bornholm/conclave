@@ -97,6 +97,13 @@ func (r *run) warnOnce(msg string) bool {
 	return true
 }
 
+// runWarningsSoFar returns a copy of the run's warnings.
+func (r *run) runWarningsSoFar() []string {
+	r.warnMu.Lock()
+	defer r.warnMu.Unlock()
+	return slices.Clone(r.runWarnings)
+}
+
 // previousCount is the number of previous findings, zero for a full review.
 func (r *run) previousCount() int {
 	if r.previous == nil {
@@ -362,7 +369,7 @@ func (a *App) execute(ctx context.Context, r *run, req ReviewRequest) (*domain.C
 		ReviewersTotal: len(reviewers), ReviewersSucceeded: len(succeeded),
 		LeadID: lead.ID, SucceededReviewers: succeeded, Since: r.previous,
 	}
-	warnings := append(append([]string(nil), r.sinceWarnings...), r.runWarnings...)
+	warnings := append([]string(nil), r.sinceWarnings...)
 	meta.Models = map[string]string{}
 	for _, ex := range r.manifest.Agents {
 		for _, w := range ex.Warnings {
@@ -391,7 +398,7 @@ func (a *App) execute(ctx context.Context, r *run, req ReviewRequest) (*domain.C
 		warnings = append(warnings, keepStillPresent(review, r.previous, r.changed)...)
 		consolidation.SortConsolidated(review.Findings)
 		review.Meta = meta
-		review.Warnings = warnings
+		review.Warnings = append(r.runWarningsSoFar(), warnings...)
 		return review, nil
 	}
 	review, leadWarnings, err := a.runLead(ctx, r, lead, worktrees[lead.ID], outcomes, succeeded, reports, groups)
@@ -413,7 +420,8 @@ func (a *App) execute(ctx context.Context, r *run, req ReviewRequest) (*domain.C
 	warnings = append(warnings, keepStillPresent(review, r.previous, r.changed)...)
 	consolidation.SortConsolidated(review.Findings)
 	review.Meta = meta
-	review.Warnings = warnings
+	// Read once the lead has run: it raises run warnings too.
+	review.Warnings = append(r.runWarningsSoFar(), warnings...)
 	return review, nil
 }
 

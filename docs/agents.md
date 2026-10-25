@@ -60,7 +60,7 @@ Conclave kills an agent at its timeout, and whatever the model would have writte
 | 65% | Every tool call is blocked, and thinking is lowered to `minimal`: writing the answer is the only thing left. |
 | 100% | Nothing: Conclave stops the process. |
 
-The system prompt also states the time left and when the tools go. A run that settles without having written anything after its tools are off is asked once more for its answer.
+The system prompt also states the time left and when the tools go. A run that settles without having written anything is asked once more for its answer, in the same session, so it keeps what it read: once before its tools are off, since a model can end its turn on reasoning alone long before its deadline, and once after.
 
 It never aborts the run and never exits by itself. Aborting mid-answer would destroy what the earlier stages worked to produce, and a process that exits with status 0 at its deadline looks like one that finished: Conclave could no longer tell it was stopped, and would neither mark the report salvaged nor give it its `report_grace`. What was written stays on standard output, where Conclave reads it.
 

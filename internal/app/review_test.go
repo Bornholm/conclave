@@ -1588,9 +1588,82 @@ func TestReviewDoesNotAskAgainAReviewerStoppedDuringItsRetry(t *testing.T) {
 }
 
 func TestMergeRanges(t *testing.T) {
-	got := mergeRanges([]lineRange{{20, 30}, {1, 5}, {6, 8}, {25, 40}, {50, 52}})
-	want := []lineRange{{1, 8}, {20, 40}, {50, 52}}
+	in := []lineRange{{20, 30, 3}, {1, 5, 2}, {6, 8, 1}, {25, 40, 0}, {50, 52, 4}}
+	got := mergeRanges(in)
+	want := []lineRange{{1, 8, 1}, {20, 40, 0}, {50, 52, 4}}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("got %v, want %v", got, want)
+	}
+	if in[0].start != 20 {
+		t.Error("mergeRanges sorted its argument")
+	}
+}
+
+// TestCollectExcerpts: the budget goes to the most severe findings first,
+// a range is at most excerptMaxLines lines, a long line is cut, and the
+// lead is told what it was not given.
+func TestCollectExcerpts(t *testing.T) {
+	numbered := func(n, width int) []byte {
+		var b strings.Builder
+		for i := 1; i <= n; i++ {
+			fmt.Fprintf(&b, "%d%s\n", i, strings.Repeat("x", width))
+		}
+		return []byte(b.String())
+	}
+	files := map[string][]byte{
+		"a.go":    numbered(3000, 400),
+		"z.go":    numbered(10, 10),
+		"bin.go":  []byte("\x00\x01"),
+		"wide.go": []byte(strings.Repeat("y", 1000) + "\n"),
+	}
+	read := func(file string) ([]byte, error) {
+		if c, ok := files[file]; ok {
+			return c, nil
+		}
+		return nil, errors.New("gone")
+	}
+	finding := func(file string, start, end int, sev domain.Severity) domain.Finding {
+		return domain.Finding{File: file, StartLine: start, EndLine: end, Severity: sev}
+	}
+	reports := []domain.AgentReport{{Findings: []domain.Finding{
+		// Low findings in a file that sorts first, more than the budget holds.
+		finding("a.go", 1, 3000, domain.SeverityLow),
+		finding("a.go", 1000, 1500, domain.SeverityLow),
+		finding("a.go", 2000, 2400, domain.SeverityLow),
+		finding("a.go", 500, 600, domain.SeverityLow),
+		finding("a.go", 2600, 2700, domain.SeverityLow),
+		finding("a.go", 2800, 2900, domain.SeverityLow),
+		// The critical one sorts last.
+		finding("z.go", 4, 4, domain.SeverityCritical),
+		finding("z.go", 40, 40, domain.SeverityHigh),
+		finding("bin.go", 1, 1, domain.SeverityHigh),
+		finding("gone.go", 1, 1, domain.SeverityHigh),
+		finding("wide.go", 1, 1, domain.SeverityMedium),
+	}}}
+	excerpts, notes := collectExcerpts(reports, read)
+	size, byFile := 0, map[string]int{}
+	for _, e := range excerpts {
+		size += len(e.Text)
+		byFile[e.File]++
+		if e.End-e.Start+1 > excerptMaxLines {
+			t.Errorf("%s:%d-%d is longer than %d lines", e.File, e.Start, e.End, excerptMaxLines)
+		}
+	}
+	if size > excerptsMaxBytes {
+		t.Errorf("excerpts take %d bytes", size)
+	}
+	if byFile["z.go"] != 1 || byFile["wide.go"] != 1 || byFile["a.go"] == 0 {
+		t.Errorf("excerpts per file: %v", byFile)
+	}
+	for _, e := range excerpts {
+		if e.File == "wide.go" && (len(e.Text) > excerptLineWidth+32 || !strings.Contains(e.Text, "[…]")) {
+			t.Errorf("a long line is not cut: %d bytes", len(e.Text))
+		}
+	}
+	all := strings.Join(notes, "\n")
+	for _, want := range []string{"bin.go is not given", "gone.go is not given", "z.go has 10 lines: a finding cites a line past its end", "more ranges, cited by the least severe findings, were left out for size"} {
+		if !strings.Contains(all, want) {
+			t.Errorf("notes lack %q:\n%s", want, all)
+		}
 	}
 }

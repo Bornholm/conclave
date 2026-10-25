@@ -45,14 +45,15 @@ scope and of the decisions already taken:
 
 MISSION
 1. Verify each finding against the code between MERGE_BASE_SHA {{.MergeBaseSHA}} and HEAD_SHA {{.HeadSHA}}.
-   Start from CODE AT THE CITED LINES below: most findings can be checked
+{{if .Excerpts}}   Start from CODE AT THE CITED LINES below: most findings can be checked
    there. Open a file only for what those lines cannot settle: a claim about
    code elsewhere (a caller, a test, the docs), a contradiction between
    reviewers, or a critical or high finding whose mechanism the lines do not
    show. A finding two reviewers reported with the same mechanism, which the
-   lines confirm, needs no further reading. When you do read, ask for every
-   file and range you need in one message, with several tool calls at once:
-   each message you send costs more time than any read.
+   lines confirm, needs no further reading.
+{{end}}   When you read files, ask for every file and range you need in one
+   message, with several tool calls at once: each message you send costs
+   more time than any read.
 2. Merge duplicates (the PRE-COMPUTED GROUPS are a hint, not an obligation).
 3. Resolve contradictions between reviewers by reading the code, not by majority.
 4. Preserve provenance: "reported_by" lists every reviewer id that reported the finding.
@@ -131,11 +132,11 @@ FAILED REVIEWERS
 {{.GroupsJSON}}
 --- END PRE-COMPUTED GROUPS ---
 
-{{if .Excerpts}}CODE AT THE CITED LINES
+{{if or .Excerpts .ExcerptNotes}}CODE AT THE CITED LINES
 The lines the findings cite, at HEAD_SHA, with a few lines around them and
-their line numbers.{{if .ExcerptsOmitted}} {{.ExcerptsOmitted}} more ranges were left out for size: read them
-in the worktree if they matter.{{end}}
-{{range .Excerpts}}--- BEGIN UNTRUSTED CODE {{.File}}:{{.Start}}-{{.End}} ---
+their line numbers.
+{{range .ExcerptNotes}}- {{.}}
+{{end}}{{range .Excerpts}}--- BEGIN UNTRUSTED CODE {{.File}}:{{.Start}}-{{.End}} ---
 {{.Text}}--- END UNTRUSTED CODE ---
 {{end}}
 {{end}}{{template "lead-since" .}}{{template "time-budget" .}}OUTPUT CONTRACT

@@ -297,8 +297,12 @@ func (g *Git) FileAt(ctx context.Context, sha, path string, limit int64) ([]byte
 	if err != nil {
 		return nil, err
 	}
-	if n, err := strconv.ParseInt(strings.TrimSpace(size), 10, 64); err != nil || n > limit {
-		return nil, fmt.Errorf("%s: larger than %d bytes", path, limit)
+	n, err := strconv.ParseInt(strings.TrimSpace(size), 10, 64)
+	if err != nil {
+		return nil, fmt.Errorf("%s: size %q: %w", path, strings.TrimSpace(size), err)
+	}
+	if n > limit {
+		return nil, fmt.Errorf("%s: %d bytes, larger than %d", path, n, limit)
 	}
 	out, err := g.run(ctx, "cat-file", "blob", obj)
 	if err != nil {

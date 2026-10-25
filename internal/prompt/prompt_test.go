@@ -154,18 +154,21 @@ func TestLeadPrompt(t *testing.T) {
 
 func TestLeadPromptExcerpts(t *testing.T) {
 	out, err := Lead(LeadInput{AgentID: "lead", PR: &domain.PullRequest{},
-		Excerpts: []Excerpt{{File: "a.go", Start: 3, End: 4, Text: "     3  x\n     4  y\n"}}, ExcerptsOmitted: 2})
+		Excerpts: []Excerpt{{File: "a.go", Start: 3, End: 4, Text: "     3  x\n     4  y\n"}}, ExcerptNotes: []string{"b.go is not given."}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"Start from CODE AT THE CITED LINES", "--- BEGIN UNTRUSTED CODE a.go:3-4 ---\n     3  x\n     4  y\n--- END UNTRUSTED CODE ---", "2 more ranges were left out"} {
+	for _, want := range []string{"Start from CODE AT THE CITED LINES", "- b.go is not given.\n--- BEGIN UNTRUSTED CODE a.go:3-4 ---\n     3  x\n     4  y\n--- END UNTRUSTED CODE ---"} {
 		if !strings.Contains(string(out), want) {
 			t.Errorf("prompt lacks %q", want)
 		}
 	}
-	out, _ = Lead(LeadInput{AgentID: "lead", PR: &domain.PullRequest{}})
-	if strings.Contains(string(out), "CODE AT THE CITED LINES\nThe lines") {
-		t.Error("an empty excerpts section is rendered")
+	out, err = Lead(LeadInput{AgentID: "lead", PR: &domain.PullRequest{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(out), "CODE AT THE CITED LINES") {
+		t.Error("a prompt without excerpts names them")
 	}
 }
 

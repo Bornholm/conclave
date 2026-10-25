@@ -466,15 +466,23 @@ func (a *App) runReviewers(ctx context.Context, r *run, reviewers []config.Agent
 	execs := make([]domain.AgentExecution, len(reviewers))
 	group, gctx := errgroup.WithContext(ctx)
 	group.SetLimit(r.cfg.Review.MaxParallel)
+	q := newQuorum(r.cfg.ReviewQuorum(len(reviewers)), len(reviewers), r.cfg.ReviewStragglerGrace(), log)
+	defer q.stop()
 	for i, rv := range reviewers {
 		group.Go(func() error {
 			log.Info("reviewer started", "agent", rv.ID)
-			ex, report, err := a.runReviewer(gctx, r, rv, worktrees[rv.ID])
+			actx, cancel := q.start(gctx, rv.ID)
+			ex, report, err := a.runReviewer(gctx, actx, r, rv, worktrees[rv.ID])
+			straggler := isStraggler(actx)
+			cancel(nil)
+			q.done(rv.ID, report != nil)
 			outcomes[i] = consolidation.ReviewerOutcome{ID: rv.ID, Report: report, Err: err}
 			execs[i] = ex
 			if err != nil {
 				log.Warn("reviewer failed", "agent", rv.ID, "error", err, "duration", ex.Duration.Round(time.Millisecond))
-				if r.cfg.Review.FailFast {
+				// A straggler is stopped because the others have reported:
+				// its missing report is the price of not waiting for it.
+				if r.cfg.Review.FailFast && !straggler {
 					return fmt.Errorf("%s: %w", rv.ID, err)
 				}
 				return nil
@@ -500,7 +508,10 @@ func (a *App) runReviewers(ctx context.Context, r *run, reviewers []config.Agent
 // to its working directory could not read it anywhere else.
 const DiffFileName = ".conclave-diff.patch"
 
-func (a *App) runReviewer(ctx context.Context, r *run, rv config.AgentConfig, worktree string) (domain.AgentExecution, *domain.AgentReport, error) {
+// runReviewer runs a reviewer on actx, which a quorum cancels to stop a
+// straggler; ctx is the review's own, that the salvage of a stopped run reads
+// on.
+func (a *App) runReviewer(ctx, actx context.Context, r *run, rv config.AgentConfig, worktree string) (domain.AgentExecution, *domain.AgentReport, error) {
 	ex := domain.AgentExecution{ID: rv.ID, Role: rv.Role, Worktree: worktree}
 	in := prompt.ReviewerInput{
 		AgentID: rv.ID, Worktree: worktree, Specialties: rv.Specialties, PR: r.pr,
@@ -538,7 +549,7 @@ func (a *App) runReviewer(ctx context.Context, r *run, rv config.AgentConfig, wo
 		ex.Error = err.Error()
 		return ex, nil, err
 	}
-	report, transcript, err := a.reviewerAttempt(ctx, r, rv, worktree, rv.ID, p, &ex)
+	report, transcript, err := a.reviewerAttempt(actx, r, rv, worktree, rv.ID, p, &ex)
 	if isStopped(err) {
 		// The agent used its whole budget, but what it wrote before stopping is
 		// often a complete or nearly complete report. Reading it queries git for
@@ -553,14 +564,15 @@ func (a *App) runReviewer(ctx context.Context, r *run, rv config.AgentConfig, wo
 		if errors.As(err, &stopped) && stopped.timeout > 0 {
 			timeout = stopped.timeout
 		}
-		report, transcript, err = a.salvageTimedOut(salvageCtx, r, rv, worktree, rv.ID, timeout, transcript, &ex)
+		report, transcript, err = a.salvageTimedOut(salvageCtx, r, rv, worktree, rv.ID, stopReason(actx, timeout), transcript, &ex)
 		cancelSalvage()
 	}
 	// A reviewer that ran to its end but left no usable report is asked once
 	// more for the report alone, with what it wrote. A timeout is retried too
 	// when there is a transcript to convert, on time set aside for the purpose:
 	// within the agent timeout it would only happen again.
-	for attempt := 1; isRecoverable(err) && attempt <= r.cfg.ReviewReportRetries() && ctx.Err() == nil; attempt++ {
+	// A straggler is not asked again: it was stopped so as not to wait for it.
+	for attempt := 1; isRecoverable(err) && attempt <= r.cfg.ReviewReportRetries() && ctx.Err() == nil && !isStraggler(actx); attempt++ {
 		// A run that wrote almost nothing left no review to convert: asked
 		// again, the reviewer returns an empty report or starts over without
 		// the diff, and neither is the review Conclave asked for. The reason
@@ -585,11 +597,11 @@ func (a *App) runReviewer(ctx context.Context, r *run, rv config.AgentConfig, wo
 		// after a timeout runs on report_grace instead, since the run's own
 		// timeout is already spent. retryTimeout is what to report if the retry
 		// is stopped in turn.
-		retryCtx, cancel, budget := ctx, context.CancelFunc(func() {}), timeBudget(ctx, r.cfg, rv)
+		retryCtx, cancel, budget := actx, context.CancelFunc(func() {}), timeBudget(ctx, r.cfg, rv)
 		retryTimeout := r.cfg.EffectiveTimeout(rv)
 		if isCutShort(err) {
 			if grace := r.cfg.ReviewReportGrace(); grace > 0 {
-				retryCtx, cancel = withGrace(ctx, grace)
+				retryCtx, cancel = withGrace(actx, grace)
 				retryTimeout = grace
 				budget = newTimeBudget(time.Now(), agent.EffectiveTimeout(retryCtx, r.cfg, rv))
 			} else {
@@ -621,7 +633,7 @@ func (a *App) runReviewer(ctx context.Context, r *run, rv config.AgentConfig, wo
 		if isCutShort(err) {
 			// Same reason as the first salvage: not on the expiring deadline.
 			salvageCtx, cancelSalvage := salvageContext(ctx)
-			report, transcript, err = a.salvageTimedOut(salvageCtx, r, rv, worktree, name, retryTimeout, transcript, &ex)
+			report, transcript, err = a.salvageTimedOut(salvageCtx, r, rv, worktree, name, stopReason(retryCtx, retryTimeout), transcript, &ex)
 			cancelSalvage()
 		}
 		// Release this attempt's timer now, so a later iteration does not hold
@@ -787,20 +799,21 @@ func withGrace(ctx context.Context, d time.Duration) (context.Context, context.C
 	// a retry nothing can interrupt outlives Ctrl-C and review.timeout. The
 	// reviewer's own deadline is replaced by d; the parent ending, whether by a
 	// Ctrl-C or by review.timeout expiring, still ends the retry.
-	base, cancelBase := context.WithCancel(context.WithoutCancel(ctx))
-	stop := context.AfterFunc(ctx, cancelBase)
+	// The cause goes along, so that a retry of a straggler is stopped as one.
+	base, cancelBase := context.WithCancelCause(context.WithoutCancel(ctx))
+	stop := context.AfterFunc(ctx, func() { cancelBase(context.Cause(ctx)) })
 	if d <= 0 {
 		// A zero grace period cannot host a retry: the caller is told so by a
 		// context that is already dead, rather than one that expires the moment
 		// the agent starts and turns a timeout into a confusing deadline error.
-		cancelBase()
+		cancelBase(nil)
 		return base, func() { stop() }
 	}
 	retry, cancelTimer := context.WithTimeout(base, d)
 	return retry, func() {
 		stop()
 		cancelTimer()
-		cancelBase()
+		cancelBase(nil)
 	}
 }
 
@@ -811,11 +824,8 @@ func withGrace(ctx context.Context, d time.Duration) (context.Context, context.C
 // object is the difference between a usable review and none, so the output is
 // parsed exactly as a completed run's would be, and the run is only reported
 // as timed out when nothing usable came out of it.
-func (a *App) salvageTimedOut(ctx context.Context, r *run, rv config.AgentConfig, worktree, name string, timeout time.Duration, stdout []byte, ex *domain.AgentExecution) (*domain.AgentReport, []byte, error) {
-	cut := cutShort{
-		// The timeout that stopped the run, not the salvage window ctx carries.
-		err: fmt.Errorf("timed out after %s", timeout.Round(time.Second)),
-	}
+func (a *App) salvageTimedOut(ctx context.Context, r *run, rv config.AgentConfig, worktree, name string, stop runStop, stdout []byte, ex *domain.AgentExecution) (*domain.AgentReport, []byte, error) {
+	cut := cutShort{err: errors.New(stop.err)}
 	if len(bytes.TrimSpace(stdout)) == 0 {
 		return nil, nil, cut
 	}
@@ -854,10 +864,23 @@ func (a *App) salvageTimedOut(ctx context.Context, r *run, rv config.AgentConfig
 	if ad.Partial {
 		ex.Warnings = append(ex.Warnings, "the agent was stopped while still writing: the report is the incomplete message it was in the middle of")
 	} else {
-		ex.Warnings = append(ex.Warnings, "the agent was stopped by its time budget; the report is the one it had already written")
+		ex.Warnings = append(ex.Warnings, "the agent was stopped "+stop.by+"; the report is the one it had already written")
 	}
 	a.logger().Warn("reviewer was stopped but its report was usable", "agent", rv.ID, "findings", len(report.Findings), "partial", ad.Partial)
 	return report, ad.Transcript, nil
+}
+
+// runStop says why a run was stopped: err for its error, by for the warning
+// that its report is the one written before the stop.
+type runStop struct{ err, by string }
+
+// stopReason tells a straggler stopped by the quorum from a run that used
+// its time budget, timeout being the budget it had, not the salvage window.
+func stopReason(ctx context.Context, timeout time.Duration) runStop {
+	if isStraggler(ctx) {
+		return runStop{err: errStraggler.Error(), by: "once the other reviewers had reported"}
+	}
+	return runStop{err: fmt.Sprintf("timed out after %s", timeout.Round(time.Second)), by: "by its time budget"}
 }
 
 // reviewerAttempt runs a reviewer once with the given prompt, storing its
@@ -877,7 +900,8 @@ func (a *App) reviewerAttempt(ctx context.Context, r *run, rv config.AgentConfig
 		// A stopped run - its own deadline or the whole review's - is not a
 		// broken one: whatever it wrote is on standard output, and the caller
 		// decides whether a report can be made of it.
-		if res.TimedOut || errors.Is(res.Err, context.DeadlineExceeded) && !errors.Is(res.Err, context.Canceled) {
+		// A straggler's cancellation is a stop of the same kind.
+		if res.TimedOut || errors.Is(res.Err, context.DeadlineExceeded) && !errors.Is(res.Err, context.Canceled) || isStraggler(ctx) {
 			var transcript []byte
 			if res.Result != nil {
 				transcript = res.Result.Stdout

@@ -37,7 +37,7 @@ func (r *run) excerpts(ctx context.Context, log *slog.Logger, reports []domain.A
 	read := func(file string) ([]byte, error) {
 		content, err := r.git.FileAt(ctx, r.pr.Head.SHA, file, excerptFileMax)
 		if err != nil {
-			// The findings' paths were checked to exist: this is unusual.
+			// The findings' paths were checked to exist, but a directory does.
 			log.Warn("cannot give the lead the lines a finding cites", "file", file, "error", err)
 		}
 		return content, err
@@ -82,7 +82,7 @@ func collectExcerpts(reports []domain.AgentReport, read func(file string) ([]byt
 	for _, file := range files {
 		content, err := read(file)
 		if err != nil || bytes.IndexByte(content, 0) >= 0 {
-			notes = append(notes, fmt.Sprintf("%s is not given (gone, binary or over %d MB): read it in the worktree if it matters.", file, excerptFileMax>>20))
+			notes = append(notes, fmt.Sprintf("%s is not given (not a file at head, binary or over %d MB): read it in the worktree if it matters.", file, excerptFileMax>>20))
 			continue
 		}
 		lines := strings.Split(strings.TrimSuffix(string(content), "\n"), "\n")

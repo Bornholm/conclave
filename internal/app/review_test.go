@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -1682,6 +1683,36 @@ func TestCollectExcerpts(t *testing.T) {
 	// A finding given whole has no note.
 	if strings.Contains(all, "z.go:4-4") || strings.Contains(all, "wide.go:1-1") {
 		t.Errorf("a finding given whole is noted:\n%s", all)
+	}
+}
+
+// TestCollectExcerptsListsTheMostSevereOmissionsFirst: past the budget, the
+// list of ranges left out starts with the most severe findings', whatever
+// their paths, and is cut after excerptsListed.
+func TestCollectExcerptsListsTheMostSevereOmissionsFirst(t *testing.T) {
+	var b strings.Builder
+	for i := 1; i <= 4000; i++ {
+		fmt.Fprintf(&b, "%d%s\n", i, strings.Repeat("x", 300))
+	}
+	content := []byte(b.String())
+	read := func(string) ([]byte, error) { return content, nil }
+	var findings []domain.Finding
+	for i := 0; i < 30; i++ {
+		findings = append(findings, domain.Finding{File: "z.go", StartLine: 100*i + 10, EndLine: 100*i + 60, Severity: domain.SeverityCritical})
+	}
+	findings = append(findings, domain.Finding{File: "a.go", StartLine: 10, EndLine: 60, Severity: domain.SeverityLow})
+	_, notes := collectExcerpts([]domain.AgentReport{{Findings: findings}}, read)
+	var omitted string
+	for _, n := range notes {
+		if strings.HasPrefix(n, "Left out for size") {
+			omitted = n
+		}
+	}
+	if !strings.HasPrefix(omitted, "Left out for size, the most severe findings' first: z.go:") || strings.Contains(omitted, "a.go") {
+		t.Errorf("the most severe omissions should be listed first:\n%s", omitted)
+	}
+	if !regexp.MustCompile(` and \d+ more\.`).MatchString(omitted) {
+		t.Errorf("the list should be cut after %d ranges:\n%s", excerptsListed, omitted)
 	}
 }
 

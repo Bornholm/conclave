@@ -35,7 +35,13 @@ func DecodeElements[T any](raws []json.RawMessage, what string) ([]T, []string) 
 	for i, raw := range raws {
 		var v T
 		if err := json.Unmarshal(raw, &v); err != nil {
-			warnings = append(warnings, fmt.Sprintf("%s %d rejected: %v", what, i, err))
+			// The title tells it apart: the checks that follow number the
+			// elements that did decode.
+			var named struct {
+				Title string `json:"title"`
+			}
+			_ = json.Unmarshal(raw, &named)
+			warnings = append(warnings, fmt.Sprintf("%s %d (%q) rejected: %v", what, i, named.Title, err))
 			continue
 		}
 		out = append(out, v)

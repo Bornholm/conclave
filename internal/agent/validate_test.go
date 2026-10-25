@@ -87,7 +87,7 @@ func TestParseReportDropsAMistypedFinding(t *testing.T) {
 	if len(rep.Findings) != 1 || rep.Findings[0].ID != "c" {
 		t.Errorf("findings: %+v", rep.Findings)
 	}
-	if w := strings.Join(warnings, "\n"); !strings.Contains(w, "finding 0 rejected") || !strings.Contains(w, "finding 1 rejected") {
+	if w := strings.Join(warnings, "\n"); !strings.Contains(w, `finding 0 ("mistyped") rejected`) || !strings.Contains(w, `finding 1 ("mistyped too") rejected`) {
 		t.Errorf("warnings: %v", warnings)
 	}
 }

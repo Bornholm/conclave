@@ -156,7 +156,7 @@ func TestParseLeadReviewDropsAMistypedFinding(t *testing.T) {
 	if len(review.Findings) != 1 || review.Findings[0].Title != "kept" || len(review.Questions) != 1 {
 		t.Errorf("review: %+v", review)
 	}
-	if w := strings.Join(warnings, "\n"); !strings.Contains(w, "lead: finding 0 rejected") || !strings.Contains(w, "lead: question 0 rejected") {
+	if w := strings.Join(warnings, "\n"); !strings.Contains(w, `lead: finding 0 ("mistyped") rejected`) || !strings.Contains(w, "lead: question 0") {
 		t.Errorf("warnings: %v", warnings)
 	}
 	if _, _, err := ParseLeadReview([]byte(`{"schema_version":"1","verdict":"comment","findings":{"a":1}}`), nil, nil, nil, nil, 10, 0); err == nil {

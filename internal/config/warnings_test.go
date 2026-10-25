@@ -3,6 +3,7 @@ package config
 import (
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestWarnings(t *testing.T) {
@@ -41,6 +42,12 @@ func TestWarningsOnAQuorumThatStopsNoReviewer(t *testing.T) {
 	if got := strings.Join(Warnings(cfg), "\n"); !strings.Contains(got, "review.quorum is 2 with 2 reviewers") {
 		t.Errorf("missing the quorum warning in:\n%s", got)
 	}
+	zero := time.Duration(0)
+	cfg.Review.StragglerGrace = &zero
+	if got := strings.Join(Warnings(cfg), "\n"); strings.Contains(got, "review.quorum") {
+		t.Errorf("straggler_grace: 0 already waits for every reviewer:\n%s", got)
+	}
+	cfg.Review.StragglerGrace = nil
 	cfg.Review.Quorum = 1
 	if got := strings.Join(Warnings(cfg), "\n"); strings.Contains(got, "review.quorum") {
 		t.Errorf("unexpected quorum warning in:\n%s", got)

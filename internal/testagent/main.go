@@ -121,6 +121,15 @@ func main() {
 		// Stopped in the middle of its work, with prose rather than a report.
 		fmt.Print(`{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"I am still reading the changed files and have not written the report yet."}]}}` + "\n")
 		time.Sleep(time.Minute)
+	case "straggler":
+		// Explores in prose, slower than the others, and returns its report
+		// once asked for it alone.
+		if strings.Contains(prompt, "ended without the JSON report") {
+			fmt.Print(`{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":` + strconv.Quote(validReport(id)) + `}]}}` + "\n")
+			return
+		}
+		fmt.Print(`{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"I am still reading the changed files and have not written the report yet."}]}}` + "\n")
+		time.Sleep(time.Minute)
 	case "timeout-silent":
 		// Stopped before it wrote anything at all.
 		time.Sleep(time.Minute)

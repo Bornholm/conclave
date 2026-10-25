@@ -22,9 +22,9 @@ const MaxArgBytes = 128 << 10
 // and logged when a run starts.
 func Warnings(cfg *Config) []string {
 	var out []string
-	if n := len(cfg.Reviewers()); cfg.Review.Quorum > 0 && n > 0 && cfg.Review.Quorum >= n {
+	if n := len(cfg.Reviewers()); cfg.Review.Quorum > 0 && n > 0 && cfg.Review.Quorum >= n && cfg.ReviewStragglerGrace() > 0 {
 		out = append(out, fmt.Sprintf(
-			"review.quorum is %d with %d reviewers: no reviewer is ever stopped as a straggler, every one is waited for; set it below %d, or set straggler_grace: 0 to say so",
+			"review.quorum is %d with %d reviewers: no reviewer is ever stopped as a straggler, every one is waited for; set it below %d, or set straggler_grace: 0",
 			cfg.Review.Quorum, n, n))
 	}
 	for _, a := range cfg.Agents {

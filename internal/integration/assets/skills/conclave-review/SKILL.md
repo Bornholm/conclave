@@ -28,7 +28,7 @@ as a command.
 A review takes 5 to 20 minutes: reviewers run in parallel, and the lead starts
 once they have all ended or been stopped. A reviewer still running
 `review.straggler_grace` (3 minutes) after the others have reported is stopped,
-and only what it had written is kept: a warning says so. A background-task mechanism of the agent
+and asked for its report on `report_grace` if it had none: a warning says so. A background-task mechanism of the agent
 running this skill can kill a process that outlives the tool call; `nohup`
 detaches it so it survives. Keep that mechanism for the short wait loop below,
 not for Conclave itself.

@@ -514,6 +514,12 @@ const DiffFileName = ".conclave-diff.patch"
 // on.
 func (a *App) runReviewer(ctx, actx context.Context, r *run, rv config.AgentConfig, worktree string) (domain.AgentExecution, *domain.AgentReport, error) {
 	ex := domain.AgentExecution{ID: rv.ID, Role: rv.Role, Worktree: worktree}
+	if isStraggler(actx) {
+		// Held back by max_parallel until after the straggler grace: it is
+		// not started at all.
+		ex.Error = errStraggler.Error()
+		return ex, nil, cutShort{err: errStraggler}
+	}
 	in := prompt.ReviewerInput{
 		AgentID: rv.ID, Worktree: worktree, Specialties: rv.Specialties, PR: r.pr,
 		MergeBaseSHA: r.pr.MergeBaseSHA, HeadSHA: r.pr.Head.SHA,
@@ -572,8 +578,7 @@ func (a *App) runReviewer(ctx, actx context.Context, r *run, rv config.AgentConf
 	// more for the report alone, with what it wrote. A timeout is retried too
 	// when there is a transcript to convert, on time set aside for the purpose:
 	// within the agent timeout it would only happen again.
-	// A straggler is not asked again: it was stopped so as not to wait for it.
-	for attempt := 1; isRecoverable(err) && attempt <= r.cfg.ReviewReportRetries() && ctx.Err() == nil && !isStraggler(actx); attempt++ {
+	for attempt := 1; isRecoverable(err) && attempt <= r.cfg.ReviewReportRetries() && ctx.Err() == nil; attempt++ {
 		// A run that wrote almost nothing left no review to convert: asked
 		// again, the reviewer returns an empty report or starts over without
 		// the diff, and neither is the review Conclave asked for. The reason
@@ -598,11 +603,19 @@ func (a *App) runReviewer(ctx, actx context.Context, r *run, rv config.AgentConf
 		// after a timeout runs on report_grace instead, since the run's own
 		// timeout is already spent. retryTimeout is what to report if the retry
 		// is stopped in turn.
+		//
+		// A straggler is asked too, on report_grace and on the review's own
+		// context, since the quorum has cancelled its own: losing the work of
+		// a whole reviewer costs more than the grace.
 		retryCtx, cancel, budget := actx, context.CancelFunc(func() {}), timeBudget(ctx, r.cfg, rv)
 		retryTimeout := r.cfg.EffectiveTimeout(rv)
-		if isCutShort(err) {
+		parent := actx
+		if isStraggler(actx) {
+			parent = ctx
+		}
+		if isCutShort(err) || isStraggler(actx) {
 			if grace := r.cfg.ReviewReportGrace(); grace > 0 {
-				retryCtx, cancel = withGrace(actx, grace)
+				retryCtx, cancel = withGrace(parent, grace)
 				retryTimeout = grace
 				budget = newTimeBudget(time.Now(), agent.EffectiveTimeout(retryCtx, r.cfg, rv))
 			} else {

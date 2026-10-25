@@ -1394,13 +1394,14 @@ func TestIncrementalReviewWithLargeDiffsAndFilesByTheirNames(t *testing.T) {
 
 // TestReviewStopsAStragglerOnceTheOthersHaveReported: once the quorum has
 // reported, a reviewer still running gets the straggler grace, then is
-// stopped like one out of time: what it had written is kept, and it is not
-// asked again.
+// stopped like one out of time: a report it had written is kept, and one that
+// had none is asked for it on report_grace.
 func TestReviewStopsAStragglerOnceTheOthersHaveReported(t *testing.T) {
 	grace := 300 * time.Millisecond
 	slow := agentCfg(t, "r1", config.RoleReviewer, "timeout-with-report")
 	slow.Output = config.OutputPiJSON
-	silent := agentCfg(t, "r3", config.RoleReviewer, "timeout-no-report")
+	silent := agentCfg(t, "r3", config.RoleReviewer, "straggler")
+	silent.Output = config.OutputPiJSON
 	a, _ := newApp(t, slow, agentCfg(t, "r2", config.RoleReviewer, "valid"), silent, agentCfg(t, "lead", config.RoleLead, "valid"))
 	a.Config.Review.MaxParallel = 3
 	a.Config.Review.Quorum = 1
@@ -1421,11 +1422,12 @@ func TestReviewStopsAStragglerOnceTheOthersHaveReported(t *testing.T) {
 	if r1 := execs["r1"]; !r1.Succeeded || !r1.Salvaged || !strings.Contains(strings.Join(r1.Warnings, "\n"), "once the other reviewers had reported") {
 		t.Errorf("the straggler's report should be kept: %+v", r1)
 	}
-	if r3 := execs["r3"]; r3.Succeeded || !strings.Contains(r3.Error, "stopped once the other reviewers had reported") {
-		t.Errorf("the straggler without a report: %+v", r3)
+	if r3 := execs["r3"]; !r3.Succeeded || r3.ReportRetries != 1 {
+		t.Errorf("the straggler without a report should be asked for it: %+v", r3)
 	}
-	if _, err := os.Stat(filepath.Join(res.RunDir, "prompts", "reviewer-r3.retry1.txt")); !os.IsNotExist(err) {
-		t.Errorf("a straggler was asked again: %v", err)
+	p, _ := os.ReadFile(filepath.Join(res.RunDir, "prompts", "reviewer-r3.retry1.txt"))
+	if !strings.Contains(string(p), "stopped once the other reviewers had reported") || !strings.Contains(string(p), "still reading the changed files") {
+		t.Errorf("the retry prompt should say why and carry the transcript:\n%s", p)
 	}
 }
 
@@ -1508,7 +1510,8 @@ func TestReviewSaysAStragglerThatWroteNothingWasStopped(t *testing.T) {
 }
 
 // TestReviewStopsAStragglerDuringItsRetry: a reviewer asked again for its
-// report is stopped as a straggler too, and not asked a second time.
+// report is stopped as a straggler too; a retry that wrote nothing leaves
+// nothing to ask for again.
 func TestReviewStopsAStragglerDuringItsRetry(t *testing.T) {
 	a := stragglerApp(t, "prose-then-timeout", 300*time.Millisecond)
 	a.Config.Review.ReportRetries = new(int)

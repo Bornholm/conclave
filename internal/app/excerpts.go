@@ -72,6 +72,7 @@ func collectExcerpts(reports []domain.AgentReport, read func(file string) ([]byt
 	}
 	var chunks []chunk
 	var notes []string
+	lengths := map[string]int{}
 	files := make([]string, 0, len(ranges))
 	for file := range ranges {
 		files = append(files, file)
@@ -85,24 +86,13 @@ func collectExcerpts(reports []domain.AgentReport, read func(file string) ([]byt
 		}
 		lines := strings.Split(strings.TrimSuffix(string(content), "\n"), "\n")
 		merged := mergeRanges(ranges[file])
+		lengths[file] = len(lines)
 		seen := map[lineRange]bool{}
 		for _, c := range cited[file] {
-			if seen[c] {
-				continue
+			if !seen[c] && c.start > len(lines) {
+				notes = append(notes, fmt.Sprintf("%s:%d-%d is cited past the end of the file, which has %d lines: the finding citing it may be wrong.", file, c.start, c.end, len(lines)))
 			}
 			seen[c] = true
-			if c.start > len(lines) {
-				notes = append(notes, fmt.Sprintf("%s:%d-%d is cited past the end of the file, which has %d lines: the finding citing it may be wrong.", file, c.start, c.end, len(lines)))
-				continue
-			}
-			// Merged ranges neither overlap nor touch: the cited lines are
-			// all given when one range holds them.
-			end := min(c.end, len(lines))
-			for _, lr := range merged {
-				if lr.start <= c.start && c.start <= lr.end && lr.end < end {
-					notes = append(notes, fmt.Sprintf("%s:%d-%d is cited, only lines %d-%d are given: read the rest in the worktree if it matters.", file, c.start, c.end, lr.start, lr.end))
-				}
-			}
 		}
 		for _, lr := range merged {
 			if lr.start > len(lines) {
@@ -144,16 +134,38 @@ func collectExcerpts(reports []domain.AgentReport, read func(file string) ([]byt
 		return kept[i].start < kept[j].start
 	})
 	out := make([]prompt.Excerpt, 0, len(kept))
+	given := map[string][]lineRange{}
 	for _, c := range kept {
 		out = append(out, prompt.Excerpt{File: c.file, Start: c.start, End: c.end, Text: c.text})
+		given[c.file] = append(given[c.file], c.lineRange)
+	}
+	// Once the budget is spent: a citation is noted when the lines given hold
+	// its start but not its end. One whose start is not given at all is in
+	// the ranges left out for size.
+	for _, file := range files {
+		seen := map[lineRange]bool{}
+		for _, c := range cited[file] {
+			if seen[c] || c.start > lengths[file] {
+				continue
+			}
+			seen[c] = true
+			end := min(c.end, lengths[file])
+			// Merged ranges neither overlap nor touch: the cited lines are all
+			// given when one range holds them.
+			for _, lr := range mergeRanges(given[file]) {
+				if lr.start <= c.start && c.start <= lr.end && lr.end < end {
+					notes = append(notes, fmt.Sprintf("%s:%d-%d is cited, only lines %d-%d are given: read the rest in the worktree if it matters.", file, c.start, c.end, lr.start, lr.end))
+				}
+			}
+		}
 	}
 	if len(omitted) > 0 {
-		sort.Strings(omitted)
+		// omitted is in budget order: the most severe findings' ranges first.
 		list := strings.Join(omitted[:min(len(omitted), excerptsListed)], ", ")
 		if more := len(omitted) - excerptsListed; more > 0 {
 			list += fmt.Sprintf(" and %d more", more)
 		}
-		notes = append(notes, fmt.Sprintf("Left out for size: %s. Read them in the worktree if they matter.", list))
+		notes = append(notes, fmt.Sprintf("Left out for size, the most severe findings' first: %s. Read them in the worktree if they matter.", list))
 	}
 	return out, notes
 }

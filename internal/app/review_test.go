@@ -1665,13 +1665,18 @@ func TestCollectExcerpts(t *testing.T) {
 	for _, want := range []string{"bin.go is not given", "gone.go is not given",
 		"z.go:40-40 is cited past the end of the file, which has 10 lines",
 		"a.go:1-3000 is cited, only lines 1-60 are given",
-		"Left out for size: a.go:"} {
+		"Left out for size, the most severe findings' first: a.go:"} {
 		if !strings.Contains(all, want) {
 			t.Errorf("notes lack %q:\n%s", want, all)
 		}
 	}
 	if n := strings.Count(all, "z.go:40-40"); n != 1 {
 		t.Errorf("a citation past the end is noted %d times", n)
+	}
+	// A citation whose lines were all left out for size is in that note
+	// only, not said to be partly given.
+	if strings.Contains(all, "a.go:2600-2700 is cited") {
+		t.Errorf("a range left out for size is said to be given:\n%s", all)
 	}
 	// A finding given whole has no note.
 	if strings.Contains(all, "z.go:4-4") || strings.Contains(all, "wide.go:1-1") {

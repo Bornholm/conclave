@@ -130,6 +130,20 @@ func main() {
 		}
 		fmt.Print(`{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"I am still reading the changed files and have not written the report yet."}]}}` + "\n")
 		time.Sleep(time.Minute)
+	case "prose-then-slow-retry":
+		// Ends normally with prose and no report, so it is asked again; the
+		// retry writes a little and keeps working, and a second retry, which
+		// carries what the first wrote, returns the report.
+		if strings.Contains(prompt, "still drafting the report") {
+			fmt.Print(`{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":` + strconv.Quote(validReport(id)) + `}]}}` + "\n")
+			return
+		}
+		if strings.Contains(prompt, "ended without the JSON report") {
+			fmt.Print(`{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"I am still drafting the report from the files I have read so far."}]}}` + "\n")
+			time.Sleep(time.Minute)
+			return
+		}
+		fmt.Print(`{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"I reviewed the diff but I am describing it in prose instead of writing the report."}]}}` + "\n")
 	case "timeout-silent":
 		// Stopped before it wrote anything at all.
 		time.Sleep(time.Minute)

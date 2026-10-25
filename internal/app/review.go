@@ -578,10 +578,11 @@ func (a *App) runReviewer(ctx, actx context.Context, r *run, rv config.AgentConf
 	// more for the report alone, with what it wrote. A timeout is retried too
 	// when there is a transcript to convert, on time set aside for the purpose:
 	// within the agent timeout it would only happen again.
-	// A straggler is asked once after its stop, whatever report_retries says:
-	// the point of the quorum is to bound the wait.
-	stragglerAsked := false
-	for attempt := 1; isRecoverable(err) && attempt <= r.cfg.ReviewReportRetries() && ctx.Err() == nil && !stragglerAsked; attempt++ {
+	// A straggler is asked once after its stop, whatever report_retries says,
+	// and not again once stopped: the point of the quorum is to bound the
+	// wait. stragglerAsked: it was asked on the review's own context.
+	quorumStopped, stragglerAsked := false, false
+	for attempt := 1; isRecoverable(err) && (attempt <= r.cfg.ReviewReportRetries() || isStraggler(actx)) && ctx.Err() == nil && !quorumStopped; attempt++ {
 		// A run that wrote almost nothing left no review to convert: asked
 		// again, the reviewer returns an empty report or starts over without
 		// the diff, and neither is the review Conclave asked for. The reason
@@ -656,12 +657,16 @@ func (a *App) runReviewer(ctx, actx context.Context, r *run, rv config.AgentConf
 		// Release this attempt's timer now, so a later iteration does not hold
 		// it until the reviewer returns.
 		cancel()
+		// Stopped by the quorum during this attempt or before it, the
+		// reviewer is not asked again.
+		quorumStopped = isStraggler(actx)
 	}
 	if err != nil {
 		// A straggler's retry runs on the review's context, so whatever
 		// stopped it, the reviewer was stopped by the quorum first: the error
-		// says so, for fail_fast and for the manifest.
-		if isStraggler(actx) && !errors.Is(err, errStraggler) {
+		// says so, for fail_fast and for the manifest. A reviewer that failed
+		// on its own keeps its error, even if the quorum fired meanwhile.
+		if stragglerAsked && !errors.Is(err, errStraggler) {
 			err = fmt.Errorf("%w, then its report retry: %w", errStraggler, err)
 			ex.Error = err.Error()
 		}

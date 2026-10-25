@@ -1549,3 +1549,34 @@ func TestReviewKeepsTheStragglerStopWhenItsRetryIsCutShort(t *testing.T) {
 		t.Errorf("manifest: %+v", r1)
 	}
 }
+
+// TestReviewAsksAStragglerForItsReportWithoutReportRetries: report_retries: 0
+// disables the retries of a reviewer that ran to its end, not the one ask of
+// a straggler.
+func TestReviewAsksAStragglerForItsReportWithoutReportRetries(t *testing.T) {
+	a := stragglerApp(t, "straggler", 300*time.Millisecond)
+	a.Config.Review.ReportRetries = new(int)
+	res, err := a.Review(context.Background(), ReviewRequest{Number: 7})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r1 := execution(res, "r1"); !r1.Succeeded || r1.ReportRetries != 1 {
+		t.Errorf("the straggler should be asked for its report: %+v", r1)
+	}
+}
+
+// TestReviewDoesNotAskAgainAReviewerStoppedDuringItsRetry: a reviewer the
+// quorum stops while it is being asked again is not asked a second time,
+// whatever report_retries allows.
+func TestReviewDoesNotAskAgainAReviewerStoppedDuringItsRetry(t *testing.T) {
+	a := stragglerApp(t, "prose-then-slow-retry", 300*time.Millisecond)
+	a.Config.Review.ReportRetries = new(int)
+	*a.Config.Review.ReportRetries = 3
+	res, err := a.Review(context.Background(), ReviewRequest{Number: 7})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r1 := execution(res, "r1"); r1.Succeeded || r1.ReportRetries != 1 || !strings.Contains(r1.Error, "stopped once the other reviewers had reported") {
+		t.Errorf("manifest: %+v", r1)
+	}
+}

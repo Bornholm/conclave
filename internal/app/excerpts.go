@@ -23,6 +23,8 @@ const (
 	excerptLineWidth = 240
 	excerptsMaxBytes = 64 << 10
 	excerptFileMax   = 2 << 20
+	// excerptsListed bounds the ranges a note names.
+	excerptsListed = 20
 )
 
 // lineRange is a range of lines, with the rank of the most severe finding
@@ -44,18 +46,23 @@ func (r *run) excerpts(ctx context.Context, log *slog.Logger, reports []domain.A
 
 // collectExcerpts returns the cited lines with a few lines around them,
 // merged per file and cut into ranges of at most excerptMaxLines lines. The
-// budget of excerptsMaxBytes goes to the most severe findings first. The
-// notes tell the lead what it was not given.
+// budget of excerptsMaxBytes goes to the most severe findings first; a range
+// that does not fit leaves room for a smaller one after it. The notes tell
+// the lead what it was not given, by file and line.
 func collectExcerpts(reports []domain.AgentReport, read func(file string) ([]byte, error)) ([]prompt.Excerpt, []string) {
 	ranges := map[string][]lineRange{}
+	// cited keeps each finding's own lines, for the notes.
+	cited := map[string][]lineRange{}
 	for _, rep := range reports {
 		for _, f := range rep.Findings {
 			if f.File == "" || f.StartLine < 1 {
 				continue
 			}
+			last := max(f.EndLine, f.StartLine)
 			start := max(1, f.StartLine-excerptContext)
-			end := min(max(f.EndLine, f.StartLine)+excerptContext, start+excerptMaxLines-1)
+			end := min(last+excerptContext, start+excerptMaxLines-1)
 			ranges[f.File] = append(ranges[f.File], lineRange{start, end, f.Severity.Rank()})
+			cited[f.File] = append(cited[f.File], lineRange{f.StartLine, last, 0})
 		}
 	}
 	type chunk struct {
@@ -77,9 +84,28 @@ func collectExcerpts(reports []domain.AgentReport, read func(file string) ([]byt
 			continue
 		}
 		lines := strings.Split(strings.TrimSuffix(string(content), "\n"), "\n")
-		for _, lr := range mergeRanges(ranges[file]) {
+		merged := mergeRanges(ranges[file])
+		seen := map[lineRange]bool{}
+		for _, c := range cited[file] {
+			if seen[c] {
+				continue
+			}
+			seen[c] = true
+			if c.start > len(lines) {
+				notes = append(notes, fmt.Sprintf("%s:%d-%d is cited past the end of the file, which has %d lines: the finding citing it may be wrong.", file, c.start, c.end, len(lines)))
+				continue
+			}
+			// Merged ranges neither overlap nor touch: the cited lines are
+			// all given when one range holds them.
+			end := min(c.end, len(lines))
+			for _, lr := range merged {
+				if lr.start <= c.start && c.start <= lr.end && lr.end < end {
+					notes = append(notes, fmt.Sprintf("%s:%d-%d is cited, only lines %d-%d are given: read the rest in the worktree if it matters.", file, c.start, c.end, lr.start, lr.end))
+				}
+			}
+		}
+		for _, lr := range merged {
 			if lr.start > len(lines) {
-				notes = append(notes, fmt.Sprintf("%s has %d lines: a finding cites a line past its end, and may be wrong.", file, len(lines)))
 				continue
 			}
 			lr.end = min(lr.end, len(lines))
@@ -100,11 +126,12 @@ func collectExcerpts(reports []domain.AgentReport, read func(file string) ([]byt
 	}
 	// The most severe findings first, then in file order, for the budget.
 	sort.SliceStable(chunks, func(i, j int) bool { return chunks[i].rank < chunks[j].rank })
-	size, omitted := 0, 0
+	size := 0
+	var omitted []string
 	kept := chunks[:0]
 	for _, c := range chunks {
 		if size+len(c.text) > excerptsMaxBytes {
-			omitted++
+			omitted = append(omitted, fmt.Sprintf("%s:%d-%d", c.file, c.start, c.end))
 			continue
 		}
 		size += len(c.text)
@@ -120,8 +147,13 @@ func collectExcerpts(reports []domain.AgentReport, read func(file string) ([]byt
 	for _, c := range kept {
 		out = append(out, prompt.Excerpt{File: c.file, Start: c.start, End: c.end, Text: c.text})
 	}
-	if omitted > 0 {
-		notes = append(notes, fmt.Sprintf("%d more ranges, cited by the least severe findings, were left out for size: read them in the worktree if they matter.", omitted))
+	if len(omitted) > 0 {
+		sort.Strings(omitted)
+		list := strings.Join(omitted[:min(len(omitted), excerptsListed)], ", ")
+		if more := len(omitted) - excerptsListed; more > 0 {
+			list += fmt.Sprintf(" and %d more", more)
+		}
+		notes = append(notes, fmt.Sprintf("Left out for size: %s. Read them in the worktree if they matter.", list))
 	}
 	return out, notes
 }

@@ -65,7 +65,8 @@ with the material written to `$OUT/context.log` first.
 
 `--format json` gives the structured answer instead of Markdown. The
 configuration is `.conclave.yaml` in the working directory, then in
-`--project`, then `~/.config/conclave/config.yaml`.
+`--project`, then `~/.config/conclave/config.yaml`. A `.conclave.yaml` inherits
+those of the parent directories, up to one that says `inherits: false`.
 
 ## Read the answer
 

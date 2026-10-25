@@ -32,8 +32,12 @@ detaches it so it survives. Keep that mechanism for the short wait loop below,
 not for Conclave itself.
 
 Run from the repository root. Conclave reads `.conclave.yaml` there, which is
-often gitignored personal tooling: never assume a collaborator has it.
-`conclave config validate` says what is missing. The report goes to stdout, logs
+often gitignored personal tooling: never assume a collaborator has it. It also
+inherits the `.conclave.yaml` of every parent directory, up to one that says
+`inherits: false`, so the agents may be declared once above the project; an
+agent marked `disabled: true` is dropped. The log names each inherited file
+("configuration inherited"), and `conclave config validate` lists them and
+says what is missing. The report goes to stdout, logs
 to stderr, artifacts to `.git/conclave/runs/<run-id>/`.
 
 ## Wait on the sentinel
@@ -84,7 +88,10 @@ echo "$OUT"
 ```
 
 `--since last` gives the agents the previous review's findings, numbered P1
-to Pn, and the diff since the head it reviewed. They mark each one `fixed`,
+to Pn, and the diff since the head it reviewed. With that diff, the whole
+pull request diff is a file in the reviewers' worktree rather than in the
+prompt; without it, when the head did not move or the previous head is gone,
+the whole diff is inlined as in a full review. They mark each one `fixed`,
 `still-present` or `withdrawn`, and the report opens with a "Since the
 previous review" section. Wait for the push to show on the forge before
 launching, or the review measures the old head against itself.
@@ -105,7 +112,10 @@ fixed ones out: the diff shows them. Drop `--responses` when there is nothing
 to answer.
 
 Check the statuses like findings: a `fixed` or `withdrawn` that is wrong takes
-a real problem off the review. Open the change a `fixed` cites.
+a real problem off the review. Open the change a `fixed` cites. Each previous
+finding keeps what the reviewers said that its status overrules, under "Also
+said" in the report and `claims` in the JSON: a `fixed` that a reviewer still
+calls `still-present` is the first to check.
 
 ## Reporting back
 

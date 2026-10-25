@@ -5,8 +5,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
+	"sync"
 	"time"
 
 	"golang.org/x/sync/errgroup"
@@ -55,9 +58,13 @@ type run struct {
 	wtBase    string
 	diff      []byte
 	diffTrunc bool
-	// diffIndex is set when the diff is too large to inline: reviewers
-	// then read it from DiffFileName in their worktree.
+	// diffIndex is set when the diff is too large to inline, or when the
+	// review is incremental: reviewers then read it from DiffFileName in
+	// their worktree. diffSince says the review is incremental, diffLarge
+	// that the diff is too large to inline.
 	diffIndex *prompt.DiffIndex
+	diffSince bool
+	diffLarge bool
 	changed   map[string]bool
 	runner    *agent.Runner
 	// previous is the review an incremental review is measured against, nil
@@ -72,6 +79,29 @@ type run struct {
 	sinceByGit bool
 	// sinceWarnings are added to the review's warnings.
 	sinceWarnings []string
+	// runWarnings are what the agents' runs find about the repository rather
+	// than about an agent, such as a file named like a diff file: each one is
+	// said once, however many agents ran into it.
+	warnMu      sync.Mutex
+	runWarnings []string
+}
+
+// warnOnce adds msg to the run's warnings, and reports whether it was new.
+func (r *run) warnOnce(msg string) bool {
+	r.warnMu.Lock()
+	defer r.warnMu.Unlock()
+	if slices.Contains(r.runWarnings, msg) {
+		return false
+	}
+	r.runWarnings = append(r.runWarnings, msg)
+	return true
+}
+
+// runWarningsSoFar returns a copy of the run's warnings.
+func (r *run) runWarningsSoFar() []string {
+	r.warnMu.Lock()
+	defer r.warnMu.Unlock()
+	return slices.Clone(r.runWarnings)
 }
 
 // previousCount is the number of previous findings, zero for a full review.
@@ -225,10 +255,15 @@ func (a *App) Review(ctx context.Context, req ReviewRequest) (*ReviewResult, err
 			return nil, err
 		}
 		_ = store.Write("context", "diff.patch", r.diff)
-		if int64(len(r.diff)) > cfg.InlineDiffBytes() {
+		// An incremental review starts from the changes since the previous
+		// one: the whole diff, read on every turn of every agent when inlined,
+		// is given as a file, read where those changes lead.
+		r.diffLarge = int64(len(r.diff)) > cfg.InlineDiffBytes()
+		r.diffSince = len(r.sinceDiffText) > 0 && len(r.diff) > 0
+		if r.diffLarge || r.diffSince {
 			idx := prompt.IndexDiff(r.diff)
 			r.diffIndex = &idx
-			log.Info("diff given as a file", "bytes", idx.Bytes, "lines", idx.Lines, "files", len(idx.Sections)+idx.Omitted)
+			log.Info("diff given as a file", "bytes", idx.Bytes, "lines", idx.Lines, "files", len(idx.Sections)+idx.Omitted, "incremental", r.diffSince)
 		}
 	}
 
@@ -363,7 +398,7 @@ func (a *App) execute(ctx context.Context, r *run, req ReviewRequest) (*domain.C
 		warnings = append(warnings, keepStillPresent(review, r.previous, r.changed)...)
 		consolidation.SortConsolidated(review.Findings)
 		review.Meta = meta
-		review.Warnings = warnings
+		review.Warnings = append(r.runWarningsSoFar(), warnings...)
 		return review, nil
 	}
 	review, leadWarnings, err := a.runLead(ctx, r, lead, worktrees[lead.ID], outcomes, succeeded, reports, groups)
@@ -385,7 +420,8 @@ func (a *App) execute(ctx context.Context, r *run, req ReviewRequest) (*domain.C
 	warnings = append(warnings, keepStillPresent(review, r.previous, r.changed)...)
 	consolidation.SortConsolidated(review.Findings)
 	review.Meta = meta
-	review.Warnings = warnings
+	// Read once the lead has run: it raises run warnings too.
+	review.Warnings = append(r.runWarningsSoFar(), warnings...)
 	return review, nil
 }
 
@@ -474,17 +510,28 @@ func (a *App) runReviewer(ctx context.Context, r *run, rv config.AgentConfig, wo
 		Budget: timeBudget(ctx, r.cfg, rv),
 	}
 	if r.diffIndex != nil {
-		if err := writeDiffFile(filepath.Join(worktree, DiffFileName), r.diff); err != nil {
+		err := writeDiffFile(filepath.Join(worktree, DiffFileName), r.diff)
+		switch {
+		case err == nil:
+			in.Diff, in.DiffFile, in.DiffIndex = "", DiffFileName, *r.diffIndex
+			in.DiffSince, in.DiffLarge = r.diffSince, r.diffLarge
+		case !r.diffLarge && errors.Is(err, fs.ErrExist):
+			// Only an incremental review asked for the file: a repository
+			// that has one by that name gets the diff inlined, as before.
+			if r.warnOnce("the diff is inlined: the repository has a file named " + DiffFileName) {
+				a.logger().Warn("diff inlined: the repository has a file by the diff file's name", "file", DiffFileName)
+			}
+		default:
 			ex.Error = err.Error()
 			return ex, nil, err
 		}
-		in.Diff, in.DiffFile, in.DiffIndex = "", DiffFileName, *r.diffIndex
 	}
-	since, err := r.since(worktree, true)
+	since, warning, err := r.since(worktree, true)
 	if err != nil {
 		ex.Error = err.Error()
 		return ex, nil, err
 	}
+	a.warnSince(r, warning)
 	in.Since = since
 	p, err := prompt.Reviewer(in)
 	if err != nil {
@@ -554,7 +601,7 @@ func (a *App) runReviewer(ctx context.Context, r *run, rv config.AgentConfig, wo
 		}
 		// The previous findings only: the retry converts a transcript, it does
 		// not review the changes again.
-		since, _ := r.since(worktree, false)
+		since, _, _ := r.since(worktree, false)
 		retry, perr := prompt.ReviewerRetry(prompt.ReviewerRetryInput{
 			AgentID: rv.ID, Worktree: worktree, PR: r.pr, MergeBaseSHA: r.pr.MergeBaseSHA, HeadSHA: r.pr.Head.SHA,
 			Problem: "Conclave could not use it: " + ex.Error + ".", Transcript: string(transcript),
@@ -595,23 +642,40 @@ const SinceDiffFileName = ".conclave-since.patch"
 
 // since is the incremental part of an agent's prompt, empty for a full
 // review. With changes, the diff since the previous review is included, and
-// written to the worktree when too large to inline.
-func (r *run) since(worktree string, changes bool) (prompt.Since, error) {
+// written to the worktree when too large to inline. The warning, when set,
+// says the agent was given the git command instead.
+func (r *run) since(worktree string, changes bool) (prompt.Since, string, error) {
 	if r.previous == nil {
-		return prompt.Since{}, nil
+		return prompt.Since{}, "", nil
 	}
 	s := prompt.Since{Previous: r.previous}
 	if !changes {
-		return s, nil
+		return s, "", nil
 	}
 	s.Note, s.Diff, s.Truncated, s.ByGit = r.sinceNote, string(r.sinceDiffText), r.sinceDiffTrunc, r.sinceByGit
 	if int64(len(r.sinceDiffText)) > r.cfg.InlineDiffBytes() {
-		if err := writeDiffFile(filepath.Join(worktree, SinceDiffFileName), r.sinceDiffText); err != nil {
-			return s, err
+		err := writeDiffFile(filepath.Join(worktree, SinceDiffFileName), r.sinceDiffText)
+		switch {
+		case err == nil:
+			s.Diff, s.DiffFile = "", SinceDiffFileName
+		case errors.Is(err, fs.ErrExist):
+			// Too large to inline, and the repository has a file by that
+			// name: the agent is given the git command instead.
+			s.Diff, s.ByGit = "", true
+			return s, "the diff since the previous review is left to git diff: the repository has a file named " + SinceDiffFileName, nil
+		default:
+			return s, "", err
 		}
-		s.Diff, s.DiffFile = "", SinceDiffFileName
 	}
-	return s, nil
+	return s, "", nil
+}
+
+// warnSince records, once, why the diff since the previous review was left
+// to git, and logs it.
+func (a *App) warnSince(r *run, warning string) {
+	if warning != "" && r.warnOnce(warning) {
+		a.logger().Warn("diff since the previous review left to git diff: the repository has a file by its name", "file", SinceDiffFileName)
+	}
 }
 
 // writeDiffFile writes the diff where a reviewer reads it. It refuses to
@@ -855,11 +919,12 @@ func (a *App) runLead(ctx context.Context, r *run, lead config.AgentConfig, work
 		r.manifest.Agents = append(r.manifest.Agents, ex)
 		_ = r.store.WriteManifest(r.manifest)
 	}()
-	since, err := r.since(worktree, true)
+	since, warning, err := r.since(worktree, true)
 	if err != nil {
 		ex.Error = err.Error()
 		return nil, nil, err
 	}
+	a.warnSince(r, warning)
 	p, err := prompt.Lead(prompt.LeadInput{
 		AgentID: lead.ID, Worktree: worktree, PR: r.pr, MergeBaseSHA: r.pr.MergeBaseSHA, HeadSHA: r.pr.Head.SHA,
 		SucceededReviewers: succeeded, FailedReviewers: consolidation.FailedReviewers(outcomes),

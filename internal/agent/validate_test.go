@@ -75,6 +75,23 @@ func TestNumericFindingID(t *testing.T) {
 	}
 }
 
+func TestParseReportDropsAMistypedFinding(t *testing.T) {
+	in := `{"schema_version":"1","reviewer":{"id":"r1"},"summary":"s","verdict":"comment","findings":[
+	 {"id":"a","category":"correctness","severity":0.7,"confidence":0.5,"file":"a.go","start_line":1,"end_line":1,"title":"mistyped"},
+	 {"id":"b","category":"correctness","severity":"low","confidence":"high","file":"a.go","start_line":1,"end_line":1,"title":"mistyped too"},
+	 {"id":"c","category":"correctness","severity":"low","confidence":0.5,"file":"a.go","start_line":1,"end_line":1,"title":"kept"}]}`
+	rep, warnings, err := ParseReport([]byte(in), "r1", nil, nil, Limits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rep.Findings) != 1 || rep.Findings[0].ID != "c" {
+		t.Errorf("findings: %+v", rep.Findings)
+	}
+	if w := strings.Join(warnings, "\n"); !strings.Contains(w, "finding 0 rejected") || !strings.Contains(w, "finding 1 rejected") {
+		t.Errorf("warnings: %v", warnings)
+	}
+}
+
 func TestMaxFindings(t *testing.T) {
 	rep, warnings, err := ParseReport([]byte(report), "r1", nil, nil, Limits{MaxFindings: 1, MaxFieldBytes: 100})
 	if err != nil || len(rep.Findings) != 1 || len(warnings) == 0 {

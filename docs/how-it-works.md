@@ -9,7 +9,7 @@
 5. Compute the merge base and the diff.
 6. Create one detached worktree per agent at the head commit, under the system temporary directory.
 7. Run the reviewers, at most `review.max_parallel` at a time. Each gets the prompt on `stdin`, or as an argument or a file, see `input` in [configuration](configuration.md).
-8. Validate every report. Schema version, reviewer id, severities, paths inside the repository, line numbers and field sizes are checked. A finding in a file the pull request does not touch is kept but flagged `out_of_scope`. It gets its own section in the output and never changes the verdict.
+8. Validate every report. Schema version, reviewer id, severities, paths inside the repository, line numbers and field sizes are checked. A finding that fails a check, or one of whose fields has the wrong type, is dropped with a warning; the rest of the report is kept, the lead's included. A finding in a file the pull request does not touch is kept but flagged `out_of_scope`. It gets its own section in the output and never changes the verdict.
 9. Group similar findings (same file, overlapping lines, similar title or description, whatever category each reviewer chose), then run the lead with every report and the groups. The lead may only attribute a finding to a reviewer that actually succeeded. If the lead fails or prints garbage, a deterministic fallback builds the review from the groups.
 10. Render Markdown or JSON, remove the worktrees, keep the artifacts.
 

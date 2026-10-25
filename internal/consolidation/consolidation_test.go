@@ -140,6 +140,30 @@ func TestParseLeadReview(t *testing.T) {
 	}
 }
 
+// TestParseLeadReviewDropsAMistypedFinding: measured on a real run, the
+// lead wrote one finding's severity as a number, and failing the whole
+// review on it threw away its five minutes and every other finding.
+func TestParseLeadReviewDropsAMistypedFinding(t *testing.T) {
+	in := `{"schema_version":"1","summary":"ok","verdict":"comment","findings":[
+ {"category":"security","severity":0.7,"confidence":0.8,"file":"a.go","start_line":1,"end_line":1,"title":"mistyped","description":"d","reported_by":["r1"]},
+ {"category":"security","severity":"low","confidence":0.8,"file":"a.go","start_line":1,"end_line":1,"title":"kept","description":"d","reported_by":["r1"]}],
+ "questions":[{"question":7},{"question":"why?"}]}`
+	outcomes := []ReviewerOutcome{{ID: "r1", Report: &domain.AgentReport{}}}
+	review, warnings, err := ParseLeadReview([]byte(in), []string{"r1"}, outcomes, nil, nil, 10, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(review.Findings) != 1 || review.Findings[0].Title != "kept" || len(review.Questions) != 1 {
+		t.Errorf("review: %+v", review)
+	}
+	if w := strings.Join(warnings, "\n"); !strings.Contains(w, "lead: finding 0 rejected") || !strings.Contains(w, "lead: question 0 rejected") {
+		t.Errorf("warnings: %v", warnings)
+	}
+	if _, _, err := ParseLeadReview([]byte(`{"schema_version":"1","verdict":"comment","findings":{"a":1}}`), nil, nil, nil, nil, 10, 0); err == nil {
+		t.Error("findings that are not an array must fail the review")
+	}
+}
+
 func TestTitleSimilarity(t *testing.T) {
 	if s := TitleSimilarity("Concurrent map write in Store", "Store map written concurrently"); s < 0.3 {
 		t.Errorf("similarity %v", s)

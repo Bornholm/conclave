@@ -35,8 +35,10 @@ until [ -f "$OUT/triage.done" ]; do sleep 10; done; echo "exit=$(cat "$OUT/triag
 The arguments, a label included, reach `conclave` as they are, never pasted
 into the inner script.
 
-Run from the repository root, where `.conclave.yaml` is. The report goes to
-stdout, logs to stderr.
+Run from the repository root, where `.conclave.yaml` is; the `.conclave.yaml`
+of the parent directories are inherited, up to one that says `inherits: false`,
+and `conclave config validate` lists them. The report goes to stdout, logs to
+stderr.
 
 ## Check the statuses that close things
 

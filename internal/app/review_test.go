@@ -1314,6 +1314,24 @@ func TestIncrementalReviewGivesTheWholeDiffAsAFile(t *testing.T) {
 		t.Errorf("diff file: %v\n%s", err, diff)
 	}
 
+	commitFile(t, a, dir, DiffFileName)
+	res, err = a.Review(context.Background(), ReviewRequest{Number: 7, Since: SinceLast})
+	if err != nil {
+		t.Fatalf("a file by the diff file's name failed the review: %v", err)
+	}
+	p, _ := os.ReadFile(filepath.Join(res.RunDir, "prompts", "reviewer-r1.txt"))
+	if !strings.Contains(string(p), "DIFF (git diff ") || strings.Contains(string(p), "DIFF FILE (git diff") {
+		t.Errorf("the diff should be inlined:\n%s", p)
+	}
+	if !strings.Contains(strings.Join(res.Review.Warnings, "\n"), "the repository has a file named "+DiffFileName) {
+		t.Errorf("the inlined diff is not in the warnings: %v", res.Review.Warnings)
+	}
+}
+
+// commitFile commits a file by that name on the feature branch of the
+// fixture and makes it the pull request head.
+func commitFile(t *testing.T, a *App, dir, name string) {
+	t.Helper()
 	git := func(args ...string) string {
 		t.Helper()
 		cmd := exec.Command("git", args...)
@@ -1326,22 +1344,42 @@ func TestIncrementalReviewGivesTheWholeDiffAsAFile(t *testing.T) {
 		return strings.TrimSpace(string(out))
 	}
 	git("checkout", "-q", "feature")
-	if err := os.WriteFile(filepath.Join(dir, DiffFileName), []byte("the repository's own\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, name), []byte("the repository's own\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	git("add", DiffFileName)
-	git("commit", "-q", "-m", "a file by the same name")
+	git("add", name)
+	git("commit", "-q", "-m", "a file named "+name)
 	a.Forge.(*fakeForge).pr.Head.SHA = git("rev-parse", "HEAD")
 	git("checkout", "-q", "main")
-	res, err = a.Review(context.Background(), ReviewRequest{Number: 7, Since: SinceLast})
+}
+
+// TestIncrementalReviewWithLargeDiffsAndFilesByTheirNames: a repository file
+// named like the diff since the previous review leaves that diff to git; one
+// named like a whole diff too large to inline fails the reviewer.
+func TestIncrementalReviewWithLargeDiffsAndFilesByTheirNames(t *testing.T) {
+	a, dir := newApp(t, agentCfg(t, "r1", config.RoleReviewer, "valid"), agentCfg(t, "lead", config.RoleLead, "valid"))
+	if _, err := a.Review(context.Background(), ReviewRequest{Number: 7}); err != nil {
+		t.Fatal(err)
+	}
+	advanceHead(t, a, dir)
+	commitFile(t, a, dir, SinceDiffFileName)
+	a.Config.Review.Limits.MaxInlineDiffBytes = 10
+	a.Config.Agents[0].Environment["CONCLAVE_TESTAGENT_MODE"] = "incremental-fixed"
+	a.Config.Agents[1].Environment["CONCLAVE_TESTAGENT_MODE"] = "incremental-lead-dropped"
+	res, err := a.Review(context.Background(), ReviewRequest{Number: 7, Since: SinceLast})
 	if err != nil {
-		t.Fatalf("a file by the diff file's name failed the review: %v", err)
+		t.Fatalf("a file by the since diff's name failed the review: %v", err)
 	}
 	p, _ := os.ReadFile(filepath.Join(res.RunDir, "prompts", "reviewer-r1.txt"))
-	if !strings.Contains(string(p), "DIFF (git diff ") || strings.Contains(string(p), "DIFF FILE (git diff") {
-		t.Errorf("the diff should be inlined:\n%s", p)
+	if !strings.Contains(string(p), "The diff is not included. Inspect it in the worktree with:") {
+		t.Errorf("the since diff should be left to git:\n%s", p)
 	}
-	if !strings.Contains(strings.Join(res.Review.Warnings, "\n"), "the repository has a file named "+DiffFileName) {
-		t.Errorf("the inlined diff is not in the warnings: %v", res.Review.Warnings)
+	if !strings.Contains(strings.Join(res.Review.Warnings, "\n"), "the repository has a file named "+SinceDiffFileName) {
+		t.Errorf("the warnings do not say so: %v", res.Review.Warnings)
+	}
+
+	commitFile(t, a, dir, DiffFileName)
+	if _, err := a.Review(context.Background(), ReviewRequest{Number: 7, Since: SinceLast}); err == nil || !strings.Contains(err.Error(), "reviewers failed") {
+		t.Errorf("a whole diff too large to inline and a file by its name should fail the reviewer: %v", err)
 	}
 }

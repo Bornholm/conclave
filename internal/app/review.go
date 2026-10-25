@@ -499,10 +499,13 @@ func (a *App) runReviewer(ctx context.Context, r *run, rv config.AgentConfig, wo
 			return ex, nil, err
 		}
 	}
-	since, err := r.since(worktree, true)
+	since, warning, err := r.since(worktree, true)
 	if err != nil {
 		ex.Error = err.Error()
 		return ex, nil, err
+	}
+	if warning != "" {
+		ex.Warnings = append(ex.Warnings, warning)
 	}
 	in.Since = since
 	p, err := prompt.Reviewer(in)
@@ -573,7 +576,7 @@ func (a *App) runReviewer(ctx context.Context, r *run, rv config.AgentConfig, wo
 		}
 		// The previous findings only: the retry converts a transcript, it does
 		// not review the changes again.
-		since, _ := r.since(worktree, false)
+		since, _, _ := r.since(worktree, false)
 		retry, perr := prompt.ReviewerRetry(prompt.ReviewerRetryInput{
 			AgentID: rv.ID, Worktree: worktree, PR: r.pr, MergeBaseSHA: r.pr.MergeBaseSHA, HeadSHA: r.pr.Head.SHA,
 			Problem: "Conclave could not use it: " + ex.Error + ".", Transcript: string(transcript),
@@ -614,23 +617,32 @@ const SinceDiffFileName = ".conclave-since.patch"
 
 // since is the incremental part of an agent's prompt, empty for a full
 // review. With changes, the diff since the previous review is included, and
-// written to the worktree when too large to inline.
-func (r *run) since(worktree string, changes bool) (prompt.Since, error) {
+// written to the worktree when too large to inline. The warning, when set,
+// says the agent was given the git command instead.
+func (r *run) since(worktree string, changes bool) (prompt.Since, string, error) {
 	if r.previous == nil {
-		return prompt.Since{}, nil
+		return prompt.Since{}, "", nil
 	}
 	s := prompt.Since{Previous: r.previous}
 	if !changes {
-		return s, nil
+		return s, "", nil
 	}
 	s.Note, s.Diff, s.Truncated, s.ByGit = r.sinceNote, string(r.sinceDiffText), r.sinceDiffTrunc, r.sinceByGit
 	if int64(len(r.sinceDiffText)) > r.cfg.InlineDiffBytes() {
-		if err := writeDiffFile(filepath.Join(worktree, SinceDiffFileName), r.sinceDiffText); err != nil {
-			return s, err
+		err := writeDiffFile(filepath.Join(worktree, SinceDiffFileName), r.sinceDiffText)
+		switch {
+		case err == nil:
+			s.Diff, s.DiffFile = "", SinceDiffFileName
+		case errors.Is(err, fs.ErrExist):
+			// Too large to inline, and the repository has a file by that
+			// name: the agent is given the git command instead.
+			s.Diff, s.ByGit = "", true
+			return s, "the diff since the previous review is left to git diff: the repository has a file named " + SinceDiffFileName, nil
+		default:
+			return s, "", err
 		}
-		s.Diff, s.DiffFile = "", SinceDiffFileName
 	}
-	return s, nil
+	return s, "", nil
 }
 
 // writeDiffFile writes the diff where a reviewer reads it. It refuses to
@@ -874,10 +886,13 @@ func (a *App) runLead(ctx context.Context, r *run, lead config.AgentConfig, work
 		r.manifest.Agents = append(r.manifest.Agents, ex)
 		_ = r.store.WriteManifest(r.manifest)
 	}()
-	since, err := r.since(worktree, true)
+	since, warning, err := r.since(worktree, true)
 	if err != nil {
 		ex.Error = err.Error()
 		return nil, nil, err
+	}
+	if warning != "" {
+		ex.Warnings = append(ex.Warnings, warning)
 	}
 	p, err := prompt.Lead(prompt.LeadInput{
 		AgentID: lead.ID, Worktree: worktree, PR: r.pr, MergeBaseSHA: r.pr.MergeBaseSHA, HeadSHA: r.pr.Head.SHA,

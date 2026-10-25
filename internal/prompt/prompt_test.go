@@ -71,8 +71,8 @@ func TestReviewerPromptWithDiffFileInAnIncrementalReview(t *testing.T) {
 			t.Errorf("prompt lacks %q:\n%s", want, s)
 		}
 	}
-	if strings.Contains(s, "too large to be given here") {
-		t.Error("an incremental review's diff file is not said too large")
+	if strings.Contains(s, "too large to be given here") || strings.Contains(s, "Do not read it in one go") {
+		t.Error("an incremental review's small diff file is not said too large")
 	}
 
 	out, err = Reviewer(ReviewerInput{AgentID: "rev", PR: &domain.PullRequest{}, MergeBaseSHA: "mb", HeadSHA: "hd",
@@ -80,7 +80,7 @@ func TestReviewerPromptWithDiffFileInAnIncrementalReview(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if s := string(out); !strings.Contains(s, "This review is incremental") || !strings.Contains(s, "too large to be given here") {
+	if s := string(out); !strings.Contains(s, "This review is incremental") || !strings.Contains(s, "too large to be given here") || !strings.Contains(s, "Do not read it in one go") {
 		t.Errorf("a large diff in an incremental review is both:\n%s", s)
 	}
 }

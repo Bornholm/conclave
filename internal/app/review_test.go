@@ -1357,7 +1357,7 @@ func commitFile(t *testing.T, a *App, dir, name string) {
 // named like the diff since the previous review leaves that diff to git; one
 // named like a whole diff too large to inline fails the reviewer.
 func TestIncrementalReviewWithLargeDiffsAndFilesByTheirNames(t *testing.T) {
-	a, dir := newApp(t, agentCfg(t, "r1", config.RoleReviewer, "valid"), agentCfg(t, "lead", config.RoleLead, "valid"))
+	a, dir := newApp(t, agentCfg(t, "r1", config.RoleReviewer, "valid"), agentCfg(t, "r2", config.RoleReviewer, "valid"), agentCfg(t, "lead", config.RoleLead, "valid"))
 	if _, err := a.Review(context.Background(), ReviewRequest{Number: 7}); err != nil {
 		t.Fatal(err)
 	}
@@ -1365,7 +1365,8 @@ func TestIncrementalReviewWithLargeDiffsAndFilesByTheirNames(t *testing.T) {
 	commitFile(t, a, dir, SinceDiffFileName)
 	a.Config.Review.Limits.MaxInlineDiffBytes = 10
 	a.Config.Agents[0].Environment["CONCLAVE_TESTAGENT_MODE"] = "incremental-fixed"
-	a.Config.Agents[1].Environment["CONCLAVE_TESTAGENT_MODE"] = "incremental-lead-dropped"
+	a.Config.Agents[1].Environment["CONCLAVE_TESTAGENT_MODE"] = "incremental-fixed"
+	a.Config.Agents[2].Environment["CONCLAVE_TESTAGENT_MODE"] = "incremental-lead-dropped"
 	res, err := a.Review(context.Background(), ReviewRequest{Number: 7, Since: SinceLast})
 	if err != nil {
 		t.Fatalf("a file by the since diff's name failed the review: %v", err)
@@ -1374,8 +1375,14 @@ func TestIncrementalReviewWithLargeDiffsAndFilesByTheirNames(t *testing.T) {
 	if !strings.Contains(string(p), "The diff is not included. Inspect it in the worktree with:") {
 		t.Errorf("the since diff should be left to git:\n%s", p)
 	}
-	if !strings.Contains(strings.Join(res.Review.Warnings, "\n"), "the repository has a file named "+SinceDiffFileName) {
-		t.Errorf("the warnings do not say so: %v", res.Review.Warnings)
+	n := 0
+	for _, w := range res.Review.Warnings {
+		if strings.Contains(w, "the repository has a file named "+SinceDiffFileName) {
+			n++
+		}
+	}
+	if n != 1 {
+		t.Errorf("the warnings should say so once, not once per agent: %v", res.Review.Warnings)
 	}
 
 	commitFile(t, a, dir, DiffFileName)

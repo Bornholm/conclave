@@ -88,8 +88,10 @@ echo "$OUT"
 ```
 
 `--since last` gives the agents the previous review's findings, numbered P1
-to Pn, and the diff since the head it reviewed; the whole pull request diff
-is then a file in their worktree rather than in the prompt. They mark each one `fixed`,
+to Pn, and the diff since the head it reviewed. With that diff, the whole
+pull request diff is a file in the reviewers' worktree rather than in the
+prompt; without it, when the head did not move or the previous head is gone,
+the whole diff is inlined as in a full review. They mark each one `fixed`,
 `still-present` or `withdrawn`, and the report opens with a "Since the
 previous review" section. Wait for the push to show on the forge before
 launching, or the review measures the old head against itself.

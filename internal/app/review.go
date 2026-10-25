@@ -8,6 +8,8 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
+	"sync"
 	"time"
 
 	"golang.org/x/sync/errgroup"
@@ -77,6 +79,22 @@ type run struct {
 	sinceByGit bool
 	// sinceWarnings are added to the review's warnings.
 	sinceWarnings []string
+	// runWarnings are what the agents' runs find about the repository rather
+	// than about an agent, such as a file named like a diff file: each one is
+	// said once, however many agents ran into it.
+	warnMu      sync.Mutex
+	runWarnings []string
+}
+
+// warnOnce adds msg to the run's warnings, and reports whether it was new.
+func (r *run) warnOnce(msg string) bool {
+	r.warnMu.Lock()
+	defer r.warnMu.Unlock()
+	if slices.Contains(r.runWarnings, msg) {
+		return false
+	}
+	r.runWarnings = append(r.runWarnings, msg)
+	return true
 }
 
 // previousCount is the number of previous findings, zero for a full review.
@@ -344,7 +362,7 @@ func (a *App) execute(ctx context.Context, r *run, req ReviewRequest) (*domain.C
 		ReviewersTotal: len(reviewers), ReviewersSucceeded: len(succeeded),
 		LeadID: lead.ID, SucceededReviewers: succeeded, Since: r.previous,
 	}
-	warnings := append([]string(nil), r.sinceWarnings...)
+	warnings := append(append([]string(nil), r.sinceWarnings...), r.runWarnings...)
 	meta.Models = map[string]string{}
 	for _, ex := range r.manifest.Agents {
 		for _, w := range ex.Warnings {
@@ -492,8 +510,9 @@ func (a *App) runReviewer(ctx context.Context, r *run, rv config.AgentConfig, wo
 		case !r.diffLarge && errors.Is(err, fs.ErrExist):
 			// Only an incremental review asked for the file: a repository
 			// that has one by that name gets the diff inlined, as before.
-			a.logger().Warn("diff inlined: the worktree already has the diff file", "agent", rv.ID, "file", DiffFileName)
-			ex.Warnings = append(ex.Warnings, "the diff is inlined: the repository has a file named "+DiffFileName)
+			if r.warnOnce("the diff is inlined: the repository has a file named " + DiffFileName) {
+				a.logger().Warn("diff inlined: the repository has a file by the diff file's name", "file", DiffFileName)
+			}
 		default:
 			ex.Error = err.Error()
 			return ex, nil, err
@@ -504,9 +523,7 @@ func (a *App) runReviewer(ctx context.Context, r *run, rv config.AgentConfig, wo
 		ex.Error = err.Error()
 		return ex, nil, err
 	}
-	if warning != "" {
-		ex.Warnings = append(ex.Warnings, warning)
-	}
+	a.warnSince(r, warning)
 	in.Since = since
 	p, err := prompt.Reviewer(in)
 	if err != nil {
@@ -643,6 +660,14 @@ func (r *run) since(worktree string, changes bool) (prompt.Since, string, error)
 		}
 	}
 	return s, "", nil
+}
+
+// warnSince records, once, why the diff since the previous review was left
+// to git, and logs it.
+func (a *App) warnSince(r *run, warning string) {
+	if warning != "" && r.warnOnce(warning) {
+		a.logger().Warn("diff since the previous review left to git diff: the repository has a file by its name", "file", SinceDiffFileName)
+	}
 }
 
 // writeDiffFile writes the diff where a reviewer reads it. It refuses to
@@ -891,9 +916,7 @@ func (a *App) runLead(ctx context.Context, r *run, lead config.AgentConfig, work
 		ex.Error = err.Error()
 		return nil, nil, err
 	}
-	if warning != "" {
-		ex.Warnings = append(ex.Warnings, warning)
-	}
+	a.warnSince(r, warning)
 	p, err := prompt.Lead(prompt.LeadInput{
 		AgentID: lead.ID, Worktree: worktree, PR: r.pr, MergeBaseSHA: r.pr.MergeBaseSHA, HeadSHA: r.pr.Head.SHA,
 		SucceededReviewers: succeeded, FailedReviewers: consolidation.FailedReviewers(outcomes),

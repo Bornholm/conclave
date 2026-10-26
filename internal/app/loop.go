@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/bornholm/conclave/internal/agent"
 	"github.com/bornholm/conclave/internal/domain"
 	"github.com/bornholm/conclave/internal/forge"
 	"github.com/bornholm/conclave/internal/forge/factory"
@@ -93,7 +94,9 @@ func decideLoop(pr domain.PullRequest, me string, reviews []domain.ForgeReview, 
 		if !strings.EqualFold(rv.Author, me) {
 			continue
 		}
-		if m, ok := parseLoopMark(rv.Body); ok {
+		// The highest round is the last one, whatever order the forge
+		// lists the reviews in.
+		if m, ok := parseLoopMark(rv.Body); ok && (last == nil || m.Round >= last.Round) {
 			last, lastAt = &m, rv.SubmittedAt
 		}
 	}
@@ -117,6 +120,14 @@ func decideLoop(pr domain.PullRequest, me string, reviews []domain.ForgeReview, 
 type loopFailure struct {
 	head  string
 	count int
+}
+
+// loopSubmission is a review written but not submitted: the forge refused
+// it or could not be reached. It is submitted again on the next passes, as
+// long as the head has not moved, rather than paid for again.
+type loopSubmission struct {
+	mark loopMark
+	body string
 }
 
 // Loop reviews the open pull requests waiting for a review, and follows
@@ -151,7 +162,15 @@ func (a *App) Loop(ctx context.Context, req LoopRequest) error {
 	if runsBase == "" {
 		runsBase = filepath.Join(git.CommonDir(), "conclave", "runs")
 	}
-	l := &loop{app: a, forge: f, reviewer: rv, repo: repo, me: me, runsBase: runsBase, req: req, failures: map[int64]loopFailure{}}
+	// A dry run submits nothing, and labels nothing either.
+	if req.DryRun && cfg.Review.RunningLabel != "" {
+		dry, dryCfg := *a, *cfg
+		dryCfg.Review.RunningLabel = ""
+		dry.Config = &dryCfg
+		a = &dry
+	}
+	l := &loop{app: a, forge: f, reviewer: rv, repo: repo, me: me, runsBase: runsBase, req: req,
+		failures: map[int64]loopFailure{}, unsent: map[int64]loopSubmission{}}
 	log.Info("loop started", "repo", repo.FullName(), "user", me, "interval", cfg.Loop.Interval, "max_rounds", cfg.Loop.MaxRounds, "writer", cfg.LoopWriter().ID)
 	for {
 		if err := l.pass(ctx); err != nil {
@@ -180,6 +199,7 @@ type loop struct {
 	runsBase string
 	req      LoopRequest
 	failures map[int64]loopFailure
+	unsent   map[int64]loopSubmission
 }
 
 // pass goes once over the open pull requests, oldest first.
@@ -204,6 +224,17 @@ func (l *loop) pass(ctx context.Context) error {
 		if d.Skip != "" {
 			log.Debug("pull request skipped", "number", pr.Number, "reason", d.Skip)
 			continue
+		}
+		if u, ok := l.unsent[pr.Number]; ok {
+			delete(l.unsent, pr.Number)
+			if u.mark.Head == pr.Head.SHA && u.mark.Round == d.Round {
+				reviewed++
+				if err := l.submit(ctx, pr.Number, u); err != nil {
+					l.unsent[pr.Number] = u
+					log.Warn("review not submitted, it is tried again on the next pass", "number", pr.Number, "round", d.Round, "error", err)
+				}
+				continue
+			}
 		}
 		if fl := l.failures[pr.Number]; fl.head == pr.Head.SHA && fl.count >= loopMaxFailures {
 			log.Debug("pull request skipped", "number", pr.Number, "reason", "failed on this head already", "head", pr.Head.SHA)
@@ -262,7 +293,9 @@ func (l *loop) review(ctx context.Context, pr domain.PullRequest, d loopDecision
 		if err := output.Markdown(&md, review, output.Options{}); err != nil {
 			return err
 		}
-		body = strings.TrimSpace(md.String())
+		// The whole review is the longest body the loop submits: capped like
+		// the writer's, or the forge refuses it.
+		body = agent.TruncateField(md.String(), cfg.Loop.MaxCommentBytes)
 	} else {
 		for _, w := range comment.Warnings {
 			log.Warn("writer", "number", pr.Number, "warning", w)
@@ -279,10 +312,21 @@ func (l *loop) review(ctx context.Context, pr domain.PullRequest, d loopDecision
 		_, err := fmt.Fprintf(out, "<!-- pull request #%d, round %d, verdict %s, not submitted -->\n%s\n", pr.Number, d.Round, review.Verdict, body)
 		return err
 	}
-	if err := l.reviewer.SubmitReview(ctx, l.repo, pr.Number, review.Meta.HeadSHA, review.Verdict, body); err != nil {
-		return fmt.Errorf("submit review: %w (run %s)", err, res.RunDir)
+	u := loopSubmission{mark: mark, body: body}
+	if err := l.submit(ctx, pr.Number, u); err != nil {
+		// The review is done: only the submission is tried again.
+		l.unsent[pr.Number] = u
+		log.Warn("review not submitted, it is tried again on the next pass", "number", pr.Number, "round", d.Round, "run", res.RunDir, "error", err)
 	}
-	log.Info("review submitted", "number", pr.Number, "round", d.Round, "verdict", review.Verdict, "run", review.Meta.RunID)
+	return nil
+}
+
+// submit submits a review the loop wrote.
+func (l *loop) submit(ctx context.Context, number int64, u loopSubmission) error {
+	if err := l.reviewer.SubmitReview(ctx, l.repo, number, u.mark.Head, u.mark.Verdict, u.body); err != nil {
+		return fmt.Errorf("submit review: %w", err)
+	}
+	l.app.logger().Info("review submitted", "number", number, "round", u.mark.Round, "verdict", u.mark.Verdict, "run", u.mark.Run)
 	return nil
 }
 
@@ -308,9 +352,20 @@ func (l *loop) responses(ctx context.Context, number int64, since string) string
 		l.app.logger().Warn("responses not loaded", "number", number, "error", err)
 		return ""
 	}
+	sinceTime, err := time.Parse(time.RFC3339, since)
+	if err != nil {
+		l.app.logger().Warn("responses not loaded: the previous round has no submission time", "number", number, "submitted_at", since)
+		return ""
+	}
 	var b strings.Builder
 	for _, c := range discussion {
-		if strings.EqualFold(c.Author, l.me) || c.CreatedAt <= since || strings.TrimSpace(c.Body) == "" {
+		// Review.limits.max_comment_bytes cuts the responses, with a
+		// warning: one byte past it is all that has to be collected.
+		if b.Len() > cfg.Review.Limits.MaxCommentBytes {
+			break
+		}
+		at, err := time.Parse(time.RFC3339, c.CreatedAt)
+		if strings.EqualFold(c.Author, l.me) || err != nil || !at.After(sinceTime) || strings.TrimSpace(c.Body) == "" {
 			continue
 		}
 		where := ""

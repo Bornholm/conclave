@@ -53,6 +53,8 @@ type fakeForge struct {
 	// each one has, for the loop. Submitted reviews are appended to it.
 	others  []domain.PullRequest
 	reviews map[int64][]domain.ForgeReview
+	// submitErrs fail that many submissions before one goes through.
+	submitErrs int
 }
 
 func (f *fakeForge) ParentRepository(context.Context, domain.Repository) (domain.Repository, error) {
@@ -74,7 +76,7 @@ func (f *fakeForge) ListChangedFiles(context.Context, domain.Repository, int64, 
 	return f.files, nil
 }
 func (f *fakeForge) ListDiscussion(context.Context, domain.Repository, int64, int) ([]domain.Comment, error) {
-	return []domain.Comment{{Kind: "comment", Author: "maint", CreatedAt: "t", Body: "Decided: no passthrough. Related to #9."}}, nil
+	return []domain.Comment{{Kind: "comment", Author: "maint", CreatedAt: "2026-01-01T00:01:00Z", Body: "Decided: no passthrough. Related to #9."}}, nil
 }
 func (f *fakeForge) GetIssue(_ context.Context, _ domain.Repository, n int64) (*domain.Issue, error) {
 	for _, i := range f.issues {

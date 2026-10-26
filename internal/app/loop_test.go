@@ -3,8 +3,10 @@ package app
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -26,6 +28,10 @@ func (f *fakeForge) ListReviews(_ context.Context, _ domain.Repository, n int64)
 }
 
 func (f *fakeForge) SubmitReview(_ context.Context, _ domain.Repository, n int64, sha string, verdict domain.Verdict, body string) error {
+	if f.submitErrs > 0 {
+		f.submitErrs--
+		return errors.New("502 Bad Gateway")
+	}
 	if f.reviews == nil {
 		f.reviews = map[int64][]domain.ForgeReview{}
 	}
@@ -60,6 +66,7 @@ func TestDecideLoop(t *testing.T) {
 		{name: "new head", pr: pr, reviews: []domain.ForgeReview{{Author: "me", Body: mark(1, "h1", domain.VerdictRequestChanges)}, {Author: "bob"}}, round: 2},
 		{name: "same head", pr: pr, reviews: []domain.ForgeReview{{Author: "me", Body: mark(1, "h2", domain.VerdictRequestChanges)}}, skip: "no change since the last round"},
 		{name: "approved", pr: pr, reviews: []domain.ForgeReview{{Author: "me", Body: mark(1, "h1", domain.VerdictApprove)}}, skip: "approved"},
+		{name: "marks listed newest first", pr: pr, reviews: []domain.ForgeReview{{Author: "me", Body: mark(2, "h1", domain.VerdictComment)}, {Author: "me", Body: mark(1, "h0", domain.VerdictComment)}}, round: 3},
 		{name: "rounds done", pr: pr, reviews: []domain.ForgeReview{{Author: "me", Body: mark(1, "h1", domain.VerdictComment)}, {Author: "me", Body: mark(2, "h0", domain.VerdictComment)}}, maxRounds: 2, skip: "2 rounds done"},
 	} {
 		maxRounds := c.maxRounds
@@ -144,7 +151,7 @@ func TestLoopReviewsAndFollowsUp(t *testing.T) {
 		t.Errorf("second review: %q", second.Body)
 	}
 	prev, err := os.ReadFile(filepath.Join(a.RunsBase, m2.Run, "context", "previous-review.json"))
-	if err != nil || !strings.Contains(string(prev), m.Run) || !strings.Contains(string(prev), "maint (comment, t)") {
+	if err != nil || !strings.Contains(string(prev), m.Run) || !strings.Contains(string(prev), "maint (comment, 2026-01-01T00:01:00Z)") {
 		t.Errorf("the second round is not measured against the first, with the responses: %s %v", prev, err)
 	}
 }
@@ -205,5 +212,138 @@ func TestLoopDryRun(t *testing.T) {
 	}
 	if len(f.reviews[7]) != 0 || !strings.Contains(out.String(), "pull request #7, round 1, verdict request_changes, not submitted") || !strings.Contains(out.String(), "Commentaire en français") {
 		t.Errorf("dry run: submitted=%d out=%s", len(f.reviews[7]), out.String())
+	}
+}
+
+// runs counts the review runs under the runs base.
+func runs(t *testing.T, a *App) int {
+	t.Helper()
+	entries, _ := os.ReadDir(a.RunsBase)
+	return len(entries)
+}
+
+func newLoop(a *App, f *fakeForge) *loop {
+	return &loop{app: a, forge: f, reviewer: f, me: loopUser, runsBase: a.RunsBase, failures: map[int64]loopFailure{}, unsent: map[int64]loopSubmission{}}
+}
+
+func TestLoopRetriesASubmissionWithoutReviewingAgain(t *testing.T) {
+	a, f, dir := newLoopApp(t, agentCfg(t, "r1", config.RoleReviewer, "valid"), agentCfg(t, "lead", config.RoleLead, "valid"))
+	f.submitErrs = 2
+	ctx := context.Background()
+	l := newLoop(a, f)
+	for range 3 {
+		if err := l.pass(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(f.reviews[7]) != 1 || runs(t, a) != 1 {
+		t.Fatalf("submitted=%d runs=%d: the review was not kept for the next passes", len(f.reviews[7]), runs(t, a))
+	}
+	// A review left unsubmitted when the head moves is dropped: the new head
+	// gets a review of its own.
+	f.submitErrs = 1
+	advanceHead(t, a, dir)
+	if err := l.pass(ctx); err != nil {
+		t.Fatal(err)
+	}
+	// One more commit on the feature branch.
+	for _, args := range [][]string{{"checkout", "-q", "feature"}, {"commit", "-q", "--allow-empty", "-m", "again"}, {"checkout", "-q", "main"}} {
+		git := exec.Command("git", append([]string{"-C", dir}, args...)...)
+		git.Env = append(os.Environ(), "GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@t", "GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@t")
+		if out, err := git.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v: %s", args, err, out)
+		}
+	}
+	head, _ := exec.Command("git", "-C", dir, "rev-parse", "feature").Output()
+	f.pr.Head.SHA = strings.TrimSpace(string(head))
+	if err := l.pass(ctx); err != nil {
+		t.Fatal(err)
+	}
+	m, _ := parseLoopMark(f.reviews[7][len(f.reviews[7])-1].Body)
+	if runs(t, a) != 3 || len(f.reviews[7]) != 2 || m.Head != f.pr.Head.SHA {
+		t.Errorf("runs=%d submitted=%d mark=%+v", runs(t, a), len(f.reviews[7]), m)
+	}
+}
+
+func TestLoopGivesUpAHeadAfterTwoFailures(t *testing.T) {
+	a, f, dir := newLoopApp(t, agentCfg(t, "r1", config.RoleReviewer, "exit-1"), agentCfg(t, "lead", config.RoleLead, "valid"))
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	l := newLoop(a, f)
+	for range 3 {
+		if err := l.pass(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if n := runs(t, a); n != loopMaxFailures {
+		t.Fatalf("%d reviews of a head that keeps failing, want %d", n, loopMaxFailures)
+	}
+	advanceHead(t, a, dir)
+	if err := l.pass(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if n := runs(t, a); n != loopMaxFailures+1 {
+		t.Errorf("a new head is not tried: %d runs", n)
+	}
+	if len(f.reviews[7]) != 0 {
+		t.Errorf("a failed review was submitted")
+	}
+}
+
+func TestLoopFullReviewWhenThePreviousRunIsMissing(t *testing.T) {
+	a, f, dir := newLoopApp(t, agentCfg(t, "r1", config.RoleReviewer, "valid"), agentCfg(t, "lead", config.RoleLead, "valid"))
+	ctx := context.Background()
+	if err := a.Loop(ctx, LoopRequest{Once: true}); err != nil {
+		t.Fatal(err)
+	}
+	m, _ := parseLoopMark(f.reviews[7][0].Body)
+	if err := os.RemoveAll(filepath.Join(a.RunsBase, m.Run)); err != nil {
+		t.Fatal(err)
+	}
+	advanceHead(t, a, dir)
+	if err := a.Loop(ctx, LoopRequest{Once: true}); err != nil {
+		t.Fatal(err)
+	}
+	m2, _ := parseLoopMark(f.reviews[7][1].Body)
+	if m2.Round != 2 {
+		t.Errorf("round: %+v", m2)
+	}
+	if _, err := os.Stat(filepath.Join(a.RunsBase, m2.Run, "context", "previous-review.json")); err == nil {
+		t.Error("the review was incremental against a run that is not there")
+	}
+	l := &loop{runsBase: a.RunsBase}
+	for _, id := range []string{"../" + m2.Run, "a/b", ".", "..", "", m2.Run + "/../" + m2.Run} {
+		if l.hasRun(id) {
+			t.Errorf("%q accepted as a run id", id)
+		}
+	}
+	if !l.hasRun(m2.Run) {
+		t.Error("the run is not found")
+	}
+}
+
+func TestLoopRejectsACommentThatDropsAFinding(t *testing.T) {
+	a, f, _ := newLoopApp(t, agentCfg(t, "r1", config.RoleReviewer, "valid"), agentCfg(t, "lead", config.RoleLead, "valid"),
+		agentCfg(t, "w", config.RoleReviewer, "writer-drops"))
+	a.Config.Loop.Writer = "w"
+	a.Config.Loop.MaxCommentBytes = 200
+	if err := a.Loop(context.Background(), LoopRequest{Once: true}); err != nil {
+		t.Fatal(err)
+	}
+	body := f.reviews[7][0].Body
+	m, ok := parseLoopMark(body)
+	if !strings.HasPrefix(body, "## Conclave review") || !ok || len(body) > 200+len("…")+len(m.String())+3 {
+		t.Errorf("a comment without the high finding was published, or the fallback is not capped: %q", body)
+	}
+}
+
+func TestLoopDryRunLabelsNothing(t *testing.T) {
+	a, f, _ := newLoopApp(t, agentCfg(t, "r1", config.RoleReviewer, "valid"), agentCfg(t, "lead", config.RoleLead, "valid"))
+	a.Config.Review.RunningLabel = "conclave/running"
+	if err := a.Loop(context.Background(), LoopRequest{DryRun: true, Out: &bytes.Buffer{}}); err != nil {
+		t.Fatal(err)
+	}
+	if len(f.labelEvents) != 0 || a.Config.Review.RunningLabel != "conclave/running" {
+		t.Errorf("label events %v, label %q", f.labelEvents, a.Config.Review.RunningLabel)
 	}
 }

@@ -39,7 +39,9 @@ CONTENT
   sentence says what blocks the merge.{{else}}remarks, without blocking the merge. The first
   sentence says so.{{end}} Do not change the verdict.
 - Do not add findings and do not drop one the review rates medium or above.
-  Do not soften or harden a severity.
+  Do not soften or harden a severity. Write each file path exactly as the
+  review does: a comment that leaves out the path of a finding rated medium
+  or above is rejected.
 {{- if .Incremental}}
 - This review follows up on the previous one. Start with what the author
   fixed since, in one or two sentences: they should not have to guess

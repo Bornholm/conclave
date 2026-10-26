@@ -43,6 +43,10 @@ func main() {
 		if strings.Contains(prompt, "follows up on the previous one") {
 			body += " Follow-up."
 		}
+		// The files the findings cite, which the loop checks are all there.
+		if mode != "writer-drops" {
+			body += " " + strings.Join(regexp.MustCompile(`\*\*Location:\*\* `+"`"+`([^:`+"`"+`]+)`).FindAllString(prompt, -1), " ")
+		}
 		fmt.Print(`{"schema_version":"1","language":"French","body":` + strconv.Quote(body) + `}`)
 		return
 	}

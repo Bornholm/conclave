@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -60,9 +61,9 @@ func TestDecideLoop(t *testing.T) {
 		{name: "new", pr: pr, round: 1},
 		{name: "own", pr: own, skip: "opened by the authenticated user"},
 		{name: "draft", pr: draft, skip: "draft"},
-		{name: "reviewed by someone", pr: pr, reviews: []domain.ForgeReview{{Author: "bob", State: "commented"}}, skip: "already reviewed"},
-		{name: "reviewed by the user by hand", pr: pr, reviews: []domain.ForgeReview{{Author: "me", Body: "LGTM"}}, skip: "already reviewed"},
-		{name: "a mark in someone else's review", pr: pr, reviews: []domain.ForgeReview{{Author: "bob", Body: mark(1, "h1", domain.VerdictComment)}}, skip: "already reviewed"},
+		{name: "reviewed by someone", pr: pr, reviews: []domain.ForgeReview{{Author: "bob", State: "commented"}}, skip: loopSkipReviewed},
+		{name: "reviewed by the user by hand", pr: pr, reviews: []domain.ForgeReview{{Author: "me", Body: "LGTM"}}, skip: loopSkipReviewed},
+		{name: "a mark in someone else's review", pr: pr, reviews: []domain.ForgeReview{{Author: "bob", Body: mark(1, "h1", domain.VerdictComment)}}, skip: loopSkipReviewed},
 		{name: "new head", pr: pr, reviews: []domain.ForgeReview{{Author: "me", Body: mark(1, "h1", domain.VerdictRequestChanges)}, {Author: "bob"}}, round: 2},
 		{name: "same head", pr: pr, reviews: []domain.ForgeReview{{Author: "me", Body: mark(1, "h2", domain.VerdictRequestChanges)}}, skip: "no change since the last round"},
 		{name: "approved", pr: pr, reviews: []domain.ForgeReview{{Author: "me", Body: mark(1, "h1", domain.VerdictApprove)}}, skip: "approved"},
@@ -228,7 +229,7 @@ func runs(t *testing.T, a *App) int {
 }
 
 func newLoop(a *App, f *fakeForge) *loop {
-	return &loop{app: a, forge: f, reviewer: f, me: loopUser, runsBase: a.RunsBase, failures: map[int64]loopFailure{}, unsent: map[int64]loopSubmission{}}
+	return &loop{app: a, forge: f, reviewer: f, me: loopUser, runsBase: a.RunsBase, failures: map[int64]loopFailure{}, unsent: map[int64]loopSubmission{}, skipped: map[int64]string{}}
 }
 
 func TestLoopRetriesASubmissionWithoutReviewingAgain(t *testing.T) {
@@ -505,5 +506,33 @@ func TestLoopChecksTheCommentAsItIsPublished(t *testing.T) {
 	body := f.reviews[7][0].Body
 	if !strings.Contains(body, "## Conclave review") || len(body) > 1024 {
 		t.Errorf("%d bytes: %q", len(body), body)
+	}
+}
+
+func TestLoopLogsAPullRequestReviewedByHandOncePerHead(t *testing.T) {
+	a, f, dir := newLoopApp(t, agentCfg(t, "r1", config.RoleReviewer, "valid"), agentCfg(t, "lead", config.RoleLead, "valid"))
+	f.reviews[7] = []domain.ForgeReview{{Author: loopUser, State: "changes_requested", Body: "Please fix."}}
+	var logs bytes.Buffer
+	a.Logger = slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	ctx := context.Background()
+	l := newLoop(a, f)
+	logged := func() int { return strings.Count(logs.String(), `number=7 reason="already manually reviewed"`) }
+	for range 2 {
+		if err := l.pass(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if n := logged(); n != 1 {
+		t.Fatalf("logged %d times on the same head, want 1", n)
+	}
+	advanceHead(t, a, dir)
+	if err := l.pass(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if n := logged(); n != 2 {
+		t.Errorf("logged %d times after a new head, want 2", n)
+	}
+	if runs(t, a) != 0 {
+		t.Errorf("a pull request reviewed by hand was reviewed")
 	}
 }

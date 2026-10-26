@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -66,6 +67,11 @@ func parseLoopMark(body string) (loopMark, bool) {
 	return m, true
 }
 
+// loopSkipReviewed is why the loop leaves alone a pull request reviewed
+// before it took it up: the one skip that a new head does not end, logged
+// so that it does not look like the loop missed the push.
+const loopSkipReviewed = "already manually reviewed"
+
 // loopDecision is what the loop does with one pull request.
 type loopDecision struct {
 	// Skip says why the pull request is left alone, empty when it is
@@ -104,7 +110,7 @@ func decideLoop(pr domain.PullRequest, me string, reviews []domain.ForgeReview, 
 	}
 	if last == nil {
 		if len(reviews) > 0 {
-			return loopDecision{Skip: "already reviewed"}
+			return loopDecision{Skip: loopSkipReviewed}
 		}
 		return loopDecision{Round: 1}
 	}
@@ -176,7 +182,7 @@ func (a *App) Loop(ctx context.Context, req LoopRequest) error {
 		a = &dry
 	}
 	l := &loop{app: a, forge: f, reviewer: rv, repo: repo, me: me, runsBase: runsBase, req: req,
-		failures: map[int64]loopFailure{}, unsent: map[int64]loopSubmission{}}
+		failures: map[int64]loopFailure{}, unsent: map[int64]loopSubmission{}, skipped: map[int64]string{}}
 	log.Info("loop started", "repo", repo.FullName(), "user", me, "interval", cfg.Loop.Interval, "max_rounds", cfg.Loop.MaxRounds, "writer", cfg.LoopWriter().ID)
 	for {
 		if err := l.pass(ctx); err != nil {
@@ -206,6 +212,9 @@ type loop struct {
 	req      LoopRequest
 	failures map[int64]loopFailure
 	unsent   map[int64]loopSubmission
+	// skipped is the head on which each pull request reviewed by hand was
+	// last logged: it is logged once per head, not on every pass.
+	skipped map[int64]string
 }
 
 // pass goes once over the open pull requests, oldest first.
@@ -241,7 +250,12 @@ func (l *loop) pass(ctx context.Context) error {
 		}
 		d := decideLoop(pr, l.me, reviews, l.app.Config.Loop.MaxRounds)
 		if d.Skip != "" {
-			log.Debug("pull request skipped", "number", pr.Number, "reason", d.Skip)
+			level := slog.LevelDebug
+			if d.Skip == loopSkipReviewed && l.skipped[pr.Number] != pr.Head.SHA {
+				l.skipped[pr.Number] = pr.Head.SHA
+				level = slog.LevelInfo
+			}
+			log.Log(ctx, level, "pull request skipped", "number", pr.Number, "reason", d.Skip)
 			continue
 		}
 		if fl := l.failures[pr.Number]; fl.head == pr.Head.SHA && fl.count >= loopMaxFailures {
@@ -263,6 +277,11 @@ func (l *loop) pass(ctx context.Context) error {
 			continue
 		}
 		delete(l.failures, pr.Number)
+	}
+	for number := range l.skipped {
+		if !listed[number] {
+			delete(l.skipped, number)
+		}
 	}
 	// A pull request closed or merged with a review unsubmitted.
 	for number, u := range l.unsent {

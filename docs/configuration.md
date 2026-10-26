@@ -47,13 +47,13 @@ An inherited file can declare agents, that is commands Conclave runs. On Unix, a
 
 ## Environment file
 
-Every command reads `.env` in the working directory into its environment, before it reads the forge token or starts an agent, so `GITEA_TOKEN` or an agent's API key can live next to the project rather than in your shell. `env_file` names another file, relative to the working directory or absolute. The default `.env` may be missing; a file `env_file` names may not, nor may one that does not parse.
+`review`, `loop`, `triage`, `plan`, `ask`, `config validate` and `agents check` read `.env` in the working directory into their environment, before they read the forge token or start an agent, so `GITEA_TOKEN` or an agent's API key can live next to the project rather than in your shell. `env_file` names another file, relative to the working directory, not to the configuration file that names it, or absolute. `.env` is optional: missing, nothing happens, and when it does not parse, written for another tool for instance, it is ignored with a warning and nothing is set from it. Any other file `env_file` names must exist and parse, or the command stops.
 
-The file holds `KEY=VALUE` lines, with an optional `export ` before the key, blank lines and `#` comments. A value in single quotes is taken as it is; one in double quotes understands `\n`, `\t`, `\"` and `\\`; an unquoted one ends at ` #`. Variables are not expanded, and a value spans one line.
+The file holds `KEY=VALUE` lines, with an optional `export ` before the key, blank lines and `#` comments. A value in single quotes is taken as it is. One in double quotes understands `\n`, `\r`, `\t`, `\"` and `\\`, and keeps any other backslash, so `"C:\Users"` stays as written. An unquoted one ends at a `#` that follows a space: `KEY= # to fill` is empty, `KEY=#x` is `#x`. Variables are not expanded, and a value spans one line.
 
-A variable already set in the environment wins over the file. `PATH`, `HOME` and the `GIT_*` variables are protected: the file does not set them, and a warning names them. Agents inherit what the file set, like the rest of the environment, unless `inherit_env: false`. Every run logs the file read and the names of the variables it set, never their values; `conclave config validate` says so too, and when the token came from it.
+A variable the environment already holds wins over the file; one set but empty does not, as it does not for the forge token. `PATH`, `HOME` and the `GIT_*` variables are protected, whatever their case: the file does not set them, and a warning names them. Agents inherit what the file set, like the rest of the environment, except those with `inherit_env: false`. Every run logs the file read and the names of the variables it set, never their values; `conclave config validate` and `conclave agents check` print them, and `config validate` says when the token came from the file.
 
-Keep the file out of Git: it holds secrets, and `.gitignore` is the place to say so.
+The file is trusted as much as the `.conclave.yaml` of the working directory, which already declares the commands the agents run: a variable such as `LD_PRELOAD` or `NODE_OPTIONS` in it reaches every agent. Do not run Conclave from a checkout whose `.env` you did not write, a pull request's branch for instance. Keep the file out of Git: it holds secrets, and `.gitignore` is the place to say so.
 
 ## Forge
 

@@ -33,6 +33,25 @@ func TestConfigValidateListsTheInheritedFiles(t *testing.T) {
 	}
 }
 
+func TestConfigValidateSaysTheTokenCameFromTheEnvFile(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	t.Setenv("GITEA_TOKEN", "")
+	os.WriteFile(".conclave.yaml", []byte(isolated+"version: 1\nforge: {provider: gitea, base_url: https://git.example.com}\nagents: [{id: rev, role: reviewer, command: [echo]}, {id: lead, role: lead, command: [echo]}]\n"), 0o644)
+	os.WriteFile(".env", []byte("GITEA_TOKEN=secret-value\n"), 0o600)
+	var out, errb bytes.Buffer
+	Main([]string{"config", "validate"}, &out, &errb)
+	env := filepath.Join(dir, ".env")
+	for _, want := range []string{"✓ environment from " + env + ": set GITEA_TOKEN; already set none\n", "✓ token from GITEA_TOKEN, set by " + env + "\n"} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("missing %q in:\n%s", want, out.String())
+		}
+	}
+	if strings.Contains(out.String()+errb.String(), "secret-value") {
+		t.Error("the token value was printed")
+	}
+}
+
 func TestMainCommands(t *testing.T) {
 	var out, errb bytes.Buffer
 	if code := Main([]string{"version"}, &out, &errb); code != 0 || !strings.Contains(out.String(), "conclave") {

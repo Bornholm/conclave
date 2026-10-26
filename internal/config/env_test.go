@@ -9,12 +9,12 @@ import (
 )
 
 func TestParseEnv(t *testing.T) {
-	data := "\uFEFF# comment\n\nA=1\nexport B = two words # comment\nC='single # kept \\n'\nD=\"line\\nnext \\\"q\\\" \\\\\" # comment\nE=\nF=a=b\nA=last\n"
+	data := "\uFEFF# comment\n\nA=1\nexport B = two words # comment\nC='single # kept \\n'\nD=\"line\\nnext \\\"q\\\" \\\\\" # comment\nE=\nF=a=b\nG= # comment\nH=#x\nI=\"C:\\Users\\bob\"\nA=last\n"
 	vars, err := ParseEnv([]byte(data))
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []EnvVar{{"A", "last"}, {"B", "two words"}, {"C", "single # kept \\n"}, {"D", "line\nnext \"q\" \\"}, {"E", ""}, {"F", "a=b"}}
+	want := []EnvVar{{"A", "last"}, {"B", "two words"}, {"C", "single # kept \\n"}, {"D", "line\nnext \"q\" \\"}, {"E", ""}, {"F", "a=b"}, {"G", ""}, {"H", "#x"}, {"I", `C:\Users\bob`}}
 	if !slices.Equal(vars, want) {
 		t.Errorf("got %q\nwant %q", vars, want)
 	}
@@ -23,29 +23,40 @@ func TestParseEnv(t *testing.T) {
 			t.Errorf("%q: %v", bad, err)
 		}
 	}
+	if _, err := ParseEnv([]byte("A=" + strings.Repeat("x", 2<<20) + "\n")); err == nil || !strings.Contains(err.Error(), "1 MiB") {
+		t.Errorf("a line too long: %v", err)
+	}
 }
 
 func TestLoadEnv(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
-	unset := func(keys ...string) {
-		for _, k := range keys {
-			t.Setenv(k, "")
-			os.Unsetenv(k)
+	// t.Setenv restores each variable, unset included, whatever LoadEnv
+	// sets meanwhile.
+	for _, k := range []string{"CONCLAVE_T_NEW", "CONCLAVE_T_OTHER", "CONCLAVE_T_DEF", "CONCLAVE_T_DEF2"} {
+		t.Setenv(k, "")
+		os.Unsetenv(k)
+	}
+	t.Setenv("CONCLAVE_T_KEPT", "shell")
+	t.Setenv("CONCLAVE_T_EMPTY", "")
+	write := func(name, data string) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(data), 0o600); err != nil {
+			t.Fatal(err)
 		}
 	}
-	unset("CONCLAVE_T_NEW", "CONCLAVE_T_OTHER")
-	t.Setenv("CONCLAVE_T_KEPT", "shell")
 
-	// No .env: nothing, and no error.
-	cfg := &Config{}
-	if err := cfg.LoadEnv(); err != nil || cfg.Env.File != "" {
-		t.Fatalf("missing .env: %v %+v", err, cfg.Env)
+	// No .env: nothing, and no error, named or not.
+	for _, name := range []string{"", ".env", "./.env"} {
+		cfg := &Config{EnvFile: name}
+		if err := cfg.LoadEnv(); err != nil || cfg.Env.File != "" {
+			t.Fatalf("missing %q: %v %+v", name, err, cfg.Env)
+		}
 	}
 
-	os.WriteFile(filepath.Join(dir, ".env"), []byte("CONCLAVE_T_NEW=file\nCONCLAVE_T_KEPT=file\nPATH=/evil\nGIT_DIR=/evil\n"), 0o600)
+	write(".env", "CONCLAVE_T_NEW=file\nCONCLAVE_T_KEPT=file\nCONCLAVE_T_EMPTY=file\nPATH=/evil\nGIT_DIR=/evil\ngit_dir=/evil\nHome=/evil\n")
 	path := os.Getenv("PATH")
-	cfg = &Config{}
+	cfg := &Config{}
 	if err := cfg.LoadEnv(); err != nil {
 		t.Fatal(err)
 	}
@@ -55,25 +66,35 @@ func TestLoadEnv(t *testing.T) {
 	if got := os.Getenv("CONCLAVE_T_KEPT"); got != "shell" {
 		t.Errorf("the environment did not win: %q", got)
 	}
+	if got := os.Getenv("CONCLAVE_T_EMPTY"); got != "file" {
+		t.Errorf("an empty variable won over the file: %q", got)
+	}
 	if os.Getenv("PATH") != path || os.Getenv("GIT_DIR") == "/evil" {
 		t.Errorf("a protected variable was set")
 	}
-	want := EnvReport{File: filepath.Join(dir, ".env"), Set: []string{"CONCLAVE_T_NEW"}, Kept: []string{"CONCLAVE_T_KEPT"}, Refused: []string{"PATH", "GIT_DIR"}}
+	want := EnvReport{File: filepath.Join(dir, ".env"), Set: []string{"CONCLAVE_T_NEW", "CONCLAVE_T_EMPTY"}, Kept: []string{"CONCLAVE_T_KEPT"}, Refused: []string{"PATH", "GIT_DIR", "git_dir", "Home"}}
 	if !slices.Equal(cfg.Env.Set, want.Set) || !slices.Equal(cfg.Env.Kept, want.Kept) || !slices.Equal(cfg.Env.Refused, want.Refused) || cfg.Env.File != want.File {
 		t.Errorf("report %+v, want %+v", cfg.Env, want)
 	}
 
-	// A file env_file names is read instead, and must exist.
-	os.WriteFile(filepath.Join(dir, "secrets.env"), []byte("CONCLAVE_T_OTHER=other\n"), 0o600)
+	// The default .env that does not parse is ignored, and said to be.
+	write(".env", "CONCLAVE_T_DEF=x\nCONCLAVE_T_DEF2=\"a value\nover two lines\"\n")
+	cfg = &Config{}
+	if err := cfg.LoadEnv(); err != nil || cfg.Env.Ignored == nil || os.Getenv("CONCLAVE_T_DEF") != "" {
+		t.Errorf("a default .env that does not parse: %v %+v", err, cfg.Env)
+	}
+
+	// A file env_file names is read instead, and must exist and parse.
+	write("secrets.env", "CONCLAVE_T_OTHER=other\n")
 	cfg = &Config{EnvFile: "secrets.env"}
 	if err := cfg.LoadEnv(); err != nil || os.Getenv("CONCLAVE_T_OTHER") != "other" {
 		t.Errorf("env_file: %v %q", err, os.Getenv("CONCLAVE_T_OTHER"))
 	}
 	cfg = &Config{EnvFile: "missing.env"}
-	if err := cfg.LoadEnv(); err == nil {
-		t.Error("a missing env_file is not an error")
+	if err := cfg.LoadEnv(); err == nil || !strings.Contains(err.Error(), "missing.env") {
+		t.Errorf("a missing env_file: %v", err)
 	}
-	os.WriteFile(filepath.Join(dir, "bad.env"), []byte("not a line\n"), 0o600)
+	write("bad.env", "not a line\n")
 	cfg = &Config{EnvFile: "bad.env"}
 	if err := cfg.LoadEnv(); err == nil || !strings.Contains(err.Error(), "bad.env") {
 		t.Errorf("a file that does not parse: %v", err)

@@ -23,12 +23,20 @@ type EnvReport struct {
 	// environment already held, which win, and Refused the protected ones,
 	// which a file in the working directory may not set.
 	Set, Kept, Refused []string
+	// Ignored says why the default .env was not loaded: it does not parse,
+	// most likely written for another tool. Nothing was set from it.
+	Ignored error
 }
 
 // LoadEnv reads the env file into the process environment, so that the
 // forge token and the agents' credentials can live next to the project. A
-// variable already set is left alone. The default .env may be missing, a
-// file env_file names may not.
+// variable already set to a value is left alone. The file is trusted as
+// much as the .conclave.yaml of the working directory, which declares the
+// agents' commands.
+//
+// The default .env is optional: missing, nothing happens, and when it does
+// not parse it is ignored and Env.Ignored says why. A file env_file names,
+// other than .env, must exist and parse.
 func (c *Config) LoadEnv() error {
 	name := c.EnvFile
 	if name == "" {
@@ -38,24 +46,37 @@ func (c *Config) LoadEnv() error {
 	if err != nil {
 		return fmt.Errorf("env_file %q: %w", name, err)
 	}
+	def, err := filepath.Abs(DefaultEnvFile)
+	if err != nil {
+		return fmt.Errorf("env_file %q: %w", DefaultEnvFile, err)
+	}
+	optional := abs == def
 	data, err := os.ReadFile(abs)
-	if errors.Is(err, fs.ErrNotExist) && c.EnvFile == "" {
+	if errors.Is(err, fs.ErrNotExist) && optional {
 		return nil
 	}
-	if err != nil {
-		return fmt.Errorf("env_file: %w", err)
-	}
-	vars, err := ParseEnv(data)
 	if err != nil {
 		return fmt.Errorf("env_file %s: %w", abs, err)
 	}
 	report := EnvReport{File: abs}
+	vars, err := ParseEnv(data)
+	if err != nil {
+		if !optional {
+			return fmt.Errorf("env_file %s: %w", abs, err)
+		}
+		report.Ignored = err
+		c.Env = report
+		return nil
+	}
 	for _, v := range vars {
-		if IsProtectedEnv(v.Key) || strings.HasPrefix(v.Key, "GIT_") {
+		// Windows names are case-insensitive: git_dir is GIT_DIR there.
+		if upper := strings.ToUpper(v.Key); IsProtectedEnv(upper) || strings.HasPrefix(upper, "GIT_") {
 			report.Refused = append(report.Refused, v.Key)
 			continue
 		}
-		if _, ok := os.LookupEnv(v.Key); ok {
+		// An empty variable is unset as far as the token is concerned:
+		// the file's value counts.
+		if os.Getenv(v.Key) != "" {
 			report.Kept = append(report.Kept, v.Key)
 			continue
 		}
@@ -75,8 +96,9 @@ type EnvVar struct {
 
 // ParseEnv reads env file lines: KEY=VALUE, an optional "export " before
 // the key, blank lines and # comments. A value in single quotes is taken as
-// it is, one in double quotes understands \n, \t, \" and \\, and an
-// unquoted one ends at a " #" comment. Variables are not expanded. A key
+// it is, one in double quotes understands \n, \r, \t, \" and \\ and keeps
+// any other backslash, and an unquoted one ends at a # that follows a
+// space. Variables are not expanded. A key
 // given twice keeps its last value.
 func ParseEnv(data []byte) ([]EnvVar, error) {
 	var vars []EnvVar
@@ -97,7 +119,7 @@ func ParseEnv(data []byte) ([]EnvVar, error) {
 		if !ok || !envNameRe.MatchString(key) {
 			return nil, fmt.Errorf("line %d: want KEY=VALUE", n)
 		}
-		value, err := parseEnvValue(strings.TrimSpace(raw))
+		value, err := parseEnvValue(raw)
 		if err != nil {
 			return nil, fmt.Errorf("line %d: %s: %w", n, key, err)
 		}
@@ -109,12 +131,18 @@ func ParseEnv(data []byte) ([]EnvVar, error) {
 		vars = append(vars, EnvVar{Key: key, Value: value})
 	}
 	if err := sc.Err(); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("a line over 1 MiB: %w", err)
 	}
 	return vars, nil
 }
 
 func parseEnvValue(raw string) (string, error) {
+	// The comment is cut before the value is trimmed: "KEY= # note" is an
+	// empty value, not "# note", while "KEY=#x" is "#x".
+	if t := strings.TrimLeft(raw, " \t"); t != raw && strings.HasPrefix(t, "#") {
+		return "", nil
+	}
+	raw = strings.TrimSpace(raw)
 	if raw == "" {
 		return "", nil
 	}
@@ -138,7 +166,11 @@ func parseEnvValue(raw string) (string, error) {
 					b.WriteByte('\t')
 				case 'r':
 					b.WriteByte('\r')
+				case '"', '\\':
+					b.WriteByte(raw[i])
 				default:
+					// C:\Users stays C:\Users.
+					b.WriteByte('\\')
 					b.WriteByte(raw[i])
 				}
 			default:

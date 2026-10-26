@@ -118,12 +118,36 @@ func logSources(logger *slog.Logger, cfg *config.Config) {
 	for _, src := range cfg.Inherited() {
 		logger.Info("configuration inherited", "file", src)
 	}
-	if env := cfg.Env; env.File != "" {
+	switch env := cfg.Env; {
+	case env.Ignored != nil:
+		logger.Warn("env file ignored: it does not parse", "file", env.File, "error", env.Ignored)
+	case env.File != "":
 		logger.Info("environment loaded", "file", env.File, "set", env.Set, "kept", env.Kept)
 		if len(env.Refused) > 0 {
 			logger.Warn("env file variables refused: protected", "file", env.File, "variables", env.Refused)
 		}
 	}
+}
+
+// printEnv says, for the commands that check rather than run, what the env
+// file set: the names only, never the values.
+func printEnv(w io.Writer, env config.EnvReport) {
+	switch {
+	case env.Ignored != nil:
+		fmt.Fprintf(w, "! %s ignored, it does not parse: %v\n", env.File, env.Ignored)
+	case env.File != "":
+		fmt.Fprintf(w, "✓ environment from %s: set %s; already set %s\n", env.File, names(env.Set), names(env.Kept))
+		if len(env.Refused) > 0 {
+			fmt.Fprintf(w, "! %s: protected, not set: %s\n", env.File, strings.Join(env.Refused, ", "))
+		}
+	}
+}
+
+func names(list []string) string {
+	if len(list) == 0 {
+		return "none"
+	}
+	return strings.Join(list, ", ")
 }
 
 func newFlagSet(name string, stderr io.Writer) *flag.FlagSet {

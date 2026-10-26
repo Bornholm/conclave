@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"slices"
-	"strings"
 
 	"github.com/bornholm/conclave/internal/agent"
 	"github.com/bornholm/conclave/internal/config"
@@ -50,12 +49,7 @@ func runConfigValidate(ctx context.Context, args []string, stdout, stderr io.Wri
 	for _, src := range cfg.Inherited() {
 		fmt.Fprintf(stdout, "✓ inherits %s\n", src)
 	}
-	if env := cfg.Env; env.File != "" {
-		fmt.Fprintf(stdout, "✓ environment from %s: %d set, %d already set\n", env.File, len(env.Set), len(env.Kept))
-		if len(env.Refused) > 0 {
-			fmt.Fprintf(stdout, "! %s: protected, not set: %s\n", env.File, strings.Join(env.Refused, ", "))
-		}
-	}
+	printEnv(stdout, cfg.Env)
 	for _, w := range config.Warnings(cfg) {
 		fmt.Fprintf(stdout, "! %s\n", w)
 	}

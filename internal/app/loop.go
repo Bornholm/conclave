@@ -9,11 +9,13 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"time"
 
 	"github.com/bornholm/conclave/internal/agent"
+	"github.com/bornholm/conclave/internal/artifact"
 	"github.com/bornholm/conclave/internal/domain"
 	"github.com/bornholm/conclave/internal/forge"
 	"github.com/bornholm/conclave/internal/forge/factory"
@@ -230,8 +232,10 @@ func (l *loop) pass(ctx context.Context) error {
 		// decided: a review someone else submitted meanwhile would otherwise
 		// make the pull request look already reviewed, and lose it.
 		if u, ok := l.unsent[pr.Number]; ok {
-			if l.retrySubmission(ctx, pr, reviews, u) {
-				reviewed++
+			if done, submitted := l.retrySubmission(ctx, pr, reviews, u); done {
+				if submitted {
+					reviewed++
+				}
 				continue
 			}
 		}
@@ -276,16 +280,21 @@ func (l *loop) pass(ctx context.Context) error {
 // up when the head has moved, since the next round reviews the new one,
 // when the forge holds it after all, a refusal that was not one, and after
 // loopMaxFailures refusals.
-func (l *loop) retrySubmission(ctx context.Context, pr domain.PullRequest, reviews []domain.ForgeReview, u loopSubmission) bool {
+func (l *loop) retrySubmission(ctx context.Context, pr domain.PullRequest, reviews []domain.ForgeReview, u loopSubmission) (done, submitted bool) {
 	log := l.app.logger()
 	delete(l.unsent, pr.Number)
-	if u.mark.Head != pr.Head.SHA {
+	switch {
+	case u.mark.Head != pr.Head.SHA:
 		log.Warn("review not submitted, given up: the head has moved", "number", pr.Number, "round", u.mark.Round, "run", u.mark.Run)
-		return false
+		return false, false
+	case pr.State == "draft":
+		// A draft is its author asking not to be reviewed yet.
+		log.Warn("review not submitted, given up: the pull request is a draft now", "number", pr.Number, "round", u.mark.Round, "run", u.mark.Run)
+		return true, false
 	}
 	for _, rv := range reviews {
 		if m, ok := parseLoopMark(rv.Body); ok && strings.EqualFold(rv.Author, l.me) && m.Round >= u.mark.Round {
-			return false
+			return false, false
 		}
 	}
 	if err := l.submit(ctx, pr.Number, u); err != nil {
@@ -294,12 +303,13 @@ func (l *loop) retrySubmission(ctx context.Context, pr domain.PullRequest, revie
 			// Reviewing the head again would only end in the same refusal.
 			l.failures[pr.Number] = loopFailure{head: pr.Head.SHA, count: loopMaxFailures}
 			log.Warn("review not submitted, given up after repeated refusals until a new head", "number", pr.Number, "round", u.mark.Round, "run", u.mark.Run, "error", err)
-			return true
+			return true, false
 		}
 		l.unsent[pr.Number] = u
 		log.Warn("review not submitted, it is tried again on the next pass", "number", pr.Number, "round", u.mark.Round, "error", err)
+		return true, false
 	}
-	return true
+	return true, true
 }
 
 // review runs one round on a pull request and submits its review.
@@ -345,7 +355,16 @@ func (l *loop) review(ctx context.Context, pr domain.PullRequest, d loopDecision
 		body = comment.Body
 	}
 	mark := loopMark{Round: d.Round, Head: review.Meta.HeadSHA, Run: review.Meta.RunID, Verdict: review.Verdict}
-	body += "\n\n" + mark.String() + "\n"
+	// loop.max_comment_bytes bounds what the forge receives, the mark
+	// included.
+	tail := "\n\n" + mark.String() + "\n"
+	if room := cfg.Loop.MaxCommentBytes - len(tail) - len("…"); len(body) > room {
+		body = agent.TruncateField(body, max(room, 0))
+	}
+	body += tail
+	if store, err := artifact.Open(filepath.Dir(res.RunDir), filepath.Base(res.RunDir)); err == nil {
+		_ = store.Write("final", "comment.md", []byte(body))
+	}
 	if l.req.DryRun {
 		out := l.req.Out
 		if out == nil {
@@ -411,14 +430,12 @@ func (l *loop) responses(ctx context.Context, number int64, since string) string
 	if sinceErr != nil {
 		l.app.logger().Warn("previous round without a submission time, every comment is passed as a response", "number", number, "submitted_at", since)
 	}
-	max := cfg.Review.Limits.MaxCommentBytes
-	var b strings.Builder
-	for _, c := range discussion {
-		// Review.limits.max_comment_bytes cuts the responses, with a
-		// warning: one byte past it is all that has to be collected.
-		if b.Len() > max {
-			break
-		}
+	// The newest answers are the ones the round is for: they are collected
+	// first, each within the room left, and given oldest first.
+	room := cfg.Review.Limits.MaxCommentBytes
+	var entries []string
+	for i := len(discussion) - 1; i >= 0 && room > 0; i-- {
+		c := discussion[i]
 		if strings.EqualFold(c.Author, l.me) || strings.TrimSpace(c.Body) == "" {
 			continue
 		}
@@ -429,7 +446,15 @@ func (l *loop) responses(ctx context.Context, number int64, since string) string
 		if c.Path != "" {
 			where = fmt.Sprintf(" on %s:%d", c.Path, c.Line)
 		}
-		fmt.Fprintf(&b, "%s (%s%s, %s):\n%s\n\n", c.Author, c.Kind, where, c.CreatedAt, agent.TruncateField(c.Body, max))
+		head := fmt.Sprintf("%s (%s%s, %s):\n", c.Author, c.Kind, where, c.CreatedAt)
+		if len(head) >= room {
+			break
+		}
+		entry := head + agent.TruncateField(c.Body, room-len(head)) + "\n\n"
+		room -= len(entry)
+		entries = append(entries, entry)
 	}
-	return strings.TrimSpace(b.String())
+	slices.Reverse(entries)
+	b := strings.Join(entries, "")
+	return strings.TrimSpace(b)
 }

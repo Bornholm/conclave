@@ -111,11 +111,13 @@ func (a *App) WriteComment(ctx context.Context, req CommentRequest) (*Comment, e
 		warnings = append(warnings, fmt.Sprintf("the comment was cut to %d bytes", max))
 	}
 	warnings = append(ex.Warnings, warnings...)
-	_ = store.WriteJSON("final", "comment.json", rep)
-	_ = store.Write("final", "comment.md", []byte(rep.Body+"\n"))
+	// final/comment.md is what the author reads, which the loop writes once
+	// it knows: this comment, or the review it falls back to.
 	if len(missing) > 0 {
+		_ = store.Write("final", "comment-rejected.md", []byte(rep.Body+"\n"))
 		return nil, fmt.Errorf("writer %s: the comment leaves out the finding(s) at %s, rated medium or above", writer.ID, strings.Join(missing, ", "))
 	}
+	_ = store.WriteJSON("final", "comment.json", rep)
 	log.Info("writer finished", "agent", writer.ID, "language", rep.Language, "bytes", len(rep.Body), "duration", res.Duration.Round(time.Millisecond))
 	return &Comment{Body: rep.Body, Language: rep.Language, Warnings: warnings}, nil
 }

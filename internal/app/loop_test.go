@@ -326,14 +326,20 @@ func TestLoopRejectsACommentThatDropsAFinding(t *testing.T) {
 	a, f, _ := newLoopApp(t, agentCfg(t, "r1", config.RoleReviewer, "valid"), agentCfg(t, "lead", config.RoleLead, "valid"),
 		agentCfg(t, "w", config.RoleReviewer, "writer-drops"))
 	a.Config.Loop.Writer = "w"
-	a.Config.Loop.MaxCommentBytes = 200
+	a.Config.Loop.MaxCommentBytes = 300
 	if err := a.Loop(context.Background(), LoopRequest{Once: true}); err != nil {
 		t.Fatal(err)
 	}
 	body := f.reviews[7][0].Body
 	m, ok := parseLoopMark(body)
-	if !strings.HasPrefix(body, "Automatic review 1 of at most 3.\n\n## Conclave review") || !ok || len(body) > 200+len("…")+len(m.String())+3 {
-		t.Errorf("a comment without the high finding was published, or the fallback is not capped: %q", body)
+	if !strings.HasPrefix(body, "Automatic review 1 of at most 3.\n\n## Conclave review") || !ok || len(body) > 300 {
+		t.Errorf("a comment without the high finding was published, or the fallback is not capped, mark included: %d bytes %q", len(body), body)
+	}
+	// The run keeps what the author read, and the comment turned down.
+	published, _ := os.ReadFile(filepath.Join(a.RunsBase, m.Run, "final", "comment.md"))
+	rejected, _ := os.ReadFile(filepath.Join(a.RunsBase, m.Run, "final", "comment-rejected.md"))
+	if string(published) != body || !strings.Contains(string(rejected), "Commentaire en français") {
+		t.Errorf("published %q, rejected %q", published, rejected)
 	}
 }
 
@@ -405,5 +411,63 @@ func TestMissingFindings(t *testing.T) {
 	}}
 	if got := missingFindings(review, "Voir a.go:3."); len(got) != 1 || got[0] != "b.go" {
 		t.Errorf("missing: %v", got)
+	}
+}
+
+func TestLoopDropsAnUnsentReviewOnADraftOrOnceTheForgeHasIt(t *testing.T) {
+	ctx := context.Background()
+	for _, c := range []struct {
+		name   string
+		change func(f *fakeForge, mark loopMark)
+	}{
+		{"draft", func(f *fakeForge, _ loopMark) { f.pr.State = "draft" }},
+		// The refusal was not one: the forge holds the review.
+		{"held", func(f *fakeForge, m loopMark) {
+			f.reviews[7] = append(f.reviews[7], domain.ForgeReview{Author: loopUser, Body: m.String(), SubmittedAt: "2026-01-01T00:00:10Z"})
+		}},
+	} {
+		a, f, _ := newLoopApp(t, agentCfg(t, "r1", config.RoleReviewer, "valid"), agentCfg(t, "lead", config.RoleLead, "valid"))
+		f.submitErrs = 1
+		l := newLoop(a, f)
+		if err := l.pass(ctx); err != nil {
+			t.Fatal(err)
+		}
+		c.change(f, l.unsent[7].mark)
+		if err := l.pass(ctx); err != nil {
+			t.Fatal(err)
+		}
+		if _, ok := l.unsent[7]; ok || runs(t, a) != 1 || len(f.reviews[7]) > 1 {
+			t.Errorf("%s: unsent=%v runs=%d reviews=%d", c.name, ok, runs(t, a), len(f.reviews[7]))
+		}
+	}
+}
+
+type discussionForge struct {
+	*fakeForge
+	discussion []domain.Comment
+}
+
+func (f discussionForge) ListDiscussion(context.Context, domain.Repository, int64, int) ([]domain.Comment, error) {
+	return f.discussion, nil
+}
+
+func TestLoopResponsesKeepTheNewestWithinTheCap(t *testing.T) {
+	a, f, _ := newLoopApp(t, agentCfg(t, "r1", config.RoleReviewer, "valid"), agentCfg(t, "lead", config.RoleLead, "valid"))
+	a.Config.Review.Limits.MaxCommentBytes = 300
+	l := newLoop(a, f)
+	l.forge = discussionForge{f, []domain.Comment{
+		{Kind: "comment", Author: "alice", CreatedAt: "2026-01-01T00:00:00Z", Body: "before the round"},
+		{Kind: "comment", Author: "alice", CreatedAt: "2026-01-02T00:00:00Z", Body: strings.Repeat("old ", 200)},
+		{Kind: "comment", Author: loopUser, CreatedAt: "2026-01-03T00:00:00Z", Body: "mine"},
+		{Kind: "comment", Author: "alice", CreatedAt: "2026-01-04T00:00:00Z", Body: "newest answer"},
+	}}
+	got := l.responses(context.Background(), 7, "2026-01-01T12:00:00Z")
+	if !strings.Contains(got, "newest answer") || strings.Contains(got, "before the round") || strings.Contains(got, "mine") ||
+		!strings.HasPrefix(got, "alice (comment, 2026-01-02") || len(got) > 300+len("…") {
+		t.Errorf("%d bytes:\n%s", len(got), got)
+	}
+	// A previous round without a time opens the window.
+	if got := l.responses(context.Background(), 7, ""); !strings.Contains(got, "newest answer") {
+		t.Errorf("open window: %s", got)
 	}
 }

@@ -57,6 +57,7 @@ func TestDecideLoop(t *testing.T) {
 		skip      string
 		round     int
 		maxRounds int
+		include   bool
 	}{
 		{name: "new", pr: pr, round: 1},
 		{name: "own", pr: own, skip: "opened by the authenticated user"},
@@ -64,6 +65,10 @@ func TestDecideLoop(t *testing.T) {
 		{name: "reviewed by someone", pr: pr, reviews: []domain.ForgeReview{{Author: "bob", State: "commented"}}, skip: loopSkipReviewed},
 		{name: "reviewed by the user by hand", pr: pr, reviews: []domain.ForgeReview{{Author: "me", Body: "LGTM"}}, skip: loopSkipReviewed},
 		{name: "a mark in someone else's review", pr: pr, reviews: []domain.ForgeReview{{Author: "bob", Body: mark(1, "h1", domain.VerdictComment)}}, skip: loopSkipReviewed},
+		{name: "reviewed by hand, included", pr: pr, reviews: []domain.ForgeReview{{Author: "me", Body: "LGTM"}}, include: true, round: 1},
+		{name: "included, then followed", pr: pr, reviews: []domain.ForgeReview{{Author: "bob"}, {Author: "me", Body: mark(1, "h1", domain.VerdictRequestChanges)}}, include: true, round: 2},
+		{name: "included draft", pr: draft, include: true, skip: "draft"},
+		{name: "included own", pr: own, include: true, skip: "opened by the authenticated user"},
 		{name: "new head", pr: pr, reviews: []domain.ForgeReview{{Author: "me", Body: mark(1, "h1", domain.VerdictRequestChanges)}, {Author: "bob"}}, round: 2},
 		{name: "same head", pr: pr, reviews: []domain.ForgeReview{{Author: "me", Body: mark(1, "h2", domain.VerdictRequestChanges)}}, skip: "no change since the last round"},
 		{name: "approved", pr: pr, reviews: []domain.ForgeReview{{Author: "me", Body: mark(1, "h1", domain.VerdictApprove)}}, skip: "approved"},
@@ -74,7 +79,7 @@ func TestDecideLoop(t *testing.T) {
 		if maxRounds == 0 {
 			maxRounds = 3
 		}
-		d := decideLoop(c.pr, loopUser, c.reviews, maxRounds)
+		d := decideLoop(c.pr, loopUser, c.reviews, maxRounds, c.include)
 		if d.Skip != c.skip || (c.skip == "" && d.Round != c.round) {
 			t.Errorf("%s: %+v", c.name, d)
 		}
@@ -229,7 +234,7 @@ func runs(t *testing.T, a *App) int {
 }
 
 func newLoop(a *App, f *fakeForge) *loop {
-	return &loop{app: a, forge: f, reviewer: f, me: loopUser, runsBase: a.RunsBase, failures: map[int64]loopFailure{}, unsent: map[int64]loopSubmission{}, skipped: map[int64]string{}}
+	return &loop{app: a, forge: f, reviewer: f, me: loopUser, runsBase: a.RunsBase, failures: map[int64]loopFailure{}, unsent: map[int64]loopSubmission{}, skipped: map[int64]string{}, include: map[int64]bool{}, missing: map[int64]bool{}}
 }
 
 func TestLoopRetriesASubmissionWithoutReviewingAgain(t *testing.T) {
@@ -540,5 +545,22 @@ func TestLoopLogsAPullRequestReviewedByHandOncePerHead(t *testing.T) {
 	}
 	if runs(t, a) != 0 {
 		t.Errorf("a pull request reviewed by hand was reviewed")
+	}
+}
+
+func TestLoopTakesUpAnIncludedPullRequestReviewedByHand(t *testing.T) {
+	a, f, _ := newLoopApp(t, agentCfg(t, "r1", config.RoleReviewer, "valid"), agentCfg(t, "lead", config.RoleLead, "valid"))
+	f.reviews[7] = []domain.ForgeReview{{Author: loopUser, State: "changes_requested", Body: "Please fix."}}
+	if err := a.Loop(context.Background(), LoopRequest{Once: true, Include: []int64{7, 42}}); err != nil {
+		t.Fatal(err)
+	}
+	if len(f.reviews[7]) != 2 {
+		t.Fatalf("an included pull request was not reviewed: %+v", f.reviews[7])
+	}
+	if m, ok := parseLoopMark(f.reviews[7][1].Body); !ok || m.Round != 1 {
+		t.Errorf("mark: %+v", m)
+	}
+	if len(f.reviews[8]) != 1 {
+		t.Errorf("a pull request not included was reviewed")
 	}
 }

@@ -7,6 +7,7 @@ conclave loop                      # a pass every loop.interval, until interrupt
 conclave loop --once               # one pass, for a cron job or a CI schedule
 conclave loop --dry-run            # one pass, the comments printed instead of submitted
 conclave loop --interval 5m --max-rounds 2
+conclave loop --include 172         # take up #172 although it was reviewed by hand
 ```
 
 It runs from the repository's root, like `conclave review`, and reviews one pull request at a time. The token needs write access to the pull requests. GitHub and Gitea are supported. Redmine has no reviews to submit, so the command stops there.
@@ -20,6 +21,8 @@ On each pass, a pull request is taken up when:
 - nobody has reviewed it, neither someone else nor the account by hand.
 
 A pull request reviewed before the loop took it up is never followed, new pushes included. The loop names it in the log, `pull request skipped` with the reason `already manually reviewed`, the one skip logged without `--verbose`: on the first pass, then again each time its head moves. What it has logged is kept in memory only, and forgotten once the pull request is no longer open, so a restarted loop, each run of `--once` and a pull request closed then reopened name it once more.
+
+`--include N`, repeatable, takes up such a pull request anyway: its first round is a full review, and the loop follows it from then on like the ones it took up itself, so the flag is no longer needed once that round is submitted. It does not take up a draft or a pull request the token's account opened. An included number that is not an open pull request is reported once in the log.
 
 Once the loop has reviewed a pull request, it follows it whoever reviews it after. It starts a new round when the head has moved since its last review. It stops when its last review approved, or when `loop.max_rounds` rounds are done, 3 by default. A pull request whose head has not moved is left alone, even if the author answered in the discussion. The answers are read at the next push.
 

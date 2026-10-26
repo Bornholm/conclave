@@ -30,7 +30,10 @@ type LoopRequest struct {
 	// DryRun makes a single pass and writes the comments to Out instead of
 	// submitting them.
 	DryRun bool
-	Out    io.Writer
+	// Include lists the pull requests taken up even though they were
+	// reviewed before the loop took them up.
+	Include []int64
+	Out     io.Writer
 }
 
 // loopMaxFailures is how many times the loop reviews the same head of a
@@ -88,8 +91,9 @@ type loopDecision struct {
 // pull request is taken up when nobody has reviewed it yet, and followed
 // from then on, a new round on each new head, until the loop approves it or
 // has run maxRounds rounds. Only the reviews of me are read for marks: anyone
-// can write one in a review of their own.
-func decideLoop(pr domain.PullRequest, me string, reviews []domain.ForgeReview, maxRounds int) loopDecision {
+// can write one in a review of their own. An included pull request is taken
+// up whoever reviewed it before, and followed like any other from then on.
+func decideLoop(pr domain.PullRequest, me string, reviews []domain.ForgeReview, maxRounds int, include bool) loopDecision {
 	if strings.EqualFold(pr.Author, me) {
 		return loopDecision{Skip: "opened by the authenticated user"}
 	}
@@ -109,7 +113,7 @@ func decideLoop(pr domain.PullRequest, me string, reviews []domain.ForgeReview, 
 		}
 	}
 	if last == nil {
-		if len(reviews) > 0 {
+		if len(reviews) > 0 && !include {
 			return loopDecision{Skip: loopSkipReviewed}
 		}
 		return loopDecision{Round: 1}
@@ -182,8 +186,12 @@ func (a *App) Loop(ctx context.Context, req LoopRequest) error {
 		a = &dry
 	}
 	l := &loop{app: a, forge: f, reviewer: rv, repo: repo, me: me, runsBase: runsBase, req: req,
-		failures: map[int64]loopFailure{}, unsent: map[int64]loopSubmission{}, skipped: map[int64]string{}}
-	log.Info("loop started", "repo", repo.FullName(), "user", me, "interval", cfg.Loop.Interval, "max_rounds", cfg.Loop.MaxRounds, "writer", cfg.LoopWriter().ID)
+		failures: map[int64]loopFailure{}, unsent: map[int64]loopSubmission{}, skipped: map[int64]string{},
+		include: map[int64]bool{}, missing: map[int64]bool{}}
+	for _, n := range req.Include {
+		l.include[n] = true
+	}
+	log.Info("loop started", "repo", repo.FullName(), "user", me, "interval", cfg.Loop.Interval, "max_rounds", cfg.Loop.MaxRounds, "writer", cfg.LoopWriter().ID, "include", req.Include)
 	for {
 		if err := l.pass(ctx); err != nil {
 			if req.Once || req.DryRun || ctx.Err() != nil {
@@ -212,6 +220,10 @@ type loop struct {
 	req      LoopRequest
 	failures map[int64]loopFailure
 	unsent   map[int64]loopSubmission
+	include  map[int64]bool
+	// missing is the included pull requests already reported as not open,
+	// reported once rather than on every pass.
+	missing map[int64]bool
 	// skipped is the head on which each pull request reviewed by hand was
 	// last logged: it is logged once per head, not on every pass.
 	skipped map[int64]string
@@ -248,7 +260,7 @@ func (l *loop) pass(ctx context.Context) error {
 				continue
 			}
 		}
-		d := decideLoop(pr, l.me, reviews, l.app.Config.Loop.MaxRounds)
+		d := decideLoop(pr, l.me, reviews, l.app.Config.Loop.MaxRounds, l.include[pr.Number])
 		if d.Skip != "" {
 			level := slog.LevelDebug
 			if d.Skip == loopSkipReviewed && l.skipped[pr.Number] != pr.Head.SHA {
@@ -277,6 +289,12 @@ func (l *loop) pass(ctx context.Context) error {
 			continue
 		}
 		delete(l.failures, pr.Number)
+	}
+	for number := range l.include {
+		if !listed[number] && !l.missing[number] {
+			l.missing[number] = true
+			log.Warn("included pull request not open", "number", number)
+		}
 	}
 	for number := range l.skipped {
 		if !listed[number] {

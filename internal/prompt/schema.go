@@ -236,3 +236,14 @@ const LeadAskSchema = `{
     "reported_by": {"type": "array", "items": {"type": "string"}}
   }
 }`
+
+// CommentSchema is the JSON Schema of the comment a writer returns.
+const CommentSchema = `{
+  "type": "object",
+  "required": ["schema_version", "language", "body"],
+  "properties": {
+    "schema_version": {"type": "string", "const": "1"},
+    "language": {"type": "string"},
+    "body": {"type": "string"}
+  }
+}`

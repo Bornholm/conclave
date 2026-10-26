@@ -28,6 +28,24 @@ func main() {
 	if strings.Contains(prompt, "You are the lead reviewer") && mode == "valid" {
 		mode = "lead"
 	}
+	// The loop's writer: the comment echoes the verdict and the round it was
+	// asked for, so the tests can tell what it was given.
+	if strings.Contains(prompt, "writing the review comment") && mode != "exit-1" {
+		verdict := regexp.MustCompile(`The verdict is "([a-z_]+)"`).FindStringSubmatch(prompt)
+		round := regexp.MustCompile(`This is review (\d+) of at most (\d+)`).FindStringSubmatch(prompt)
+		body := "Commentaire en français."
+		if len(verdict) > 1 && len(round) > 2 {
+			body += " Verdict " + verdict[1] + ", round " + round[1] + "/" + round[2] + "."
+		}
+		if strings.Contains(prompt, "no further automatic review") {
+			body += " Last round."
+		}
+		if strings.Contains(prompt, "follows up on the previous one") {
+			body += " Follow-up."
+		}
+		fmt.Print(`{"schema_version":"1","language":"French","body":` + strconv.Quote(body) + `}`)
+		return
+	}
 	switch mode {
 	case "valid":
 		fmt.Print(validReport(id))

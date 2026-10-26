@@ -195,3 +195,51 @@ func TestPullRequestLabel(t *testing.T) {
 		t.Errorf("calls:\n%s\nwant:\n%s", strings.Join(calls, "\n"), strings.Join(want, "\n"))
 	}
 }
+
+func TestPullRequestReviewer(t *testing.T) {
+	var posted string
+	pr := string(fixture(t, "get-pr.json"))
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/user":
+			w.Write([]byte(`{"login":"me"}`))
+		case r.URL.Path == "/repos/acme/proj/pulls" && r.Method == http.MethodGet:
+			w.Write([]byte("[" + pr + "," + strings.Replace(pr, `"state": "open"`, `"state": "open", "draft": true`, 1) + "]"))
+		case r.URL.Path == "/repos/acme/proj/pulls/123/reviews" && r.Method == http.MethodGet:
+			w.Write([]byte(`[{"body":"ok","user":{"login":"me"},"state":"APPROVED","commit_id":"c1","submitted_at":"2026-01-01T00:00:00Z"},
+			 {"body":"","user":{"login":"me"},"state":"PENDING","commit_id":"c2"}]`))
+		case r.URL.Path == "/repos/acme/proj/pulls/123/reviews" && r.Method == http.MethodPost:
+			body, _ := io.ReadAll(r.Body)
+			posted = string(body)
+			w.Write([]byte(`{}`))
+		default:
+			w.WriteHeader(404)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	c, err := New(srv.URL, "tok", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	repo := domain.Repository{Owner: "acme", Name: "proj"}
+	var _ forge.PullRequestReviewer = c
+	if me, err := c.CurrentUser(ctx); err != nil || me != "me" {
+		t.Errorf("CurrentUser = %q, %v", me, err)
+	}
+	prs, err := c.ListOpenPullRequests(ctx, repo)
+	if err != nil || len(prs) != 2 || prs[0].Author != "alice" || prs[0].State != "open" || prs[1].State != "draft" {
+		t.Fatalf("ListOpenPullRequests = %+v, %v", prs, err)
+	}
+	reviews, err := c.ListReviews(ctx, repo, 123)
+	want := []domain.ForgeReview{{Author: "me", State: "approved", Body: "ok", CommitSHA: "c1", SubmittedAt: "2026-01-01T00:00:00Z"}}
+	if err != nil || len(reviews) != 1 || reviews[0] != want[0] {
+		t.Errorf("ListReviews = %+v, %v", reviews, err)
+	}
+	if err := c.SubmitReview(ctx, repo, 123, "c3", domain.VerdictRequestChanges, "fix it"); err != nil {
+		t.Fatal(err)
+	}
+	if posted != `{"body":"fix it","commit_id":"c3","event":"REQUEST_CHANGES"}` {
+		t.Errorf("posted %s", posted)
+	}
+}

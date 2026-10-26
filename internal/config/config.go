@@ -45,6 +45,7 @@ type Config struct {
 	Triage   TriageConfig  `yaml:"triage"`
 	Plan     PlanConfig    `yaml:"plan"`
 	Ask      AskConfig     `yaml:"ask"`
+	Loop     LoopConfig    `yaml:"loop"`
 	Output   OutputConfig  `yaml:"output"`
 	Agents   []AgentConfig `yaml:"agents"`
 
@@ -105,6 +106,22 @@ type AskConfig struct {
 	// UseLead runs the lead over the answers. Default true.
 	UseLead *bool     `yaml:"use_lead"`
 	Limits  AskLimits `yaml:"limits"`
+}
+
+// LoopConfig tunes `conclave loop`, which reviews the pull requests waiting
+// for one and follows them round after round.
+type LoopConfig struct {
+	// Interval is the time between two passes over the open pull requests.
+	Interval time.Duration `yaml:"interval"`
+	// MaxRounds is how many reviews a pull request gets at most. The last
+	// one says no other will follow.
+	MaxRounds int `yaml:"max_rounds"`
+	// Writer is the agent that turns the review into the comment published,
+	// in the pull request's language. Empty means the lead.
+	Writer string `yaml:"writer"`
+	// MaxCommentBytes caps the comment published, under the forges' own
+	// limit on a review body.
+	MaxCommentBytes int `yaml:"max_comment_bytes"`
 }
 
 // AskLimits bound an ask run.
@@ -314,6 +331,17 @@ func (c *Config) Respondents() []AgentConfig {
 		}
 	}
 	return out
+}
+
+// LoopWriter returns the agent that writes the comments of `conclave loop`:
+// the one named in loop.writer, or the lead.
+func (c *Config) LoopWriter() AgentConfig {
+	for _, a := range c.Agents {
+		if c.Loop.Writer != "" && a.ID == c.Loop.Writer {
+			return a
+		}
+	}
+	return c.Lead()
 }
 
 // AskUsesLead reports whether the lead consolidates the answers.

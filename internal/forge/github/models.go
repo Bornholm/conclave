@@ -58,6 +58,7 @@ type review struct {
 	User        user   `json:"user"`
 	State       string `json:"state"`
 	SubmittedAt string `json:"submitted_at"`
+	CommitID    string `json:"commit_id"`
 }
 
 type reviewComment struct {

@@ -444,3 +444,34 @@ func LeadAsk(in LeadAskInput) ([]byte, error) {
 	}
 	return buf.Bytes(), nil
 }
+
+// CommentInput feeds the template of the comment `conclave loop` publishes.
+type CommentInput struct {
+	AgentID  string
+	Worktree string
+	PR       *domain.PullRequest
+	// Review is the consolidated review, rendered as Markdown.
+	Review  string
+	Verdict domain.Verdict
+	// Round is this review's number on the pull request, from 1, and
+	// MaxRounds the last one the loop runs.
+	Round, MaxRounds int
+	// Incremental says the review followed up on a previous one.
+	Incremental bool
+	MaxBytes    int
+}
+
+// Comment renders the prompt turning a review into the comment published on
+// the pull request.
+func Comment(in CommentInput) ([]byte, error) {
+	data := struct {
+		CommentInput
+		Schema        string
+		SchemaVersion string
+	}{in, CommentSchema, domain.CommentSchemaVersion}
+	var buf bytes.Buffer
+	if err := tmpl.ExecuteTemplate(&buf, "comment.tmpl", data); err != nil {
+		return nil, fmt.Errorf("render comment prompt: %w", err)
+	}
+	return buf.Bytes(), nil
+}

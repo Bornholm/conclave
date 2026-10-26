@@ -26,6 +26,13 @@ conclave review 123 --since last > review.md   # after fixes: what was fixed, wh
 
 Only the review goes to `stdout`. Logs go to `stderr`.
 
+Or let Conclave watch the repository. `conclave loop` reviews the open pull requests nobody has reviewed yet, submits the review on the forge in the pull request's language, and runs another round on each push until it approves or the rounds run out.
+
+```bash
+conclave loop --dry-run    # one pass, the comments printed instead of submitted
+conclave loop              # a pass every 10 minutes
+```
+
 The same agents also triage issues. Each one is labelled from the taxonomy the forge defines, and gets a status that has to be backed by evidence: still present, fixed, obsolete, duplicate or needs information.
 
 ```bash
@@ -54,6 +61,7 @@ The question comes from an argument, from `--question` or, when neither is given
 
 - [How a run works](docs/how-it-works.md), from the fetch to the artifacts, and what the prompts impose on the agents.
 - [Incremental review](docs/incremental-review.md), measuring a review against the previous one, with the author's answers.
+- [Loop](docs/loop.md), which pull requests it takes up, when it stops, and how the comment is written.
 - [Triage](docs/triage.md), what a status means and what it takes to earn it.
 - [Plan](docs/plan.md), why several agents plan and only one plan comes out.
 - [Ask](docs/ask.md), how a question is passed, and what happens when the agents disagree.

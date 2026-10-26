@@ -48,6 +48,11 @@ type fakeForge struct {
 	// parent, when set, makes the fake forge a ForkResolver whose repository
 	// is a fork of it.
 	parent *domain.Repository
+
+	// others are the open pull requests besides pr, and reviews the reviews
+	// each one has, for the loop. Submitted reviews are appended to it.
+	others  []domain.PullRequest
+	reviews map[int64][]domain.ForgeReview
 }
 
 func (f *fakeForge) ParentRepository(context.Context, domain.Repository) (domain.Repository, error) {

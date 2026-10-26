@@ -54,6 +54,7 @@ type review struct {
 	State         string `json:"state"`
 	SubmittedAt   string `json:"submitted_at"`
 	CommentsCount int    `json:"comments_count"`
+	CommitID      string `json:"commit_id"`
 }
 
 type reviewComment struct {

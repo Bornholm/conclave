@@ -11,7 +11,7 @@ import (
 )
 
 func TestSchemasAreValidJSON(t *testing.T) {
-	for _, s := range []string{ReviewerSchema, LeadSchema} {
+	for _, s := range []string{ReviewerSchema, LeadSchema, CommentSchema} {
 		var v map[string]any
 		if err := json.Unmarshal([]byte(s), &v); err != nil {
 			t.Fatal(err)
@@ -244,5 +244,30 @@ func TestSincePromptSaysTheDiffFileIsTruncated(t *testing.T) {
 	}
 	if !strings.Contains(string(out), "CHANGES SINCE THE PREVIOUS REVIEW — TRUNCATED") {
 		t.Errorf("prompt:\n%s", out)
+	}
+}
+
+func TestCommentPrompt(t *testing.T) {
+	in := CommentInput{AgentID: "lead", Worktree: "/w", PR: &domain.PullRequest{Number: 4, Title: "Ajoute un cache", Description: "Évite les appels répétés."},
+		Review: "## Conclave review\n**Verdict:** Changes requested", Verdict: domain.VerdictRequestChanges, Round: 3, MaxRounds: 3, Incremental: true, MaxBytes: 1000}
+	p, err := Comment(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"pull request\n#4", `skill named "unslop"`, "language the pull request is written in", "Ajoute un cache", "Évite les appels répétés.",
+		"--- BEGIN UNTRUSTED REVIEW ---\n## Conclave review", "changes are requested", "follows up on the previous one", "review 3 of at most 3", "no further automatic review", "At most 1000 bytes"} {
+		if !strings.Contains(string(p), want) {
+			t.Errorf("comment prompt lacks %q:\n%s", want, p)
+		}
+	}
+	in.Verdict, in.Round, in.Incremental = domain.VerdictApprove, 1, false
+	p, _ = Comment(in)
+	for _, unwanted := range []string{"no further automatic review", "follows up on the previous one"} {
+		if strings.Contains(string(p), unwanted) {
+			t.Errorf("first approving round says %q", unwanted)
+		}
+	}
+	if !strings.Contains(string(p), "the pull request is approved") {
+		t.Error("approval not said")
 	}
 }

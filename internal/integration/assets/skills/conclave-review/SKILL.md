@@ -149,3 +149,13 @@ that reads well:
 
 `gh pr review` prints nothing on success: confirm with
 `gh api repos/<owner>/<repo>/pulls/N/reviews` and check the last row.
+
+## Reviewing without being asked
+
+`conclave loop` does all of the above on its own, for a whole repository: it
+reviews the open pull requests nobody has reviewed yet, submits the review
+under the token's account in the pull request's language, and runs another
+round on each new head until it approves or `loop.max_rounds` is reached. It
+submits without asking, verdict included: launch it only when the user asked
+for exactly that, and suggest `conclave loop --dry-run` first, which makes one
+pass and prints the comments instead.

@@ -337,3 +337,72 @@ func (c *Client) GetIssue(ctx context.Context, repo domain.Repository, number in
 	issue := mapIssueItem(raw)
 	return &issue, nil
 }
+
+// CurrentUser implements forge.PullRequestReviewer.
+func (c *Client) CurrentUser(ctx context.Context) (string, error) {
+	var raw user
+	if _, err := c.get(ctx, "/user", nil, &raw); err != nil {
+		return "", err
+	}
+	if raw.Login == "" {
+		return "", errors.New("unexpected GitHub response: no login")
+	}
+	return raw.Login, nil
+}
+
+// ListOpenPullRequests implements forge.PullRequestReviewer.
+func (c *Client) ListOpenPullRequests(ctx context.Context, repo domain.Repository) ([]domain.PullRequest, error) {
+	var raw []pullRequest
+	path := fmt.Sprintf("/repos/%s/%s/pulls", url.PathEscape(repo.Owner), url.PathEscape(repo.Name))
+	if err := c.getAll(ctx, path, &raw); err != nil {
+		return nil, err
+	}
+	out := make([]domain.PullRequest, 0, len(raw))
+	for _, r := range raw {
+		pr, err := mapPullRequest(r)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, *pr)
+	}
+	return out, nil
+}
+
+// ListReviews implements forge.PullRequestReviewer. A pending review, one
+// its author has not submitted yet, is left out.
+func (c *Client) ListReviews(ctx context.Context, repo domain.Repository, number int64) ([]domain.ForgeReview, error) {
+	var raw []review
+	path := fmt.Sprintf("/repos/%s/%s/pulls/%d/reviews", url.PathEscape(repo.Owner), url.PathEscape(repo.Name), number)
+	if err := c.getAll(ctx, path, &raw); err != nil {
+		return nil, err
+	}
+	out := make([]domain.ForgeReview, 0, len(raw))
+	for _, rv := range raw {
+		if rv.State == "PENDING" {
+			continue
+		}
+		out = append(out, domain.ForgeReview{
+			Author: rv.User.Login, State: strings.ToLower(rv.State), Body: rv.Body,
+			CommitSHA: rv.CommitID, SubmittedAt: rv.SubmittedAt,
+		})
+	}
+	return out, nil
+}
+
+var reviewEvents = map[domain.Verdict]string{
+	domain.VerdictApprove:        "APPROVE",
+	domain.VerdictRequestChanges: "REQUEST_CHANGES",
+	domain.VerdictComment:        "COMMENT",
+}
+
+// SubmitReview implements forge.PullRequestReviewer.
+func (c *Client) SubmitReview(ctx context.Context, repo domain.Repository, number int64, sha string, verdict domain.Verdict, body string) error {
+	event, ok := reviewEvents[verdict]
+	if !ok {
+		return fmt.Errorf("unknown verdict %q", verdict)
+	}
+	path := fmt.Sprintf("/repos/%s/%s/pulls/%d/reviews", url.PathEscape(repo.Owner), url.PathEscape(repo.Name), number)
+	_, err := c.http.Do(ctx, http.MethodPost, c.http.Resolve(path, nil),
+		map[string]any{"commit_id": sha, "body": body, "event": event}, accept)
+	return err
+}

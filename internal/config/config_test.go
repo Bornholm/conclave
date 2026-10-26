@@ -71,6 +71,8 @@ func TestDecodeRejects(t *testing.T) {
 		"unknown respondent":  {strings.Replace(validYAML, "review:", "ask:\n  respondents: [nope]\nreview:", 1), "ask.respondents"},
 		"respondent twice":    {strings.Replace(validYAML, "review:", "ask:\n  respondents: [rev, rev]\nreview:", 1), `ask.respondents: "rev" is listed twice`},
 		"planner twice":       {strings.Replace(validYAML, "review:", "plan:\n  planners: [rev, rev]\nreview:", 1), `plan.planners: "rev" is listed twice`},
+		"unknown writer":      {strings.Replace(validYAML, "review:", "loop:\n  writer: nope\nreview:", 1), `loop.writer: "nope" is not a configured agent`},
+		"negative rounds":     {strings.Replace(validYAML, "review:", "loop:\n  max_rounds: -1\nreview:", 1), "loop.max_rounds"},
 		"empty":               {"", "empty document"},
 	}
 	for name, tc := range cases {
@@ -325,5 +327,26 @@ func TestLoadEdgeCasesOfInheritance(t *testing.T) {
 	writeConfig(t, project, "agents: [{id: rev, disabled: true}]\n")
 	if _, err := Load(project); err == nil || !strings.Contains(err.Error(), "agents[rev]: disabled, but triage.reviewers still names it") {
 		t.Errorf("a disabled agent still listed: %v", err)
+	}
+	writeConfig(t, parent, "inherits: false\nloop: {writer: rev}\n"+validYAML+"  - {id: rev2, role: reviewer, command: [echo]}\n")
+	if _, err := Load(project); err == nil || !strings.Contains(err.Error(), "agents[rev]: disabled, but loop.writer still names it") {
+		t.Errorf("a disabled writer: %v", err)
+	}
+}
+
+func TestLoopWriter(t *testing.T) {
+	cfg, err := Decode(strings.NewReader(validYAML))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if w := cfg.LoopWriter(); w.ID != "lead" {
+		t.Errorf("default writer: %s", w.ID)
+	}
+	if cfg.Loop.Interval != DefaultLoopInterval || cfg.Loop.MaxRounds != DefaultLoopMaxRounds || cfg.Loop.MaxCommentBytes != DefaultLoopMaxCommentBytes {
+		t.Errorf("defaults: %+v", cfg.Loop)
+	}
+	cfg.Loop.Writer = "rev"
+	if w := cfg.LoopWriter(); w.ID != "rev" {
+		t.Errorf("writer: %s", w.ID)
 	}
 }

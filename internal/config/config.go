@@ -39,19 +39,25 @@ type Config struct {
 	// Inherits false stops the search for the configurations this one
 	// inherits: the .conclave.yaml files of the directories above it are not
 	// read. Nil means true.
-	Inherits *bool         `yaml:"inherits"`
-	Forge    ForgeConfig   `yaml:"forge"`
-	Review   ReviewConfig  `yaml:"review"`
-	Triage   TriageConfig  `yaml:"triage"`
-	Plan     PlanConfig    `yaml:"plan"`
-	Ask      AskConfig     `yaml:"ask"`
-	Loop     LoopConfig    `yaml:"loop"`
-	Output   OutputConfig  `yaml:"output"`
-	Agents   []AgentConfig `yaml:"agents"`
+	Inherits *bool `yaml:"inherits"`
+	// EnvFile is the file of KEY=VALUE lines loaded into the environment,
+	// relative to the working directory. Empty means .env, and no error
+	// when it is missing.
+	EnvFile string        `yaml:"env_file"`
+	Forge   ForgeConfig   `yaml:"forge"`
+	Review  ReviewConfig  `yaml:"review"`
+	Triage  TriageConfig  `yaml:"triage"`
+	Plan    PlanConfig    `yaml:"plan"`
+	Ask     AskConfig     `yaml:"ask"`
+	Loop    LoopConfig    `yaml:"loop"`
+	Output  OutputConfig  `yaml:"output"`
+	Agents  []AgentConfig `yaml:"agents"`
 
 	// Sources are the files this configuration was merged from, the
 	// farthest ancestor first and the file loaded last.
 	Sources []string `yaml:"-"`
+	// Env is what LoadEnv took from the env file.
+	Env EnvReport `yaml:"-"`
 }
 
 // Label sources.

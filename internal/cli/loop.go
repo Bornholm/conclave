@@ -63,7 +63,7 @@ func runLoop(ctx context.Context, args []string, stdout, stderr io.Writer) error
 	if *interval < 0 || *maxRounds < 0 {
 		return errors.New("--interval and --max-rounds must be positive")
 	}
-	cfg, err := config.Load(*configPath)
+	cfg, err := loadConfig(*configPath)
 	if err != nil {
 		return err
 	}
@@ -74,7 +74,7 @@ func runLoop(ctx context.Context, args []string, stdout, stderr io.Writer) error
 		cfg.Loop.MaxRounds = *maxRounds
 	}
 	logger := newLogger(stderr, *verbose)
-	logInherited(logger, cfg)
+	logSources(logger, cfg)
 	for _, w := range config.Warnings(cfg) {
 		logger.Warn(w)
 	}

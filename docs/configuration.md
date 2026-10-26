@@ -45,6 +45,16 @@ The search goes up to the filesystem root, and the home directory is not special
 
 An inherited file can declare agents, that is commands Conclave runs. On Unix, an inherited file must belong to you or to root and be writable by its owner only, or the run stops with an error naming it: a `.conclave.yaml` another user left in `/tmp` is not run as yours. Running as root, only root's files are inherited. An inherited file you cannot read stops the run as well, rather than being skipped. An inherited file with nothing but comments declares nothing. Elsewhere, on Windows, an inherited file is read without that check, and `inherits: false` is the only guard. `conclave config validate` lists every file inherited, every run logs them, and the run's `manifest.json` records them in `config_sources`.
 
+## Environment file
+
+Every command reads `.env` in the working directory into its environment, before it reads the forge token or starts an agent, so `GITEA_TOKEN` or an agent's API key can live next to the project rather than in your shell. `env_file` names another file, relative to the working directory or absolute. The default `.env` may be missing; a file `env_file` names may not, nor may one that does not parse.
+
+The file holds `KEY=VALUE` lines, with an optional `export ` before the key, blank lines and `#` comments. A value in single quotes is taken as it is; one in double quotes understands `\n`, `\t`, `\"` and `\\`; an unquoted one ends at ` #`. Variables are not expanded, and a value spans one line.
+
+A variable already set in the environment wins over the file. `PATH`, `HOME` and the `GIT_*` variables are protected: the file does not set them, and a warning names them. Agents inherit what the file set, like the rest of the environment, unless `inherit_env: false`. Every run logs the file read and the names of the variables it set, never their values; `conclave config validate` says so too, and when the token came from it.
+
+Keep the file out of Git: it holds secrets, and `.gitignore` is the place to say so.
+
 ## Forge
 
 `forge.token_env` is the name of a variable, not the token. For GitHub, when that variable is empty and the `gh` CLI is logged in, Conclave asks `gh auth token` for the forge host instead. `config validate` says which source it used.

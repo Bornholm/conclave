@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"slices"
+	"strings"
 
 	"github.com/bornholm/conclave/internal/agent"
 	"github.com/bornholm/conclave/internal/config"
@@ -37,7 +39,7 @@ func runConfigValidate(ctx context.Context, args []string, stdout, stderr io.Wri
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	cfg, err := config.Load(*configPath)
+	cfg, err := loadConfig(*configPath)
 	if err != nil {
 		fmt.Fprintf(stdout, "✗ %v\n", err)
 		return errors.New("configuration invalid")
@@ -47,6 +49,12 @@ func runConfigValidate(ctx context.Context, args []string, stdout, stderr io.Wri
 	// say which files were read.
 	for _, src := range cfg.Inherited() {
 		fmt.Fprintf(stdout, "✓ inherits %s\n", src)
+	}
+	if env := cfg.Env; env.File != "" {
+		fmt.Fprintf(stdout, "✓ environment from %s: %d set, %d already set\n", env.File, len(env.Set), len(env.Kept))
+		if len(env.Refused) > 0 {
+			fmt.Fprintf(stdout, "! %s: protected, not set: %s\n", env.File, strings.Join(env.Refused, ", "))
+		}
 	}
 	for _, w := range config.Warnings(cfg) {
 		fmt.Fprintf(stdout, "! %s\n", w)
@@ -73,7 +81,11 @@ func runConfigValidate(ctx context.Context, args []string, stdout, stderr io.Wri
 	}
 	switch _, src := factory.ResolveToken(ctx, cfg.Forge); src {
 	case factory.TokenSourceEnv:
-		fmt.Fprintf(stdout, "✓ token from %s\n", cfg.Forge.TokenEnv)
+		if slices.Contains(cfg.Env.Set, cfg.Forge.TokenEnv) {
+			fmt.Fprintf(stdout, "✓ token from %s, set by %s\n", cfg.Forge.TokenEnv, cfg.Env.File)
+		} else {
+			fmt.Fprintf(stdout, "✓ token from %s\n", cfg.Forge.TokenEnv)
+		}
 	case factory.TokenSourceGH:
 		fmt.Fprintf(stdout, "✓ token from gh auth token (%s is empty)\n", cfg.Forge.TokenEnv)
 	default:

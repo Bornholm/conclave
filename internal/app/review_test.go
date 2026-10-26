@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"regexp"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -1719,6 +1720,9 @@ func TestCollectExcerptsListsTheMostSevereOmissionsFirst(t *testing.T) {
 // TestLeadPromptLeavesTheExcerptsOutOverTheArgumentLimit: given as an
 // argument, a prompt over the limit fails the lead outright.
 func TestLeadPromptLeavesTheExcerptsOutOverTheArgumentLimit(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("the single-argument limit is enforced on Linux only")
+	}
 	in := prompt.LeadInput{AgentID: "lead", PR: &domain.PullRequest{},
 		Excerpts: []prompt.Excerpt{{File: "a.go", Start: 1, End: 1, Text: strings.Repeat("x", config.MaxArgBytes)}}}
 	p, dropped, err := leadPrompt(in, config.InputArgument)

@@ -1,8 +1,11 @@
 package agent
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
+
+	"github.com/bornholm/conclave/internal/domain"
 )
 
 const report = `{
@@ -88,6 +91,14 @@ func TestParseReportDropsAMistypedFinding(t *testing.T) {
 		t.Errorf("findings: %+v", rep.Findings)
 	}
 	if w := strings.Join(warnings, "\n"); !strings.Contains(w, `finding 0 ("mistyped") rejected`) || !strings.Contains(w, `finding 1 ("mistyped too") rejected`) {
+		t.Errorf("warnings: %v", warnings)
+	}
+}
+
+func TestDecodeElementsCutsTheRejectedTitle(t *testing.T) {
+	long := strings.Repeat("t", 500)
+	_, warnings := DecodeElements[domain.Finding]([]json.RawMessage{json.RawMessage(`{"severity":0.7,"title":"` + long + `"}`)}, "finding")
+	if len(warnings) != 1 || strings.Contains(warnings[0], long) || !strings.Contains(warnings[0], strings.Repeat("t", 80)+"…") {
 		t.Errorf("warnings: %v", warnings)
 	}
 }

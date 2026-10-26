@@ -36,12 +36,12 @@ func DecodeElements[T any](raws []json.RawMessage, what string) ([]T, []string) 
 		var v T
 		if err := json.Unmarshal(raw, &v); err != nil {
 			// The title tells it apart: the checks that follow number the
-			// elements that did decode.
+			// elements that did decode. It is the agent's text, so it is cut.
 			var named struct {
 				Title string `json:"title"`
 			}
 			_ = json.Unmarshal(raw, &named)
-			warnings = append(warnings, fmt.Sprintf("%s %d (%q) rejected: %v", what, i, named.Title, err))
+			warnings = append(warnings, fmt.Sprintf("%s %d (%q) rejected: %v", what, i, truncate(named.Title, 80), err))
 			continue
 		}
 		out = append(out, v)

@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"runtime"
 	"slices"
 	"sort"
 	"strings"
@@ -189,11 +190,12 @@ func mergeRanges(in []lineRange) []lineRange {
 }
 
 // leadPrompt renders the lead prompt, without the excerpts when they would
-// put a prompt passed as an argument over the single-argument limit: they
-// save the lead reads, they must not cost it the run.
+// put a prompt passed as an argument over the single-argument limit the
+// runner enforces on Linux: they save the lead reads, they must not cost it
+// the run.
 func leadPrompt(in prompt.LeadInput, input string) ([]byte, bool, error) {
 	p, err := prompt.Lead(in)
-	if err != nil || input != config.InputArgument || len(p) < config.MaxArgBytes || len(in.Excerpts) == 0 {
+	if err != nil || input != config.InputArgument || runtime.GOOS != "linux" || len(p) < config.MaxArgBytes || len(in.Excerpts) == 0 {
 		return p, false, err
 	}
 	in.Excerpts, in.ExcerptNotes = nil, nil

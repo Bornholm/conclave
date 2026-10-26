@@ -996,6 +996,7 @@ func (a *App) runLead(ctx context.Context, r *run, lead config.AgentConfig, work
 	p, dropped, err := leadPrompt(in, lead.Input)
 	if dropped {
 		log.Warn("lead prompt over the single-argument limit, the cited lines are left out", "agent", lead.ID)
+		r.warnOnce(fmt.Sprintf("lead %s was not given the lines the findings cite: with them, its prompt would have been over the %d-byte limit for a single argument (set its input to stdin or file)", lead.ID, config.MaxArgBytes))
 	}
 	if err != nil {
 		ex.Error = err.Error()

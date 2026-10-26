@@ -43,6 +43,9 @@ func main() {
 		if strings.Contains(prompt, "follows up on the previous one") {
 			body += " Follow-up."
 		}
+		if mode == "writer-long" {
+			body += " " + strings.Repeat("padding ", 200)
+		}
 		// The files the findings cite, which the loop checks are all there.
 		if mode != "writer-drops" {
 			body += " " + strings.Join(regexp.MustCompile(`\*\*Location:\*\* `+"`"+`([^:`+"`"+`]+)`).FindAllString(prompt, -1), " ")

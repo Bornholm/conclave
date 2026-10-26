@@ -100,17 +100,13 @@ func (a *App) WriteComment(ctx context.Context, req CommentRequest) (*Comment, e
 	if err != nil {
 		return nil, fmt.Errorf("writer %s: %w", writer.ID, err)
 	}
-	// Cut once checked: a finding the cap took off is not one the writer
-	// dropped.
-	rep, warnings, err := agent.ParseCommentReport(ad.Report, 0)
+	// Checked as it is published: a finding the cap took off is gone from
+	// what the author reads, whoever is to blame.
+	rep, warnings, err := agent.ParseCommentReport(ad.Report, commentBytes(cfg))
 	if err != nil {
 		return nil, fmt.Errorf("writer %s: invalid comment: %w", writer.ID, err)
 	}
 	missing := missingFindings(review, rep.Body)
-	if max := commentBytes(cfg); len(rep.Body) > max {
-		rep.Body = agent.TruncateField(rep.Body, max)
-		warnings = append(warnings, fmt.Sprintf("the comment was cut to %d bytes", max))
-	}
 	warnings = append(ex.Warnings, warnings...)
 	// final/comment.md is what the author reads, which the loop writes once
 	// it knows: this comment, or the review it falls back to.

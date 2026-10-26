@@ -467,7 +467,7 @@ func TestLoopResponsesKeepTheNewestWithinTheCap(t *testing.T) {
 	}}
 	got := l.responses(context.Background(), 7, "2026-01-01T12:00:00Z")
 	if !strings.Contains(got, "newest answer") || strings.Contains(got, "before the round") || strings.Contains(got, "mine") ||
-		!strings.HasPrefix(got, "alice (comment, 2026-01-02") || len(got) > 300+len("…") {
+		!strings.HasPrefix(got, "alice (comment, 2026-01-02") || len(got) > 300 {
 		t.Errorf("%d bytes:\n%s", len(got), got)
 	}
 	// A long newest answer does not crowd out the older one.
@@ -482,5 +482,20 @@ func TestLoopResponsesKeepTheNewestWithinTheCap(t *testing.T) {
 	// A previous round without a time opens the window.
 	if got := l.responses(context.Background(), 7, ""); !strings.Contains(got, "newest answer") {
 		t.Errorf("open window: %s", got)
+	}
+}
+
+func TestLoopChecksTheCommentAsItIsPublished(t *testing.T) {
+	// The finding's file is past the cap: once cut, the comment drops it.
+	a, f, _ := newLoopApp(t, agentCfg(t, "r1", config.RoleReviewer, "valid"), agentCfg(t, "lead", config.RoleLead, "valid"),
+		agentCfg(t, "w", config.RoleReviewer, "writer-long"))
+	a.Config.Loop.Writer = "w"
+	a.Config.Loop.MaxCommentBytes = 1024
+	if err := a.Loop(context.Background(), LoopRequest{Once: true}); err != nil {
+		t.Fatal(err)
+	}
+	body := f.reviews[7][0].Body
+	if !strings.Contains(body, "## Conclave review") || len(body) > 1024 {
+		t.Errorf("%d bytes: %q", len(body), body)
 	}
 }

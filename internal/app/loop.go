@@ -428,9 +428,8 @@ func (l *loop) responses(ctx context.Context, number int64, since string) string
 		l.app.logger().Warn("previous round without a submission time, every comment is passed as a response", "number", number, "submitted_at", since)
 	}
 	// The newest answers are the ones the round is for: they are collected
-	// first, each within the room left, and given oldest first. The cap is
-	// the review's own, which cuts the responses again with a warning when
-	// the separators push them a few bytes over.
+	// first, each within the room left, and given oldest first, within the
+	// review's own cap.
 	room := cfg.Review.Limits.MaxCommentBytes
 	var entries []string
 	for i := len(discussion) - 1; i >= 0 && room > 0; i-- {
@@ -446,12 +445,16 @@ func (l *loop) responses(ctx context.Context, number int64, since string) string
 			where = fmt.Sprintf(" on %s:%d", c.Path, c.Line)
 		}
 		head := fmt.Sprintf("%s (%s%s, %s):\n", c.Author, c.Kind, where, c.CreatedAt)
-		if len(head) >= room {
-			break
-		}
 		// One long answer does not crowd out the others: each gets at
 		// most a quarter of the cap.
-		entry := head + agent.TruncateField(c.Body, min(room-len(head), max(cfg.Review.Limits.MaxCommentBytes/4, 1))) + "\n\n"
+		// The ellipsis of a cut and the separator count too: the review
+		// cuts what is over its limit from the end, where the newest
+		// answer is.
+		const extra = len("…") + len("\n\n")
+		if len(head)+extra >= room {
+			break
+		}
+		entry := head + agent.TruncateField(c.Body, min(room-len(head)-extra, max(cfg.Review.Limits.MaxCommentBytes/4, 1))) + "\n\n"
 		room -= len(entry)
 		entries = append(entries, entry)
 	}

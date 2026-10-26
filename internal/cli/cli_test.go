@@ -63,6 +63,25 @@ func TestMainCommands(t *testing.T) {
 	}
 }
 
+func TestIncludeFlag(t *testing.T) {
+	var l includeList
+	for _, v := range []string{"7", "#8, 9", "10,"} {
+		if err := l.Set(v); err != nil {
+			t.Fatalf("%q: %v", v, err)
+		}
+	}
+	if l.String() != "7,8,9,10" {
+		t.Errorf("parsed %v", l)
+	}
+	// Refused when parsing the flags, before the configuration is loaded.
+	for _, v := range []string{"abc", "0", "-3", "", " , "} {
+		var out, errb bytes.Buffer
+		if code := Main([]string{"loop", "--include", v}, &out, &errb); code == 0 || !strings.Contains(errb.String(), "-include") {
+			t.Errorf("--include %q: %d %s", v, code, errb.String())
+		}
+	}
+}
+
 func readFile(t *testing.T, p string) []byte {
 	data, err := os.ReadFile(p)
 	if err != nil {

@@ -57,6 +57,8 @@ func TestDecideLoop(t *testing.T) {
 		skip      string
 		round     int
 		maxRounds int
+		include   bool
+		followed  bool
 	}{
 		{name: "new", pr: pr, round: 1},
 		{name: "own", pr: own, skip: "opened by the authenticated user"},
@@ -64,6 +66,11 @@ func TestDecideLoop(t *testing.T) {
 		{name: "reviewed by someone", pr: pr, reviews: []domain.ForgeReview{{Author: "bob", State: "commented"}}, skip: loopSkipReviewed},
 		{name: "reviewed by the user by hand", pr: pr, reviews: []domain.ForgeReview{{Author: "me", Body: "LGTM"}}, skip: loopSkipReviewed},
 		{name: "a mark in someone else's review", pr: pr, reviews: []domain.ForgeReview{{Author: "bob", Body: mark(1, "h1", domain.VerdictComment)}}, skip: loopSkipReviewed},
+		{name: "reviewed by hand, included", pr: pr, reviews: []domain.ForgeReview{{Author: "me", Body: "LGTM"}}, include: true, round: 1},
+		{name: "included, then followed", pr: pr, reviews: []domain.ForgeReview{{Author: "bob"}, {Author: "me", Body: mark(1, "h1", domain.VerdictRequestChanges)}}, include: true, round: 2},
+		{name: "included draft", pr: draft, include: true, skip: "draft"},
+		{name: "included own", pr: own, include: true, skip: "opened by the authenticated user"},
+		{name: "followed", pr: pr, reviews: []domain.ForgeReview{{Author: "me", Body: mark(1, "h2", domain.VerdictRequestChanges)}}, skip: "no change since the last round", followed: true},
 		{name: "new head", pr: pr, reviews: []domain.ForgeReview{{Author: "me", Body: mark(1, "h1", domain.VerdictRequestChanges)}, {Author: "bob"}}, round: 2},
 		{name: "same head", pr: pr, reviews: []domain.ForgeReview{{Author: "me", Body: mark(1, "h2", domain.VerdictRequestChanges)}}, skip: "no change since the last round"},
 		{name: "approved", pr: pr, reviews: []domain.ForgeReview{{Author: "me", Body: mark(1, "h1", domain.VerdictApprove)}}, skip: "approved"},
@@ -74,8 +81,8 @@ func TestDecideLoop(t *testing.T) {
 		if maxRounds == 0 {
 			maxRounds = 3
 		}
-		d := decideLoop(c.pr, loopUser, c.reviews, maxRounds)
-		if d.Skip != c.skip || (c.skip == "" && d.Round != c.round) {
+		d := decideLoop(c.pr, loopUser, c.reviews, maxRounds, c.include)
+		if d.Skip != c.skip || (c.skip == "" && d.Round != c.round) || (c.followed && !d.Followed) || (c.round == 1 && d.Followed) {
 			t.Errorf("%s: %+v", c.name, d)
 		}
 	}
@@ -229,7 +236,7 @@ func runs(t *testing.T, a *App) int {
 }
 
 func newLoop(a *App, f *fakeForge) *loop {
-	return &loop{app: a, forge: f, reviewer: f, me: loopUser, runsBase: a.RunsBase, failures: map[int64]loopFailure{}, unsent: map[int64]loopSubmission{}, skipped: map[int64]string{}}
+	return &loop{app: a, forge: f, reviewer: f, me: loopUser, runsBase: a.RunsBase, failures: map[int64]loopFailure{}, unsent: map[int64]loopSubmission{}, skipped: map[int64]string{}, include: map[int64]bool{}, unheeded: map[int64]bool{}}
 }
 
 func TestLoopRetriesASubmissionWithoutReviewingAgain(t *testing.T) {
@@ -540,5 +547,89 @@ func TestLoopLogsAPullRequestReviewedByHandOncePerHead(t *testing.T) {
 	}
 	if runs(t, a) != 0 {
 		t.Errorf("a pull request reviewed by hand was reviewed")
+	}
+}
+
+func TestLoopTakesUpAnIncludedPullRequestReviewedByHand(t *testing.T) {
+	a, f, _ := newLoopApp(t, agentCfg(t, "r1", config.RoleReviewer, "valid"), agentCfg(t, "lead", config.RoleLead, "valid"))
+	hand := domain.ForgeReview{Author: loopUser, State: "changes_requested", Body: "Please fix."}
+	f.reviews[7] = []domain.ForgeReview{hand}
+	var logs bytes.Buffer
+	a.Logger = slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	ctx := context.Background()
+	l := newLoop(a, f)
+	for _, n := range []int64{7, 9, 42} {
+		l.include[n] = true
+	}
+	for range 2 {
+		if err := l.pass(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(f.reviews[7]) != 2 {
+		t.Fatalf("an included pull request was not reviewed once: %+v", f.reviews[7])
+	}
+	if m, ok := parseLoopMark(f.reviews[7][1].Body); !ok || m.Round != 1 {
+		t.Errorf("mark: %+v", m)
+	}
+	if len(f.reviews[8]) != 1 {
+		t.Errorf("a pull request not included was reviewed")
+	}
+	unheeded := func(number int64, reason string) int {
+		return strings.Count(logs.String(), fmt.Sprintf(`level=WARN msg="included pull request not taken up" number=%d reason="%s"`, number, reason))
+	}
+	if n := unheeded(42, "not open"); n != 1 {
+		t.Errorf("an included pull request not open reported %d times, want 1", n)
+	}
+	if n := unheeded(9, "opened by the authenticated user"); n != 1 {
+		t.Errorf("an included pull request opened by the user reported %d times, want 1", n)
+	}
+	if strings.Contains(logs.String(), "number=7 reason=") {
+		t.Errorf("an included pull request taken up is reported:\n%s", logs.String())
+	}
+	// Once taken up, the flag is spent: a mark the forge loses does not
+	// start the rounds over.
+	f.reviews[7] = []domain.ForgeReview{hand}
+	if err := l.pass(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if runs(t, a) != 1 {
+		t.Errorf("the rounds started over: %d runs", runs(t, a))
+	}
+}
+
+func TestLoopIncludeFromTheRequest(t *testing.T) {
+	a, f, _ := newLoopApp(t, agentCfg(t, "r1", config.RoleReviewer, "valid"), agentCfg(t, "lead", config.RoleLead, "valid"))
+	f.reviews[7] = []domain.ForgeReview{{Author: loopUser, State: "changes_requested", Body: "Please fix."}}
+	if err := a.Loop(context.Background(), LoopRequest{Once: true, Include: []int64{7}}); err != nil {
+		t.Fatal(err)
+	}
+	if len(f.reviews[7]) != 2 {
+		t.Errorf("--include did not take the pull request up: %+v", f.reviews[7])
+	}
+}
+
+func TestLoopKeepsTheIncludeUntilTheReviewIsSubmitted(t *testing.T) {
+	a, f, dir := newLoopApp(t, agentCfg(t, "r1", config.RoleReviewer, "valid"), agentCfg(t, "lead", config.RoleLead, "valid"))
+	f.reviews[7] = []domain.ForgeReview{{Author: loopUser, State: "changes_requested", Body: "Please fix."}}
+	f.submitErrs = loopMaxFailures
+	ctx := context.Background()
+	l := newLoop(a, f)
+	l.include[7] = true
+	// The review is refused until given up, then the head moves.
+	for range 2 {
+		if err := l.pass(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if !l.include[7] {
+		t.Fatal("the include was spent on a review the forge refused")
+	}
+	advanceHead(t, a, dir)
+	if err := l.pass(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if len(f.reviews[7]) != 2 || l.include[7] {
+		t.Errorf("the new head was not taken up, or the include not spent: %+v", f.reviews[7])
 	}
 }

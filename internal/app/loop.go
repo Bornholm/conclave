@@ -30,7 +30,10 @@ type LoopRequest struct {
 	// DryRun makes a single pass and writes the comments to Out instead of
 	// submitting them.
 	DryRun bool
-	Out    io.Writer
+	// Include lists the pull requests taken up even though they were
+	// reviewed before the loop took them up.
+	Include []int64
+	Out     io.Writer
 }
 
 // loopMaxFailures is how many times the loop reviews the same head of a
@@ -82,14 +85,18 @@ type loopDecision struct {
 	// PreviousAt when it was submitted.
 	Previous   *loopMark
 	PreviousAt string
+	// Followed says the loop has a review of its own on the pull request,
+	// and needs no --include to take it up any more.
+	Followed bool
 }
 
 // decideLoop tells whether a pull request needs a review from the loop. A
 // pull request is taken up when nobody has reviewed it yet, and followed
 // from then on, a new round on each new head, until the loop approves it or
 // has run maxRounds rounds. Only the reviews of me are read for marks: anyone
-// can write one in a review of their own.
-func decideLoop(pr domain.PullRequest, me string, reviews []domain.ForgeReview, maxRounds int) loopDecision {
+// can write one in a review of their own. An included pull request is taken
+// up whoever reviewed it before, and followed like any other from then on.
+func decideLoop(pr domain.PullRequest, me string, reviews []domain.ForgeReview, maxRounds int, include bool) loopDecision {
 	if strings.EqualFold(pr.Author, me) {
 		return loopDecision{Skip: "opened by the authenticated user"}
 	}
@@ -109,20 +116,20 @@ func decideLoop(pr domain.PullRequest, me string, reviews []domain.ForgeReview, 
 		}
 	}
 	if last == nil {
-		if len(reviews) > 0 {
+		if len(reviews) > 0 && !include {
 			return loopDecision{Skip: loopSkipReviewed}
 		}
 		return loopDecision{Round: 1}
 	}
 	switch {
 	case last.Verdict == domain.VerdictApprove:
-		return loopDecision{Skip: "approved"}
+		return loopDecision{Skip: "approved", Followed: true}
 	case last.Round >= maxRounds:
-		return loopDecision{Skip: fmt.Sprintf("%d rounds done", last.Round)}
+		return loopDecision{Skip: fmt.Sprintf("%d rounds done", last.Round), Followed: true}
 	case last.Head == pr.Head.SHA:
-		return loopDecision{Skip: "no change since the last round"}
+		return loopDecision{Skip: "no change since the last round", Followed: true}
 	}
-	return loopDecision{Round: last.Round + 1, Previous: last, PreviousAt: lastAt}
+	return loopDecision{Round: last.Round + 1, Previous: last, PreviousAt: lastAt, Followed: true}
 }
 
 type loopFailure struct {
@@ -182,8 +189,12 @@ func (a *App) Loop(ctx context.Context, req LoopRequest) error {
 		a = &dry
 	}
 	l := &loop{app: a, forge: f, reviewer: rv, repo: repo, me: me, runsBase: runsBase, req: req,
-		failures: map[int64]loopFailure{}, unsent: map[int64]loopSubmission{}, skipped: map[int64]string{}}
-	log.Info("loop started", "repo", repo.FullName(), "user", me, "interval", cfg.Loop.Interval, "max_rounds", cfg.Loop.MaxRounds, "writer", cfg.LoopWriter().ID)
+		failures: map[int64]loopFailure{}, unsent: map[int64]loopSubmission{}, skipped: map[int64]string{},
+		include: map[int64]bool{}, unheeded: map[int64]bool{}}
+	for _, n := range req.Include {
+		l.include[n] = true
+	}
+	log.Info("loop started", "repo", repo.FullName(), "user", me, "interval", cfg.Loop.Interval, "max_rounds", cfg.Loop.MaxRounds, "writer", cfg.LoopWriter().ID, "include", req.Include)
 	for {
 		if err := l.pass(ctx); err != nil {
 			if req.Once || req.DryRun || ctx.Err() != nil {
@@ -212,6 +223,12 @@ type loop struct {
 	req      LoopRequest
 	failures map[int64]loopFailure
 	unsent   map[int64]loopSubmission
+	// include is the pull requests of --include the loop has not taken up
+	// yet: once it has, its mark is what it follows them by.
+	include map[int64]bool
+	// unheeded is the included pull requests already reported as not taken
+	// up, reported once rather than on every pass.
+	unheeded map[int64]bool
 	// skipped is the head on which each pull request reviewed by hand was
 	// last logged: it is logged once per head, not on every pass.
 	skipped map[int64]string
@@ -248,7 +265,14 @@ func (l *loop) pass(ctx context.Context) error {
 				continue
 			}
 		}
-		d := decideLoop(pr, l.me, reviews, l.app.Config.Loop.MaxRounds)
+		d := decideLoop(pr, l.me, reviews, l.app.Config.Loop.MaxRounds, l.include[pr.Number])
+		if d.Followed {
+			delete(l.include, pr.Number)
+		}
+		if d.Skip != "" && l.include[pr.Number] {
+			l.unheed(pr.Number, d.Skip)
+			continue
+		}
 		if d.Skip != "" {
 			level := slog.LevelDebug
 			if d.Skip == loopSkipReviewed && l.skipped[pr.Number] != pr.Head.SHA {
@@ -278,6 +302,11 @@ func (l *loop) pass(ctx context.Context) error {
 		}
 		delete(l.failures, pr.Number)
 	}
+	for number := range l.include {
+		if !listed[number] {
+			l.unheed(number, "not open")
+		}
+	}
 	for number := range l.skipped {
 		if !listed[number] {
 			delete(l.skipped, number)
@@ -292,6 +321,16 @@ func (l *loop) pass(ctx context.Context) error {
 	}
 	log.Info("loop pass done", "open", len(prs), "reviewed", reviewed)
 	return nil
+}
+
+// unheed reports once that an included pull request is not taken up: the
+// flag asked for it, so it is said without --verbose.
+func (l *loop) unheed(number int64, reason string) {
+	if l.unheeded[number] {
+		return
+	}
+	l.unheeded[number] = true
+	l.app.logger().Warn("included pull request not taken up", "number", number, "reason", reason)
 }
 
 // retrySubmission submits again a review the forge refused, and reports
@@ -399,6 +438,8 @@ func (l *loop) submit(ctx context.Context, number int64, u loopSubmission) error
 	if err := l.reviewer.SubmitReview(ctx, l.repo, number, u.mark.Head, u.mark.Verdict, u.body); err != nil {
 		return fmt.Errorf("submit review: %w", err)
 	}
+	// The mark is on the forge: the loop follows the pull request by it.
+	delete(l.include, number)
 	// The run keeps what the author reads, once it is theirs to read.
 	if store, err := artifact.Open(l.runsBase, u.mark.Run); err == nil {
 		_ = store.Write("final", "comment.md", []byte(u.body))

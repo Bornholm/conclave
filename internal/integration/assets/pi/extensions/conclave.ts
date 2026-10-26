@@ -19,6 +19,10 @@
  *   process can cut a message in half usefully.
  * - 100%: nothing. Conclave stops the process on its own timeout.
  *
+ * A run that settles without having written anything is asked once more for
+ * its answer, in the same session: once before the tools are off, and once
+ * after.
+ *
  * Together that means a stopped run still leaves an answer behind, either a
  * complete one or the truncated start of one, and Conclave reads what a killed
  * process wrote on standard output.
@@ -165,6 +169,8 @@ export default function conclave(pi: ExtensionAPI) {
 	let stage: Stage = "work";
 	let sawText = false;
 	let continuedOnce = false;
+	/** A run that settled without text before its tools were off was asked again. */
+	let continuedEarly = false;
 	/** Text waiting for a turn to end before it is delivered, if still useful. */
 	let pendingSteer: string | undefined;
 	let timers: ReturnType<typeof setTimeout>[] = [];
@@ -320,6 +326,7 @@ export default function conclave(pi: ExtensionAPI) {
 		stage = "work";
 		sawText = false;
 		continuedOnce = false;
+		continuedEarly = false;
 		pendingSteer = undefined;
 
 		const envAt = readEnv(ENV_DEADLINE_AT);
@@ -403,20 +410,39 @@ export default function conclave(pi: ExtensionAPI) {
 		flushSteer(ctx);
 	});
 
-	// Last chance for a run that reached its deadline without writing anything:
-	// one continuation, and only one, so a model that keeps calling tools
-	// cannot loop here.
+	// Last chance for a run that settled without writing anything: one
+	// continuation before its tools are off and one after, and only one each,
+	// so a model that keeps calling tools cannot loop here.
 	pi.on("agent_before_settle", (event) => {
 		if (!budgetMs) return;
-		// Only once the tools are off: the message below says so, and an earlier
-		// run that settled without text would spend the one continuation on it.
-		if (sawText || continuedOnce) return;
+		if (sawText) return;
 		if (event.outcome === "aborted" || event.outcome === "error") return;
 		if (stage !== "write") {
-			// Said, so that an empty run is not a mystery in the logs.
-			log("run settled without text before its tools were cut, not continued");
-			return;
+			// A model can end its turn on reasoning alone, long before its
+			// deadline: measured on a real lead, 36 KB of assessment and no text,
+			// and the whole consolidation was lost. Asked in the same session, it
+			// still has everything it read and thought.
+			if (continuedEarly) {
+				log("run settled without text again before its tools were cut, not continued");
+				return;
+			}
+			continuedEarly = true;
+			log("run settled without text before its tools were cut, asking for its answer");
+			return {
+				continue: true,
+				entries: [
+					{
+						type: "custom_message",
+						customType: "conclave-no-answer",
+						display: false,
+						content:
+							"You ended your turn without writing your final answer. Write it now, in the format your " +
+							"instructions ask for, with everything you have already verified. Do not start over.",
+					},
+				],
+			};
 		}
+		if (continuedOnce) return;
 		continuedOnce = true;
 		log("run settled without text, asking once more");
 		return {

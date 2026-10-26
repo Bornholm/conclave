@@ -11,6 +11,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
+	"regexp"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -22,6 +25,7 @@ import (
 	"github.com/bornholm/conclave/internal/domain"
 	"github.com/bornholm/conclave/internal/forge"
 	"github.com/bornholm/conclave/internal/output"
+	"github.com/bornholm/conclave/internal/prompt"
 	"github.com/bornholm/conclave/internal/testutil"
 )
 
@@ -235,6 +239,11 @@ func TestReviewEndToEnd(t *testing.T) {
 		if !strings.Contains(string(p), want) {
 			t.Errorf("prompt lacks %q", want)
 		}
+	}
+	// The lead is given the lines the findings cite, at the head commit.
+	lp, _ := os.ReadFile(filepath.Join(res.RunDir, "prompts", "lead.txt"))
+	if !strings.Contains(string(lp), "--- BEGIN UNTRUSTED CODE changed.txt:1-2 ---\n     1  a\n     2  B\n--- END UNTRUSTED CODE ---") {
+		t.Errorf("the lead prompt lacks the cited lines:\n%s", lp)
 	}
 	// Worktrees removed.
 	entries, _ := os.ReadDir(a.WorktreeBase)
@@ -1578,5 +1587,150 @@ func TestReviewDoesNotAskAgainAReviewerStoppedDuringItsRetry(t *testing.T) {
 	}
 	if r1 := execution(res, "r1"); r1.Succeeded || r1.ReportRetries != 1 || !strings.Contains(r1.Error, "stopped once the other reviewers had reported") {
 		t.Errorf("manifest: %+v", r1)
+	}
+}
+
+func TestMergeRanges(t *testing.T) {
+	in := []lineRange{{20, 30, 3}, {1, 5, 2}, {6, 8, 1}, {25, 40, 0}, {50, 52, 4}}
+	got := mergeRanges(in)
+	want := []lineRange{{1, 8, 1}, {20, 40, 0}, {50, 52, 4}}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("got %v, want %v", got, want)
+	}
+	if in[0].start != 20 {
+		t.Error("mergeRanges sorted its argument")
+	}
+}
+
+// TestCollectExcerpts: the budget goes to the most severe findings first,
+// a range is at most excerptMaxLines lines, a long line is cut, and the
+// lead is told what it was not given.
+func TestCollectExcerpts(t *testing.T) {
+	numbered := func(n, width int) []byte {
+		var b strings.Builder
+		for i := 1; i <= n; i++ {
+			fmt.Fprintf(&b, "%d%s\n", i, strings.Repeat("x", width))
+		}
+		return []byte(b.String())
+	}
+	files := map[string][]byte{
+		"a.go":    numbered(3000, 400),
+		"z.go":    numbered(10, 10),
+		"bin.go":  []byte("\x00\x01"),
+		"wide.go": []byte(strings.Repeat("y", 1000) + "\n"),
+	}
+	read := func(file string) ([]byte, error) {
+		if c, ok := files[file]; ok {
+			return c, nil
+		}
+		return nil, errors.New("gone")
+	}
+	finding := func(file string, start, end int, sev domain.Severity) domain.Finding {
+		return domain.Finding{File: file, StartLine: start, EndLine: end, Severity: sev}
+	}
+	reports := []domain.AgentReport{{Findings: []domain.Finding{
+		// Low findings in a file that sorts first, more than the budget holds.
+		finding("a.go", 1, 3000, domain.SeverityLow),
+		finding("a.go", 1000, 1500, domain.SeverityLow),
+		finding("a.go", 2000, 2400, domain.SeverityLow),
+		finding("a.go", 500, 600, domain.SeverityLow),
+		finding("a.go", 2600, 2700, domain.SeverityLow),
+		finding("a.go", 2800, 2900, domain.SeverityLow),
+		// The critical one sorts last.
+		finding("z.go", 4, 4, domain.SeverityCritical),
+		finding("z.go", 40, 40, domain.SeverityHigh),
+		finding("z.go", 40, 40, domain.SeverityLow),
+		finding("bin.go", 1, 1, domain.SeverityHigh),
+		finding("gone.go", 1, 1, domain.SeverityHigh),
+		finding("wide.go", 1, 1, domain.SeverityMedium),
+	}}}
+	excerpts, notes := collectExcerpts(reports, read)
+	size, byFile := 0, map[string]int{}
+	for _, e := range excerpts {
+		size += len(e.Text)
+		byFile[e.File]++
+		if e.End-e.Start+1 > excerptMaxLines {
+			t.Errorf("%s:%d-%d is longer than %d lines", e.File, e.Start, e.End, excerptMaxLines)
+		}
+	}
+	if size > excerptsMaxBytes {
+		t.Errorf("excerpts take %d bytes", size)
+	}
+	if byFile["z.go"] != 1 || byFile["wide.go"] != 1 || byFile["a.go"] == 0 {
+		t.Errorf("excerpts per file: %v", byFile)
+	}
+	for _, e := range excerpts {
+		if e.File == "wide.go" && (len(e.Text) > excerptLineWidth+32 || !strings.Contains(e.Text, "[…]")) {
+			t.Errorf("a long line is not cut: %d bytes", len(e.Text))
+		}
+	}
+	all := strings.Join(notes, "\n")
+	for _, want := range []string{"bin.go is not given", "gone.go is not given",
+		"z.go:40-40 is cited past the end of the file, which has 10 lines",
+		"a.go:1-3000 is cited, only lines 1-60 are given",
+		"Left out for size, the most severe findings' first: a.go:"} {
+		if !strings.Contains(all, want) {
+			t.Errorf("notes lack %q:\n%s", want, all)
+		}
+	}
+	if n := strings.Count(all, "z.go:40-40"); n != 1 {
+		t.Errorf("a citation past the end is noted %d times", n)
+	}
+	// A citation whose lines were all left out for size is in that note
+	// only, not said to be partly given.
+	if strings.Contains(all, "a.go:2600-2700 is cited") {
+		t.Errorf("a range left out for size is said to be given:\n%s", all)
+	}
+	// A finding given whole has no note.
+	if strings.Contains(all, "z.go:4-4") || strings.Contains(all, "wide.go:1-1") {
+		t.Errorf("a finding given whole is noted:\n%s", all)
+	}
+}
+
+// TestCollectExcerptsListsTheMostSevereOmissionsFirst: past the budget, the
+// list of ranges left out starts with the most severe findings', whatever
+// their paths, and is cut after excerptsListed.
+func TestCollectExcerptsListsTheMostSevereOmissionsFirst(t *testing.T) {
+	var b strings.Builder
+	for i := 1; i <= 4000; i++ {
+		fmt.Fprintf(&b, "%d%s\n", i, strings.Repeat("x", 300))
+	}
+	content := []byte(b.String())
+	read := func(string) ([]byte, error) { return content, nil }
+	var findings []domain.Finding
+	for i := 0; i < 30; i++ {
+		findings = append(findings, domain.Finding{File: "z.go", StartLine: 100*i + 10, EndLine: 100*i + 60, Severity: domain.SeverityCritical})
+	}
+	findings = append(findings, domain.Finding{File: "a.go", StartLine: 10, EndLine: 60, Severity: domain.SeverityLow})
+	_, notes := collectExcerpts([]domain.AgentReport{{Findings: findings}}, read)
+	var omitted string
+	for _, n := range notes {
+		if strings.HasPrefix(n, "Left out for size") {
+			omitted = n
+		}
+	}
+	if !strings.HasPrefix(omitted, "Left out for size, the most severe findings' first: z.go:") || strings.Contains(omitted, "a.go") {
+		t.Errorf("the most severe omissions should be listed first:\n%s", omitted)
+	}
+	if !regexp.MustCompile(` and \d+ more\.`).MatchString(omitted) {
+		t.Errorf("the list should be cut after %d ranges:\n%s", excerptsListed, omitted)
+	}
+}
+
+// TestLeadPromptLeavesTheExcerptsOutOverTheArgumentLimit: given as an
+// argument, a prompt over the limit fails the lead outright.
+func TestLeadPromptLeavesTheExcerptsOutOverTheArgumentLimit(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("the single-argument limit is enforced on Linux only")
+	}
+	in := prompt.LeadInput{AgentID: "lead", PR: &domain.PullRequest{},
+		Excerpts: []prompt.Excerpt{{File: "a.go", Start: 1, End: 1, Text: strings.Repeat("x", config.MaxArgBytes)}}}
+	p, dropped, err := leadPrompt(in, config.InputArgument)
+	if err != nil || !dropped || strings.Contains(string(p), "CODE AT THE CITED LINES") {
+		t.Errorf("argument: dropped=%v err=%v", dropped, err)
+	}
+	p, dropped, err = leadPrompt(in, config.InputStdin)
+	if err != nil || dropped || !strings.Contains(string(p), "CODE AT THE CITED LINES") {
+		t.Errorf("stdin: dropped=%v err=%v", dropped, err)
 	}
 }

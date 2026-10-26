@@ -9,7 +9,7 @@
 5. Compute the merge base and the diff.
 6. Create one detached worktree per agent at the head commit, under the system temporary directory.
 7. Run the reviewers, at most `review.max_parallel` at a time. Each gets the prompt on `stdin`, or as an argument or a file, see `input` in [configuration](configuration.md).
-8. Validate every report. Schema version, reviewer id, severities, paths inside the repository, line numbers and field sizes are checked. A finding in a file the pull request does not touch is kept but flagged `out_of_scope`. It gets its own section in the output and never changes the verdict.
+8. Validate every report. Schema version, reviewer id, severities, paths inside the repository, line numbers and field sizes are checked. A finding that fails a check, or one of whose fields has the wrong type, is dropped with a warning; the rest of the report is kept, the lead's included. A finding in a file the pull request does not touch is kept but flagged `out_of_scope`. It gets its own section in the output and never changes the verdict.
 9. Group similar findings (same file, overlapping lines, similar title or description, whatever category each reviewer chose), then run the lead with every report and the groups. The lead may only attribute a finding to a reviewer that actually succeeded. If the lead fails or prints garbage, a deterministic fallback builds the review from the groups.
 10. Render Markdown or JSON, remove the worktrees, keep the artifacts.
 
@@ -42,6 +42,8 @@ It also says the thing that pulls the other way. This untrusted material is the 
 The prompt names the worktree as the only directory the agent may use. That sentence exists because OpenCode resolves the project root through the shared `.git` of a linked worktree and told its model to `cd` into the main checkout, which did not contain the pull request revision. The run ended with an empty report.
 
 The lead's prompt is strict on purpose. It drops a finding only after verifying in the code that it is wrong. It does not lower the severity of a finding two reviewers agree on without citing the code. It judges the merged state on its own merits, so "it was already broken before" is not a reason to accept a new failure. When it hesitates between two verdicts, it takes the stricter one.
+
+The lead is given the lines each finding cites, at the head commit, with six lines around them, in ranges of at most 60 lines and lines cut at 240 characters, up to 64 KB in all, spent on the most severe findings first. It is told what it was not given, by file and line: ranges left out for size, a citation longer than its range, a path that is not a file at head, binary or over 2 MB, a line cited past the end of its file. A lead whose prompt is passed as an argument gets none when they would put it over the single-argument limit enforced on Linux, which the review's warnings say. Measured on real runs, it spent 6 to 11 minutes in 11 to 16 turns, most of each one reasoning again before reading the cited lines once more: a turn cost it close to a minute, a read a few seconds. It is told to check the findings against those lines first, to open a file only for what they cannot settle (code elsewhere, a contradiction between reviewers, a critical or high finding whose mechanism they do not show), and to ask for all its reads in one message.
 
 ## Why several agents
 

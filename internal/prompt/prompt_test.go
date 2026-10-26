@@ -138,17 +138,47 @@ func TestReviewerPromptWithoutSpecialties(t *testing.T) {
 }
 
 func TestLeadPrompt(t *testing.T) {
-	out, err := Lead(LeadInput{AgentID: "lead", Worktree: "/tmp/wt/lead", PR: &domain.PullRequest{Issues: []domain.Issue{{Number: 16, Title: "T"}}, Discussion: []domain.Comment{{Kind: "comment", Author: "a", Body: "decided"}}}, SucceededReviewers: []string{"r1"},
+	out, err := Lead(LeadInput{AgentID: "lead", Worktree: "/tmp/wt/lead", PR: &domain.PullRequest{Issues: []domain.Issue{{Number: 16, Title: "T"}}, Discussion: []domain.Comment{{Kind: "comment", Author: "a", Body: "kept as is"}}}, SucceededReviewers: []string{"r1"},
 		FailedReviewers: []domain.FailedReviewer{{ID: "r2", Reason: "timeout"}},
 		Reports:         []domain.AgentReport{{Reviewer: domain.Reviewer{ID: "r1"}}}, MaxFindings: 3})
 	if err != nil {
 		t.Fatal(err)
 	}
 	s := string(out)
-	for _, want := range []string{"lead reviewer", "WORKING DIRECTORY\n/tmp/wt/lead", "- r1", "- r2: timeout", `"id": "r1"`, "PRE-COMPUTED GROUPS", "CONSERVATIVE POLICY", "VERDICT RULES", "out_of_scope", "CONTEXT RULES", "ISSUE #16", "comment by a", "decided"} {
+	for _, want := range []string{"lead reviewer", "WORKING DIRECTORY\n/tmp/wt/lead", "- r1", "- r2: timeout", `"id": "r1"`, "PRE-COMPUTED GROUPS", "CONSERVATIVE POLICY", "VERDICT RULES", "out_of_scope", "CONTEXT RULES", "ISSUE #16", "comment by a", "kept as is"} {
 		if !strings.Contains(s, want) {
 			t.Errorf("prompt lacks %q", want)
 		}
+	}
+	// The issues and the discussion once: the template carried them three
+	// times, in the middle of two sentences that name SUCCESSFUL REVIEWERS.
+	for _, once := range []string{"BEGIN UNTRUSTED ISSUE #16", "kept as is"} {
+		if n := strings.Count(s, once); n != 1 {
+			t.Errorf("%q appears %d times", once, n)
+		}
+	}
+	if !strings.Contains(s, "not listed in\nSUCCESSFUL REVIEWERS.") || !strings.Contains(s, "must be one of the SUCCESSFUL REVIEWERS.") {
+		t.Error("the sentences naming SUCCESSFUL REVIEWERS are broken")
+	}
+}
+
+func TestLeadPromptExcerpts(t *testing.T) {
+	out, err := Lead(LeadInput{AgentID: "lead", PR: &domain.PullRequest{},
+		Excerpts: []Excerpt{{File: "a.go", Start: 3, End: 4, Text: "     3  x\n     4  y\n"}}, ExcerptNotes: []string{"b.go is not given."}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"Start from CODE AT THE CITED LINES", "- b.go is not given.\n--- BEGIN UNTRUSTED CODE a.go:3-4 ---\n     3  x\n     4  y\n--- END UNTRUSTED CODE ---"} {
+		if !strings.Contains(string(out), want) {
+			t.Errorf("prompt lacks %q", want)
+		}
+	}
+	out, err = Lead(LeadInput{AgentID: "lead", PR: &domain.PullRequest{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(out), "CODE AT THE CITED LINES") {
+		t.Error("a prompt without excerpts names them")
 	}
 }
 

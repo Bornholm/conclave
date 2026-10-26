@@ -26,10 +26,22 @@ func ParseLeadReview(raw []byte, succeeded []string, outcomes []ReviewerOutcome,
 	if err != nil {
 		return nil, nil, err
 	}
-	var review domain.ConsolidatedReview
-	if err := json.Unmarshal(data, &review); err != nil {
+	var aux struct {
+		domain.ConsolidatedReview
+		Findings         []json.RawMessage `json:"findings"`
+		Questions        []json.RawMessage `json:"questions"`
+		PreviousFindings []json.RawMessage `json:"previous_findings"`
+	}
+	if err := json.Unmarshal(data, &aux); err != nil {
 		return nil, nil, fmt.Errorf("decode lead review: %w", err)
 	}
+	review := aux.ConsolidatedReview
+	var dw, w []string
+	review.Findings, dw = agent.DecodeElements[domain.ConsolidatedFinding](aux.Findings, "lead: finding")
+	review.Questions, w = agent.DecodeElements[domain.Question](aux.Questions, "lead: question")
+	dw = append(dw, w...)
+	review.PreviousFindings, w = agent.DecodeElements[domain.PreviousStatus](aux.PreviousFindings, "lead: previous finding")
+	dw = append(dw, w...)
 	if review.SchemaVersion != domain.ReportSchemaVersion {
 		return nil, nil, fmt.Errorf("unsupported schema_version %q", review.SchemaVersion)
 	}
@@ -40,7 +52,7 @@ func ParseLeadReview(raw []byte, succeeded []string, outcomes []ReviewerOutcome,
 	for _, id := range succeeded {
 		known[id] = true
 	}
-	var warnings []string
+	warnings := dw
 	kept := review.Findings[:0]
 	for i, f := range review.Findings {
 		if maxFindings > 0 && len(kept) >= maxFindings {

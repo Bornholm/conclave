@@ -114,6 +114,15 @@ func TestRepositoryOperations(t *testing.T) {
 	if !g.PathExistsAt(ctx, head, "new.txt") || g.PathExistsAt(ctx, head, "deleted.txt") {
 		t.Error("PathExistsAt")
 	}
+	if content, err := g.FileAt(ctx, head, "changed.txt", 100); err != nil || string(content) != "a\nB\n" {
+		t.Errorf("FileAt: %v %q", err, content)
+	}
+	if _, err := g.FileAt(ctx, head, "changed.txt", 2); err == nil || !strings.Contains(err.Error(), "larger than 2") {
+		t.Errorf("FileAt over the limit: %v", err)
+	}
+	if _, err := g.FileAt(ctx, head, "deleted.txt", 100); err == nil {
+		t.Error("FileAt of a deleted file")
+	}
 
 	wt1 := filepath.Join(t.TempDir(), "wt", "a")
 	wt2 := filepath.Join(t.TempDir(), "wt", "b")

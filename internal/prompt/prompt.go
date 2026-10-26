@@ -125,6 +125,18 @@ type LeadInput struct {
 	MaxFindings        int
 	Budget             TimeBudget
 	Since              Since
+	// Excerpts are the lines the findings cite, at the head commit, and
+	// ExcerptNotes say what the lead was not given.
+	Excerpts     []Excerpt
+	ExcerptNotes []string
+}
+
+// Excerpt is a range of lines of a file, numbered, given to the lead with
+// the findings that cite it.
+type Excerpt struct {
+	File       string
+	Start, End int
+	Text       string
 }
 
 type common struct {

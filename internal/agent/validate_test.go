@@ -1,8 +1,11 @@
 package agent
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
+
+	"github.com/bornholm/conclave/internal/domain"
 )
 
 const report = `{
@@ -72,6 +75,31 @@ func TestNumericFindingID(t *testing.T) {
 	}
 	if len(rep.Findings) != 3 || rep.Findings[0].ID != "7" || rep.Findings[1].ID != "r1-2" || rep.Findings[2].ID != "s" {
 		t.Errorf("ids: %+v", rep.Findings)
+	}
+}
+
+func TestParseReportDropsAMistypedFinding(t *testing.T) {
+	in := `{"schema_version":"1","reviewer":{"id":"r1"},"summary":"s","verdict":"comment","findings":[
+	 {"id":"a","category":"correctness","severity":0.7,"confidence":0.5,"file":"a.go","start_line":1,"end_line":1,"title":"mistyped"},
+	 {"id":"b","category":"correctness","severity":"low","confidence":"high","file":"a.go","start_line":1,"end_line":1,"title":"mistyped too"},
+	 {"id":"c","category":"correctness","severity":"low","confidence":0.5,"file":"a.go","start_line":1,"end_line":1,"title":"kept"}]}`
+	rep, warnings, err := ParseReport([]byte(in), "r1", nil, nil, Limits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rep.Findings) != 1 || rep.Findings[0].ID != "c" {
+		t.Errorf("findings: %+v", rep.Findings)
+	}
+	if w := strings.Join(warnings, "\n"); !strings.Contains(w, `finding 0 ("mistyped") rejected`) || !strings.Contains(w, `finding 1 ("mistyped too") rejected`) {
+		t.Errorf("warnings: %v", warnings)
+	}
+}
+
+func TestDecodeElementsCutsTheRejectedTitle(t *testing.T) {
+	long := strings.Repeat("t", 500)
+	_, warnings := DecodeElements[domain.Finding]([]json.RawMessage{json.RawMessage(`{"severity":0.7,"title":"` + long + `"}`)}, "finding")
+	if len(warnings) != 1 || strings.Contains(warnings[0], long) || !strings.Contains(warnings[0], strings.Repeat("t", 80)+"…") {
+		t.Errorf("warnings: %v", warnings)
 	}
 }
 

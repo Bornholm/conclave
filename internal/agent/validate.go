@@ -25,6 +25,30 @@ type Limits struct {
 // DefaultLimits are used when none are given.
 var DefaultLimits = Limits{MaxFindings: 200, MaxFieldBytes: 16 << 10}
 
+// DecodeElements decodes each element of a report's array on its own: one
+// whose field has the wrong type, such as a confidence written as the
+// severity, is dropped with a warning instead of failing the whole report,
+// which would lose every other finding with it.
+func DecodeElements[T any](raws []json.RawMessage, what string) ([]T, []string) {
+	var out []T
+	var warnings []string
+	for i, raw := range raws {
+		var v T
+		if err := json.Unmarshal(raw, &v); err != nil {
+			// The title tells it apart: the checks that follow number the
+			// elements that did decode. It is the agent's text, so it is cut.
+			var named struct {
+				Title string `json:"title"`
+			}
+			_ = json.Unmarshal(raw, &named)
+			warnings = append(warnings, fmt.Sprintf("%s %d (%q) rejected: %v", what, i, truncate(named.Title, 80), err))
+			continue
+		}
+		out = append(out, v)
+	}
+	return out, warnings
+}
+
 // FileChecker reports whether a path exists in the reviewed tree.
 type FileChecker func(path string) bool
 
@@ -35,10 +59,22 @@ func ParseReport(raw []byte, agentID string, changed map[string]bool, exists Fil
 	if err != nil {
 		return nil, nil, err
 	}
-	var rep domain.AgentReport
-	if err := json.Unmarshal(data, &rep); err != nil {
+	var aux struct {
+		domain.AgentReport
+		Findings         []json.RawMessage `json:"findings"`
+		Questions        []json.RawMessage `json:"questions"`
+		PreviousFindings []json.RawMessage `json:"previous_findings"`
+	}
+	if err := json.Unmarshal(data, &aux); err != nil {
 		return nil, nil, fmt.Errorf("decode report: %w", err)
 	}
+	rep := aux.AgentReport
+	var dw, w []string
+	rep.Findings, dw = DecodeElements[domain.Finding](aux.Findings, "finding")
+	rep.Questions, w = DecodeElements[domain.Question](aux.Questions, "question")
+	dw = append(dw, w...)
+	rep.PreviousFindings, w = DecodeElements[domain.PreviousStatus](aux.PreviousFindings, "previous finding")
+	dw = append(dw, w...)
 	if rep.SchemaVersion != domain.ReportSchemaVersion {
 		return nil, nil, fmt.Errorf("unsupported schema_version %q", rep.SchemaVersion)
 	}
@@ -54,7 +90,7 @@ func ParseReport(raw []byte, agentID string, changed map[string]bool, exists Fil
 		lim.Previous = previous
 	}
 	rep.Summary = truncate(rep.Summary, lim.MaxFieldBytes)
-	var warnings []string
+	warnings := dw
 	kept := rep.Findings[:0]
 	for i, f := range rep.Findings {
 		if len(kept) >= lim.MaxFindings {

@@ -4,7 +4,8 @@ version: 1
 # under this one (see docs/configuration.md); `inherits: false` stops that.
 # inherits: false
 # KEY=VALUE lines loaded into the environment, relative to the working
-# directory: the forge token can live there. A variable already set wins.
+# directory: the forge token can live there. A variable the environment
+# already holds wins; one set but blank does not.
 # env_file: .env
 
 forge:

@@ -38,7 +38,7 @@ func TestLoadEnv(t *testing.T) {
 		os.Unsetenv(k)
 	}
 	t.Setenv("CONCLAVE_T_KEPT", "shell")
-	t.Setenv("CONCLAVE_T_EMPTY", "")
+	t.Setenv("CONCLAVE_T_EMPTY", " ")
 	write := func(name, data string) {
 		t.Helper()
 		if err := os.WriteFile(filepath.Join(dir, name), []byte(data), 0o600); err != nil {
@@ -82,6 +82,18 @@ func TestLoadEnv(t *testing.T) {
 	cfg = &Config{}
 	if err := cfg.LoadEnv(); err != nil || cfg.Env.Ignored == nil || os.Getenv("CONCLAVE_T_DEF") != "" {
 		t.Errorf("a default .env that does not parse: %v %+v", err, cfg.Env)
+	}
+
+	// A default .env that cannot be read is ignored too.
+	if err := os.Remove(filepath.Join(dir, ".env")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(dir, ".env"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cfg = &Config{}
+	if err := cfg.LoadEnv(); err != nil || cfg.Env.Ignored == nil {
+		t.Errorf("a default .env that cannot be read: %v %+v", err, cfg.Env)
 	}
 
 	// A file env_file names is read instead, and must exist and parse.

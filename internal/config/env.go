@@ -23,8 +23,9 @@ type EnvReport struct {
 	// environment already held, which win, and Refused the protected ones,
 	// which a file in the working directory may not set.
 	Set, Kept, Refused []string
-	// Ignored says why the default .env was not loaded: it does not parse,
-	// most likely written for another tool. Nothing was set from it.
+	// Ignored says why the default .env was not loaded: it cannot be read,
+	// or does not parse, most likely written for another tool. Nothing was
+	// set from it.
 	Ignored error
 }
 
@@ -34,8 +35,8 @@ type EnvReport struct {
 // much as the .conclave.yaml of the working directory, which declares the
 // agents' commands.
 //
-// The default .env is optional: missing, nothing happens, and when it does
-// not parse it is ignored and Env.Ignored says why. A file env_file names,
+// The default .env is optional: missing, nothing happens, and when it cannot
+// be read or does not parse it is ignored and Env.Ignored says why. A file env_file names,
 // other than .env, must exist and parse.
 func (c *Config) LoadEnv() error {
 	name := c.EnvFile
@@ -55,11 +56,11 @@ func (c *Config) LoadEnv() error {
 	if errors.Is(err, fs.ErrNotExist) && optional {
 		return nil
 	}
-	if err != nil {
-		return fmt.Errorf("env_file %s: %w", abs, err)
-	}
 	report := EnvReport{File: abs}
-	vars, err := ParseEnv(data)
+	var vars []EnvVar
+	if err == nil {
+		vars, err = ParseEnv(data)
+	}
 	if err != nil {
 		if !optional {
 			return fmt.Errorf("env_file %s: %w", abs, err)
@@ -74,9 +75,9 @@ func (c *Config) LoadEnv() error {
 			report.Refused = append(report.Refused, v.Key)
 			continue
 		}
-		// An empty variable is unset as far as the token is concerned:
+		// A blank variable is unset as far as the token is concerned:
 		// the file's value counts.
-		if os.Getenv(v.Key) != "" {
+		if strings.TrimSpace(os.Getenv(v.Key)) != "" {
 			report.Kept = append(report.Kept, v.Key)
 			continue
 		}

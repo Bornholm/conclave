@@ -41,8 +41,8 @@ type Config struct {
 	// read. Nil means true.
 	Inherits *bool `yaml:"inherits"`
 	// EnvFile is the file of KEY=VALUE lines loaded into the environment,
-	// relative to the working directory. Empty means .env, and no error
-	// when it is missing.
+	// relative to the working directory. Empty means .env, which is
+	// optional: missing, unreadable or not parsing, it is ignored.
 	EnvFile string        `yaml:"env_file"`
 	Forge   ForgeConfig   `yaml:"forge"`
 	Review  ReviewConfig  `yaml:"review"`

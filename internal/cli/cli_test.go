@@ -37,8 +37,12 @@ func TestConfigValidateSaysTheTokenCameFromTheEnvFile(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
 	t.Setenv("GITEA_TOKEN", "")
-	os.WriteFile(".conclave.yaml", []byte(isolated+"version: 1\nforge: {provider: gitea, base_url: https://git.example.com}\nagents: [{id: rev, role: reviewer, command: [echo]}, {id: lead, role: lead, command: [echo]}]\n"), 0o644)
-	os.WriteFile(".env", []byte("GITEA_TOKEN=secret-value\n"), 0o600)
+	if err := os.WriteFile(".conclave.yaml", []byte(isolated+"version: 1\nforge: {provider: gitea, base_url: https://git.example.com}\nagents: [{id: rev, role: reviewer, command: [echo]}, {id: lead, role: lead, command: [echo]}]\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(".env", []byte("GITEA_TOKEN=secret-value\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	var out, errb bytes.Buffer
 	Main([]string{"config", "validate"}, &out, &errb)
 	env := filepath.Join(dir, ".env")

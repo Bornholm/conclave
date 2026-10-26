@@ -513,24 +513,30 @@ func TestLoopLogsAPullRequestReviewedByHandOncePerHead(t *testing.T) {
 	a, f, dir := newLoopApp(t, agentCfg(t, "r1", config.RoleReviewer, "valid"), agentCfg(t, "lead", config.RoleLead, "valid"))
 	f.reviews[7] = []domain.ForgeReview{{Author: loopUser, State: "changes_requested", Body: "Please fix."}}
 	var logs bytes.Buffer
-	a.Logger = slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	a.Logger = slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
 	ctx := context.Background()
 	l := newLoop(a, f)
-	logged := func() int { return strings.Count(logs.String(), `number=7 reason="already manually reviewed"`) }
+	logged := func(level, reason string) int {
+		return strings.Count(logs.String(), "level="+level+` msg="pull request skipped" number=7 reason="`+reason+`"`)
+	}
 	for range 2 {
 		if err := l.pass(ctx); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if n := logged(); n != 1 {
-		t.Fatalf("logged %d times on the same head, want 1", n)
+	if info, debug := logged("INFO", loopSkipReviewed), logged("DEBUG", loopSkipReviewed); info != 1 || debug != 1 {
+		t.Fatalf("on the same head: %d at Info, %d at Debug, want 1 and 1", info, debug)
 	}
 	advanceHead(t, a, dir)
 	if err := l.pass(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if n := logged(); n != 2 {
-		t.Errorf("logged %d times after a new head, want 2", n)
+	if info, debug := logged("INFO", loopSkipReviewed), logged("DEBUG", loopSkipReviewed); info != 2 || debug != 1 {
+		t.Errorf("after a new head: %d at Info, %d at Debug, want 2 and 1", info, debug)
+	}
+	// The other skips stay at Debug.
+	if strings.Contains(logs.String(), `level=INFO msg="pull request skipped" number=9`) || !strings.Contains(logs.String(), `level=DEBUG msg="pull request skipped" number=9`) {
+		t.Errorf("the skip of a pull request opened by the user is not at Debug:\n%s", logs.String())
 	}
 	if runs(t, a) != 0 {
 		t.Errorf("a pull request reviewed by hand was reviewed")

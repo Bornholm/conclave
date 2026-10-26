@@ -19,6 +19,8 @@ On each pass, a pull request is taken up when:
 - the token's account did not open it, since a forge does not let an author approve their own work;
 - nobody has reviewed it, neither someone else nor the account by hand.
 
+A pull request reviewed before the loop took it up is never followed, new pushes included. The loop names it in the log, `pull request skipped` with the reason `already manually reviewed`, the one skip logged without `--verbose`: on the first pass, then again each time its head moves. What it has logged is kept in memory only, and forgotten once the pull request is no longer open, so a restarted loop, each run of `--once` and a pull request closed then reopened name it once more.
+
 Once the loop has reviewed a pull request, it follows it whoever reviews it after. It starts a new round when the head has moved since its last review. It stops when its last review approved, or when `loop.max_rounds` rounds are done, 3 by default. A pull request whose head has not moved is left alone, even if the author answered in the discussion. The answers are read at the next push.
 
 The loop finds its own reviews again through a mark hidden in each one, an HTML comment holding the round, the head reviewed, the run and the verdict. Only the reviews of the token's account are read for marks: anyone can paste one into a review of their own. The state lives on the forge, so a loop restarted elsewhere picks up where the last one stopped.

@@ -29,6 +29,7 @@ const usageText = `conclave — multi-agent pull request review
 Usage:
   conclave review <number> [--config PATH] [--format markdown|json] [--keep-worktrees] [--verbose]
                   [--since last|RUN [--responses FILE|-]]
+  conclave loop [--once] [--dry-run] [--interval 10m] [--max-rounds N] [--config PATH] [--verbose]
   conclave triage <number>... [--apply] [--rev REV] [--config PATH] [--format markdown|json]
   conclave triage --all [--state open|closed|all] [--label L] [--since 90d] [--limit N]
   conclave plan <number> [--rev REV] [--config PATH] [--format markdown|json] [--keep-worktrees]
@@ -55,6 +56,8 @@ func Main(args []string, stdout, stderr io.Writer) int {
 	switch args[0] {
 	case "review":
 		err = runReview(ctx, args[1:], stdout, stderr)
+	case "loop":
+		err = runLoop(ctx, args[1:], stdout, stderr)
 	case "triage":
 		err = runTriage(ctx, args[1:], stdout, stderr)
 	case "plan":

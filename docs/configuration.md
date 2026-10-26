@@ -135,6 +135,12 @@ None of this depends on which agent runs it. The salvage reads the report where 
 
 An ask run reads no forge, so a configuration used only for questions never needs a working token. It still needs a `forge` section to pass validation.
 
+## Loop
+
+`loop.interval` is the time between two passes of `conclave loop`, 10 minutes by default. A pass that reviews something lasts as long as the reviews, and the next one starts `interval` after it ends. `loop.max_rounds`, 3 by default, is how many reviews a pull request gets at most. `--interval` and `--max-rounds` override both for one run.
+
+`loop.writer` names the agent that turns a review into the comment published, any configured agent, the lead by default. A cheaper model does the job: the writing is a translation and a cut, not a review. `loop.max_comment_bytes` caps the review body at 60 KiB, the loop's mark included, under GitHub's limit on a review body. It cannot go under 1 KiB. See [Loop](loop.md).
+
 ## Agent contract
 
 The agent runs with the worktree as working directory, receives the prompt, and prints one JSON object that matches the schema embedded in the prompt. The required fields are `schema_version`, `reviewer.id`, `summary`, `findings` and `verdict`. Conclave also finds the object inside the Claude Code `--output-format json` envelope, inside an NDJSON stream and inside a ```json fenced block, so an agent that adds a sentence before its JSON still counts.

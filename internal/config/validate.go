@@ -137,6 +137,16 @@ func Validate(cfg *Config) error {
 		add("ask.limits: all limits must be positive")
 	}
 
+	if cfg.Loop.Interval < 0 {
+		add("loop.interval: must be positive")
+	}
+	if cfg.Loop.MaxRounds < 0 {
+		add("loop.max_rounds: must be positive")
+	}
+	if cfg.Loop.MaxCommentBytes < MinLoopCommentBytes {
+		add("loop.max_comment_bytes: must be at least %d", MinLoopCommentBytes)
+	}
+
 	switch cfg.Output.Format {
 	case FormatMarkdown, FormatJSON:
 	default:
@@ -231,6 +241,9 @@ func Validate(cfg *Config) error {
 			}
 			listed[id] = true
 		}
+	}
+	if cfg.Loop.Writer != "" && !seen[cfg.Loop.Writer] {
+		add("loop.writer: %q is not a configured agent", cfg.Loop.Writer)
 	}
 	if reviewers == 0 {
 		add("agents: at least one reviewer is required")

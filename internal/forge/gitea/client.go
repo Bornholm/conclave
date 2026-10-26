@@ -375,3 +375,76 @@ func (c *Client) GetIssue(ctx context.Context, repo domain.Repository, number in
 	issue := mapIssueItem(raw)
 	return &issue, nil
 }
+
+// CurrentUser implements forge.PullRequestReviewer.
+func (c *Client) CurrentUser(ctx context.Context) (string, error) {
+	var raw user
+	if _, err := c.get(ctx, "/user", nil, &raw); err != nil {
+		return "", err
+	}
+	if raw.Login == "" {
+		return "", errors.New("unexpected Gitea response: no login")
+	}
+	return raw.Login, nil
+}
+
+// ListOpenPullRequests implements forge.PullRequestReviewer.
+func (c *Client) ListOpenPullRequests(ctx context.Context, repo domain.Repository) ([]domain.PullRequest, error) {
+	var raw []pullRequest
+	if err := c.getAll(ctx, repoPath(repo)+"/pulls", &raw); err != nil {
+		return nil, err
+	}
+	out := make([]domain.PullRequest, 0, len(raw))
+	for _, r := range raw {
+		pr, err := mapPullRequest(r)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, *pr)
+	}
+	return out, nil
+}
+
+// ListReviews implements forge.PullRequestReviewer. Gitea names the states
+// APPROVED, REQUEST_CHANGES and COMMENT: they are given the GitHub names
+// the rest of conclave reads. A pending review is left out.
+func (c *Client) ListReviews(ctx context.Context, repo domain.Repository, number int64) ([]domain.ForgeReview, error) {
+	var raw []review
+	if err := c.getAll(ctx, fmt.Sprintf("%s/pulls/%d/reviews", repoPath(repo), number), &raw); err != nil {
+		return nil, err
+	}
+	out := make([]domain.ForgeReview, 0, len(raw))
+	for _, rv := range raw {
+		state := strings.ToLower(rv.State)
+		switch state {
+		case "pending":
+			continue
+		case "request_changes":
+			state = "changes_requested"
+		case "comment":
+			state = "commented"
+		}
+		out = append(out, domain.ForgeReview{
+			Author: rv.User.Login, State: state, Body: rv.Body,
+			CommitSHA: rv.CommitID, SubmittedAt: rv.SubmittedAt,
+		})
+	}
+	return out, nil
+}
+
+var reviewEvents = map[domain.Verdict]string{
+	domain.VerdictApprove:        "APPROVED",
+	domain.VerdictRequestChanges: "REQUEST_CHANGES",
+	domain.VerdictComment:        "COMMENT",
+}
+
+// SubmitReview implements forge.PullRequestReviewer.
+func (c *Client) SubmitReview(ctx context.Context, repo domain.Repository, number int64, sha string, verdict domain.Verdict, body string) error {
+	event, ok := reviewEvents[verdict]
+	if !ok {
+		return fmt.Errorf("unknown verdict %q", verdict)
+	}
+	_, err := c.http.Do(ctx, http.MethodPost, c.http.Resolve(fmt.Sprintf("%s/pulls/%d/reviews", repoPath(repo), number), nil),
+		map[string]any{"commit_id": sha, "body": body, "event": event}, "")
+	return err
+}

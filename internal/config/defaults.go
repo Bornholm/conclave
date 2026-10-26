@@ -41,6 +41,12 @@ const (
 	DefaultMaxAnswerKeyPoint = 10
 	DefaultMaxAnswerRefs     = 50
 
+	DefaultLoopInterval        = 10 * time.Minute
+	DefaultLoopMaxRounds       = 3
+	DefaultLoopMaxCommentBytes = 60 << 10
+	// MinLoopCommentBytes leaves a comment room past the loop's mark.
+	MinLoopCommentBytes = 1 << 10
+
 	DefaultPlanMaxParallel = 3
 	DefaultMaxPlanSteps    = 30
 	DefaultMaxPlanComments = 50
@@ -150,6 +156,15 @@ func applyDefaults(cfg *Config) {
 	}
 	if cfg.Ask.Limits.MaxReferences == 0 {
 		cfg.Ask.Limits.MaxReferences = DefaultMaxAnswerRefs
+	}
+	if cfg.Loop.Interval == 0 {
+		cfg.Loop.Interval = DefaultLoopInterval
+	}
+	if cfg.Loop.MaxRounds == 0 {
+		cfg.Loop.MaxRounds = DefaultLoopMaxRounds
+	}
+	if cfg.Loop.MaxCommentBytes == 0 {
+		cfg.Loop.MaxCommentBytes = DefaultLoopMaxCommentBytes
 	}
 	if cfg.Output.Format == "" {
 		cfg.Output.Format = FormatMarkdown

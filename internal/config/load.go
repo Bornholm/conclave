@@ -273,6 +273,9 @@ func dropDisabled(cfg *Config) error {
 				return fmt.Errorf("agents[%s]: disabled, but %s still names it: remove it there too", a.ID, list.field)
 			}
 		}
+		if cfg.Loop.Writer == a.ID {
+			return fmt.Errorf("agents[%s]: disabled, but loop.writer still names it: remove it there too", a.ID)
+		}
 	}
 	cfg.Agents = kept
 	return nil

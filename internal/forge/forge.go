@@ -182,3 +182,35 @@ func ParentRepository(ctx context.Context, f Forge, repo domain.Repository) (dom
 	}
 	return r.ParentRepository(ctx, repo)
 }
+
+// ErrReviewsUnsupported is returned when the forge cannot list or submit
+// pull request reviews.
+var ErrReviewsUnsupported = errors.New("pull request reviews are not supported on this forge")
+
+// PullRequestReviewer is implemented by the forges on which conclave can
+// review pull requests on its own: find the ones waiting, read the reviews
+// they have and submit one. It is optional: a forge without pull request
+// reviews does not implement it.
+type PullRequestReviewer interface {
+	// CurrentUser returns the login the token authenticates as.
+	CurrentUser(ctx context.Context) (string, error)
+	// ListOpenPullRequests returns the open pull requests, drafts included,
+	// with their author and head.
+	ListOpenPullRequests(ctx context.Context, repo domain.Repository) ([]domain.PullRequest, error)
+	// ListReviews returns the reviews submitted on the pull request, oldest
+	// first.
+	ListReviews(ctx context.Context, repo domain.Repository, number int64) ([]domain.ForgeReview, error)
+	// SubmitReview submits a review of commit sha with the verdict's
+	// decision: an approval, a request for changes or a comment.
+	SubmitReview(ctx context.Context, repo domain.Repository, number int64, sha string, verdict domain.Verdict, body string) error
+}
+
+// Reviewer returns the forge's PullRequestReviewer, or
+// ErrReviewsUnsupported.
+func Reviewer(f Forge) (PullRequestReviewer, error) {
+	r, ok := f.(PullRequestReviewer)
+	if !ok {
+		return nil, fmt.Errorf("%w (%s)", ErrReviewsUnsupported, f.Name())
+	}
+	return r, nil
+}

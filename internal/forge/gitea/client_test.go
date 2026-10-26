@@ -191,3 +191,50 @@ func TestPullRequestLabel(t *testing.T) {
 		t.Errorf("writes:\n%s\nwant:\n%s", strings.Join(writes, "\n"), strings.Join(want, "\n"))
 	}
 }
+
+func TestPullRequestReviewer(t *testing.T) {
+	var posted string
+	pr := string(fixture(t, "get-pr.json"))
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/api/v1/user":
+			w.Write([]byte(`{"login":"me"}`))
+		case r.URL.Path == "/api/v1/repos/acme/proj/pulls" && r.Method == http.MethodGet:
+			w.Write([]byte("[" + pr + "]"))
+		case r.URL.Path == "/api/v1/repos/acme/proj/pulls/7/reviews" && r.Method == http.MethodGet:
+			w.Write([]byte(`[{"body":"no","user":{"login":"erin"},"state":"REQUEST_CHANGES","commit_id":"c1","submitted_at":"t1"},
+			 {"body":"","user":{"login":"me"},"state":"PENDING"},
+			 {"body":"hm","user":{"login":"me"},"state":"COMMENT","commit_id":"c2","submitted_at":"t2"}]`))
+		case r.URL.Path == "/api/v1/repos/acme/proj/pulls/7/reviews" && r.Method == http.MethodPost:
+			body, _ := io.ReadAll(r.Body)
+			posted = string(body)
+			w.Write([]byte(`{}`))
+		default:
+			w.WriteHeader(404)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	c, err := New(srv.URL, "tok", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	repo := domain.Repository{Owner: "acme", Name: "proj"}
+	var _ forge.PullRequestReviewer = c
+	if me, err := c.CurrentUser(ctx); err != nil || me != "me" {
+		t.Errorf("CurrentUser = %q, %v", me, err)
+	}
+	if prs, err := c.ListOpenPullRequests(ctx, repo); err != nil || len(prs) != 1 {
+		t.Fatalf("ListOpenPullRequests = %+v, %v", prs, err)
+	}
+	reviews, err := c.ListReviews(ctx, repo, 7)
+	if err != nil || len(reviews) != 2 || reviews[0].State != "changes_requested" || reviews[1].State != "commented" || reviews[1].CommitSHA != "c2" {
+		t.Errorf("ListReviews = %+v, %v", reviews, err)
+	}
+	if err := c.SubmitReview(ctx, repo, 7, "c3", domain.VerdictApprove, "good"); err != nil {
+		t.Fatal(err)
+	}
+	if posted != `{"body":"good","commit_id":"c3","event":"APPROVED"}` {
+		t.Errorf("posted %s", posted)
+	}
+}

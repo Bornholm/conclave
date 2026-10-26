@@ -342,7 +342,7 @@ func (l *loop) review(ctx context.Context, pr domain.PullRequest, d loopDecision
 		// renders it rather than lost.
 		log.Warn("writer failed, the review is published as Conclave renders it", "number", pr.Number, "error", err)
 		var md bytes.Buffer
-		if err := output.Markdown(&md, review, output.Options{}); err != nil {
+		if err := output.Markdown(&md, authorView(review), output.Options{}); err != nil {
 			return err
 		}
 		// The whole review is the longest body the loop submits: capped like
@@ -386,6 +386,20 @@ func (l *loop) submit(ctx context.Context, number int64, u loopSubmission) error
 	}
 	l.app.logger().Info("review submitted", "number", number, "round", u.mark.Round, "verdict", u.mark.Verdict, "run", u.mark.Run)
 	return nil
+}
+
+// authorView is the review without how it was produced, which the writer
+// is told to leave out: agent ids, models, run ids and the run's warnings.
+func authorView(review *domain.ConsolidatedReview) *domain.ConsolidatedReview {
+	v := *review
+	v.Warnings, v.FailedReviewers = nil, nil
+	v.Meta.Models, v.Meta.RunID = nil, ""
+	if v.Meta.Since != nil {
+		since := *v.Meta.Since
+		since.RunID = ""
+		v.Meta.Since = &since
+	}
+	return &v
 }
 
 // roundNotice is what the writer is asked to tell the author about the

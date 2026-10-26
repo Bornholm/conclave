@@ -202,6 +202,11 @@ func TestLoopPublishesTheReviewWhenTheWriterFails(t *testing.T) {
 	if len(f.reviews[7]) != 1 || !strings.Contains(f.reviews[7][0].Body, "## Conclave review") {
 		t.Errorf("fallback: %+v", f.reviews[7])
 	}
+	// How the review was produced stays in the run directory.
+	m, _ := parseLoopMark(f.reviews[7][0].Body)
+	if body := strings.Replace(f.reviews[7][0].Body, m.String(), "", 1); strings.Contains(body, "_Run `") || strings.Contains(body, "**Models:**") || strings.Contains(body, "r1") {
+		t.Errorf("the fallback says how it was produced: %s", body)
+	}
 }
 
 func TestLoopDryRun(t *testing.T) {
@@ -415,6 +420,9 @@ func TestMissingFindings(t *testing.T) {
 	}}
 	if got := missingFindings(review, "Voir a.go:3."); len(got) != 1 || got[0] != "b.go" {
 		t.Errorf("missing: %v", got)
+	}
+	if got := missingFindings(review, "Voir b.go."); len(got) != 1 || got[0] != "a.go" {
+		t.Errorf("a high finding left out: %v", got)
 	}
 }
 

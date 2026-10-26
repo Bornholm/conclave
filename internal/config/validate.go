@@ -141,7 +141,7 @@ func Validate(cfg *Config) error {
 		add("loop.interval: must be positive")
 	}
 	if cfg.Loop.MaxRounds < 0 {
-		add("loop.max_rounds: must be >= 1")
+		add("loop.max_rounds: must be positive")
 	}
 	if cfg.Loop.MaxCommentBytes < 0 {
 		add("loop.max_comment_bytes: must be positive")

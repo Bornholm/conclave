@@ -199,7 +199,7 @@ func TestLoopPublishesTheReviewWhenTheWriterFails(t *testing.T) {
 	if err := a.Loop(context.Background(), LoopRequest{Once: true}); err != nil {
 		t.Fatal(err)
 	}
-	if len(f.reviews[7]) != 1 || !strings.HasPrefix(f.reviews[7][0].Body, "## Conclave review") {
+	if len(f.reviews[7]) != 1 || !strings.Contains(f.reviews[7][0].Body, "## Conclave review") {
 		t.Errorf("fallback: %+v", f.reviews[7])
 	}
 }
@@ -228,7 +228,7 @@ func newLoop(a *App, f *fakeForge) *loop {
 
 func TestLoopRetriesASubmissionWithoutReviewingAgain(t *testing.T) {
 	a, f, dir := newLoopApp(t, agentCfg(t, "r1", config.RoleReviewer, "valid"), agentCfg(t, "lead", config.RoleLead, "valid"))
-	f.submitErrs = 2
+	f.submitErrs = 1
 	ctx := context.Background()
 	l := newLoop(a, f)
 	for range 3 {
@@ -332,7 +332,7 @@ func TestLoopRejectsACommentThatDropsAFinding(t *testing.T) {
 	}
 	body := f.reviews[7][0].Body
 	m, ok := parseLoopMark(body)
-	if !strings.HasPrefix(body, "## Conclave review") || !ok || len(body) > 200+len("…")+len(m.String())+3 {
+	if !strings.HasPrefix(body, "Automatic review 1 of at most 3.\n\n## Conclave review") || !ok || len(body) > 200+len("…")+len(m.String())+3 {
 		t.Errorf("a comment without the high finding was published, or the fallback is not capped: %q", body)
 	}
 }
@@ -345,5 +345,65 @@ func TestLoopDryRunLabelsNothing(t *testing.T) {
 	}
 	if len(f.labelEvents) != 0 || a.Config.Review.RunningLabel != "conclave/running" {
 		t.Errorf("label events %v, label %q", f.labelEvents, a.Config.Review.RunningLabel)
+	}
+}
+
+func TestLoopSubmitsAnUnsentReviewDespiteAReviewSubmittedMeanwhile(t *testing.T) {
+	a, f, _ := newLoopApp(t, agentCfg(t, "r1", config.RoleReviewer, "valid"), agentCfg(t, "lead", config.RoleLead, "valid"))
+	f.submitErrs = 1
+	ctx := context.Background()
+	l := newLoop(a, f)
+	if err := l.pass(ctx); err != nil {
+		t.Fatal(err)
+	}
+	f.reviews[7] = append(f.reviews[7], domain.ForgeReview{Author: "carol", State: "commented", SubmittedAt: "2026-01-01T00:00:30Z"})
+	if err := l.pass(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if len(f.reviews[7]) != 2 || f.reviews[7][1].Author != loopUser || runs(t, a) != 1 {
+		t.Errorf("reviews=%+v runs=%d", f.reviews[7], runs(t, a))
+	}
+}
+
+func TestLoopGivesUpASubmissionTheForgeKeepsRefusing(t *testing.T) {
+	a, f, _ := newLoopApp(t, agentCfg(t, "r1", config.RoleReviewer, "valid"), agentCfg(t, "lead", config.RoleLead, "valid"))
+	f.submitErrs = 100
+	ctx := context.Background()
+	l := newLoop(a, f)
+	for range 4 {
+		if err := l.pass(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// One review, two refusals, then nothing until a new head.
+	if f.submitErrs != 100-loopMaxFailures || runs(t, a) != 1 || len(l.unsent) != 0 {
+		t.Errorf("submissions tried=%d runs=%d unsent=%d", 100-f.submitErrs, runs(t, a), len(l.unsent))
+	}
+	// A pull request closed with a review unsent drops it.
+	b, g, _ := newLoopApp(t, agentCfg(t, "r1", config.RoleReviewer, "valid"), agentCfg(t, "lead", config.RoleLead, "valid"))
+	g.submitErrs = 1
+	m := newLoop(b, g)
+	if err := m.pass(ctx); err != nil || len(m.unsent) != 1 {
+		t.Fatalf("unsent=%d %v", len(m.unsent), err)
+	}
+	g.pr.Number = 70
+	if err := m.pass(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := m.unsent[7]; ok {
+		t.Error("the review of a closed pull request is kept")
+	}
+}
+
+func TestMissingFindings(t *testing.T) {
+	review := &domain.ConsolidatedReview{Findings: []domain.ConsolidatedFinding{
+		{Severity: domain.SeverityHigh, File: "a.go"},
+		{Severity: domain.SeverityMedium, File: "b.go"},
+		{Severity: domain.SeverityMedium, File: "b.go"},
+		{Severity: domain.SeverityLow, File: "c.go"},
+		{Severity: domain.SeverityCritical, File: "d.go", OutOfScope: true},
+	}}
+	if got := missingFindings(review, "Voir a.go:3."); len(got) != 1 || got[0] != "b.go" {
+		t.Errorf("missing: %v", got)
 	}
 }

@@ -29,7 +29,7 @@ The first round is a full review. The next ones are incremental, as with `concla
 
 The review's verdict becomes the forge's decision: an approval, a request for changes or a comment. An approval counts like any other, branch protection included. A review that was cut short by a timeout never approves, the same as with `conclave review`.
 
-A review that fails is run at most twice on the same head, on two passes. After that the loop waits for a new push. A review the forge refuses or cannot receive is not run again: the loop keeps it and submits it again on the next passes, as long as the head has not moved.
+A review that fails is run at most twice on the same head, on two passes. After that the loop waits for a new push. A review the forge refuses or cannot receive is not run again: the loop keeps it and submits it again on the next pass, before deciding anything else, so a review someone submitted meanwhile does not make it lost. It is given up when the head moves, when the pull request is closed, or after a second refusal, after which the loop waits for a new push.
 
 `--dry-run` writes nothing to the forge: no review, and no `review.running_label` either.
 
@@ -43,7 +43,7 @@ The review is not published as `conclave review` prints it. An agent rewrites it
 - starting, in a later round, with what the author fixed since the previous one;
 - saying, in the last round, that no further automatic review will follow.
 
-The writer may not change the verdict, add a finding or drop one rated medium or above. The last rule is checked: a comment that does not name the file of every finding rated medium or above is rejected, the one part of a finding no translation changes. The writer runs in an empty directory: the review cites the code, there is nothing to look up. Its comment is kept in the run directory as `final/comment.md`. When it fails or its comment is rejected, the review is published as Conclave renders it, in English and cut to `loop.max_comment_bytes`, rather than lost.
+The writer may not change the verdict, add a finding or drop one rated medium or above. The last rule is checked: a comment that does not name the file of every finding rated medium or above, out-of-scope ones aside, is rejected, the one part of a finding no translation changes. The writer runs in an empty directory: the review cites the code, there is nothing to look up. Its comment is kept in the run directory as `final/comment.md`. A comment over `loop.max_comment_bytes` is checked before it is cut, then cut. When the writer fails or its comment is rejected, the review is published as Conclave renders it, in English, after one line giving the round and, on the last one, saying no further automatic review will follow, cut to `loop.max_comment_bytes`, rather than lost.
 
 ## Cost
 

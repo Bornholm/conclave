@@ -99,29 +99,36 @@ func (a *App) WriteComment(ctx context.Context, req CommentRequest) (*Comment, e
 	if err != nil {
 		return nil, fmt.Errorf("writer %s: %w", writer.ID, err)
 	}
-	rep, warnings, err := agent.ParseCommentReport(ad.Report, cfg.Loop.MaxCommentBytes)
+	// Cut once checked: a finding the cap took off is not one the writer
+	// dropped.
+	rep, warnings, err := agent.ParseCommentReport(ad.Report, 0)
 	if err != nil {
 		return nil, fmt.Errorf("writer %s: invalid comment: %w", writer.ID, err)
+	}
+	missing := missingFindings(review, rep.Body)
+	if max := cfg.Loop.MaxCommentBytes; len(rep.Body) > max {
+		rep.Body = agent.TruncateField(rep.Body, max)
+		warnings = append(warnings, fmt.Sprintf("the comment was cut to %d bytes", max))
 	}
 	warnings = append(ex.Warnings, warnings...)
 	_ = store.WriteJSON("final", "comment.json", rep)
 	_ = store.Write("final", "comment.md", []byte(rep.Body+"\n"))
-	if missing := missingFindings(review, rep.Body); len(missing) > 0 {
+	if len(missing) > 0 {
 		return nil, fmt.Errorf("writer %s: the comment leaves out the finding(s) at %s, rated medium or above", writer.ID, strings.Join(missing, ", "))
 	}
 	log.Info("writer finished", "agent", writer.ID, "language", rep.Language, "bytes", len(rep.Body), "duration", res.Duration.Round(time.Millisecond))
 	return &Comment{Body: rep.Body, Language: rep.Language, Warnings: warnings}, nil
 }
 
-// missingFindings returns the files of the findings rated medium or above
-// that a comment does not name. The writer is told to keep them all, and a
+// missingFindings returns the files of the findings rated medium or above,
+// out-of-scope ones aside, that a comment does not name. The writer is told to keep them all, and a
 // comment published under the user's account that silently drops one says
 // less than the decision it comes with. The file path is the one part of a
 // finding no translation changes.
 func missingFindings(review *domain.ConsolidatedReview, body string) []string {
 	var missing []string
 	for _, f := range review.Findings {
-		if f.Severity.Rank() > domain.SeverityMedium.Rank() || f.File == "" || strings.Contains(body, f.File) || slices.Contains(missing, f.File) {
+		if f.Severity.Rank() > domain.SeverityMedium.Rank() || f.OutOfScope || f.File == "" || strings.Contains(body, f.File) || slices.Contains(missing, f.File) {
 			continue
 		}
 		missing = append(missing, f.File)

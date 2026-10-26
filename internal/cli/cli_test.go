@@ -56,9 +56,28 @@ func TestMainCommands(t *testing.T) {
 	if code := Main([]string{"review", "13", "--config", "/nonexistent.yaml"}, &out, &errb); code != 1 || !strings.Contains(errb.String(), "nonexistent.yaml") {
 		t.Errorf("interspersed flags: %d %s", code, errb.String())
 	}
-	for _, args := range [][]string{{}, {"bogus"}, {"review"}, {"review", "abc"}, {"review", "1", "2"}, {"plan"}, {"plan", "abc"}, {"plan", "1", "2"}, {"config"}, {"agents"}, {"loop", "7"}, {"loop", "--interval", "-1m"}, {"loop", "--include", "abc"}, {"loop", "--include", "0"}} {
+	for _, args := range [][]string{{}, {"bogus"}, {"review"}, {"review", "abc"}, {"review", "1", "2"}, {"plan"}, {"plan", "abc"}, {"plan", "1", "2"}, {"config"}, {"agents"}, {"loop", "7"}, {"loop", "--interval", "-1m"}} {
 		if code := Main(args, &out, &errb); code == 0 {
 			t.Errorf("%v should fail", args)
+		}
+	}
+}
+
+func TestIncludeFlag(t *testing.T) {
+	var l includeList
+	for _, v := range []string{"7", "#8, 9", "10,"} {
+		if err := l.Set(v); err != nil {
+			t.Fatalf("%q: %v", v, err)
+		}
+	}
+	if l.String() != "7,8,9,10" {
+		t.Errorf("parsed %v", l)
+	}
+	// Refused when parsing the flags, before the configuration is loaded.
+	for _, v := range []string{"abc", "0", "-3", "", " , "} {
+		var out, errb bytes.Buffer
+		if code := Main([]string{"loop", "--include", v}, &out, &errb); code == 0 || !strings.Contains(errb.String(), "-include") {
+			t.Errorf("--include %q: %d %s", v, code, errb.String())
 		}
 	}
 }

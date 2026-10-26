@@ -18,11 +18,11 @@ On each pass, a pull request is taken up when:
 
 - it is open and not a draft;
 - the token's account did not open it, since a forge does not let an author approve their own work;
-- nobody has reviewed it, neither someone else nor the account by hand.
+- nobody has reviewed it, neither someone else nor the account by hand, unless `--include` names it.
 
 A pull request reviewed before the loop took it up is never followed, new pushes included. The loop names it in the log, `pull request skipped` with the reason `already manually reviewed`, the one skip logged without `--verbose`: on the first pass, then again each time its head moves. What it has logged is kept in memory only, and forgotten once the pull request is no longer open, so a restarted loop, each run of `--once` and a pull request closed then reopened name it once more.
 
-`--include N`, repeatable, takes up such a pull request anyway: its first round is a full review, and the loop follows it from then on like the ones it took up itself, so the flag is no longer needed once that round is submitted. It does not take up a draft or a pull request the token's account opened. An included number that is not an open pull request is reported once in the log.
+`--include N` takes up such a pull request anyway. It is repeatable and takes a list too, `--include 172,#180`; a value naming no pull request stops the command. The first round is a full review, and the loop follows the pull request from then on by its mark, like the ones it took up itself: the flag is spent once that round is submitted, and a mark the forge loses later does not start the rounds over. A draft or a pull request the token's account opened is still left alone. An included pull request the loop does not take up, for that reason or because it is not open, is reported once per run as a warning, `included pull request not taken up` with the reason.
 
 Once the loop has reviewed a pull request, it follows it whoever reviews it after. It starts a new round when the head has moved since its last review. It stops when its last review approved, or when `loop.max_rounds` rounds are done, 3 by default. A pull request whose head has not moved is left alone, even if the author answered in the discussion. The answers are read at the next push.
 

@@ -85,6 +85,9 @@ type loopDecision struct {
 	// PreviousAt when it was submitted.
 	Previous   *loopMark
 	PreviousAt string
+	// Followed says the loop has a review of its own on the pull request,
+	// and needs no --include to take it up any more.
+	Followed bool
 }
 
 // decideLoop tells whether a pull request needs a review from the loop. A
@@ -120,13 +123,13 @@ func decideLoop(pr domain.PullRequest, me string, reviews []domain.ForgeReview, 
 	}
 	switch {
 	case last.Verdict == domain.VerdictApprove:
-		return loopDecision{Skip: "approved"}
+		return loopDecision{Skip: "approved", Followed: true}
 	case last.Round >= maxRounds:
-		return loopDecision{Skip: fmt.Sprintf("%d rounds done", last.Round)}
+		return loopDecision{Skip: fmt.Sprintf("%d rounds done", last.Round), Followed: true}
 	case last.Head == pr.Head.SHA:
-		return loopDecision{Skip: "no change since the last round"}
+		return loopDecision{Skip: "no change since the last round", Followed: true}
 	}
-	return loopDecision{Round: last.Round + 1, Previous: last, PreviousAt: lastAt}
+	return loopDecision{Round: last.Round + 1, Previous: last, PreviousAt: lastAt, Followed: true}
 }
 
 type loopFailure struct {
@@ -187,7 +190,7 @@ func (a *App) Loop(ctx context.Context, req LoopRequest) error {
 	}
 	l := &loop{app: a, forge: f, reviewer: rv, repo: repo, me: me, runsBase: runsBase, req: req,
 		failures: map[int64]loopFailure{}, unsent: map[int64]loopSubmission{}, skipped: map[int64]string{},
-		include: map[int64]bool{}, missing: map[int64]bool{}}
+		include: map[int64]bool{}, unheeded: map[int64]bool{}}
 	for _, n := range req.Include {
 		l.include[n] = true
 	}
@@ -220,10 +223,12 @@ type loop struct {
 	req      LoopRequest
 	failures map[int64]loopFailure
 	unsent   map[int64]loopSubmission
-	include  map[int64]bool
-	// missing is the included pull requests already reported as not open,
-	// reported once rather than on every pass.
-	missing map[int64]bool
+	// include is the pull requests of --include the loop has not taken up
+	// yet: once it has, its mark is what it follows them by.
+	include map[int64]bool
+	// unheeded is the included pull requests already reported as not taken
+	// up, reported once rather than on every pass.
+	unheeded map[int64]bool
 	// skipped is the head on which each pull request reviewed by hand was
 	// last logged: it is logged once per head, not on every pass.
 	skipped map[int64]string
@@ -261,6 +266,13 @@ func (l *loop) pass(ctx context.Context) error {
 			}
 		}
 		d := decideLoop(pr, l.me, reviews, l.app.Config.Loop.MaxRounds, l.include[pr.Number])
+		if d.Followed {
+			delete(l.include, pr.Number)
+		}
+		if d.Skip != "" && l.include[pr.Number] {
+			l.unheed(pr.Number, d.Skip)
+			continue
+		}
 		if d.Skip != "" {
 			level := slog.LevelDebug
 			if d.Skip == loopSkipReviewed && l.skipped[pr.Number] != pr.Head.SHA {
@@ -289,11 +301,11 @@ func (l *loop) pass(ctx context.Context) error {
 			continue
 		}
 		delete(l.failures, pr.Number)
+		delete(l.include, pr.Number)
 	}
 	for number := range l.include {
-		if !listed[number] && !l.missing[number] {
-			l.missing[number] = true
-			log.Warn("included pull request not open", "number", number)
+		if !listed[number] {
+			l.unheed(number, "not open")
 		}
 	}
 	for number := range l.skipped {
@@ -310,6 +322,16 @@ func (l *loop) pass(ctx context.Context) error {
 	}
 	log.Info("loop pass done", "open", len(prs), "reviewed", reviewed)
 	return nil
+}
+
+// unheed reports once that an included pull request is not taken up: the
+// flag asked for it, so it is said without --verbose.
+func (l *loop) unheed(number int64, reason string) {
+	if l.unheeded[number] {
+		return
+	}
+	l.unheeded[number] = true
+	l.app.logger().Warn("included pull request not taken up", "number", number, "reason", reason)
 }
 
 // retrySubmission submits again a review the forge refused, and reports

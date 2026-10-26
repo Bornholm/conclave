@@ -119,8 +119,8 @@ type LoopConfig struct {
 	// Writer is the agent that turns the review into the comment published,
 	// in the pull request's language. Empty means the lead.
 	Writer string `yaml:"writer"`
-	// MaxCommentBytes caps the comment published, under the forges' own
-	// limit on a review body.
+	// MaxCommentBytes caps the review body submitted, the loop's mark
+	// included, under the forges' own limit on a review body.
 	MaxCommentBytes int `yaml:"max_comment_bytes"`
 }
 

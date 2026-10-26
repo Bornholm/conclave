@@ -13,6 +13,7 @@ import (
 
 	"github.com/bornholm/conclave/internal/agent"
 	"github.com/bornholm/conclave/internal/artifact"
+	"github.com/bornholm/conclave/internal/config"
 	"github.com/bornholm/conclave/internal/domain"
 	"github.com/bornholm/conclave/internal/output"
 	"github.com/bornholm/conclave/internal/prompt"
@@ -77,7 +78,7 @@ func (a *App) WriteComment(ctx context.Context, req CommentRequest) (*Comment, e
 	p, err := prompt.Comment(prompt.CommentInput{
 		AgentID: writer.ID, Worktree: workdir, PR: req.PR, Review: md.String(),
 		Verdict: review.Verdict, Round: req.Round, MaxRounds: req.MaxRounds,
-		Incremental: review.Meta.Since != nil, MaxBytes: cfg.Loop.MaxCommentBytes,
+		Incremental: review.Meta.Since != nil, MaxBytes: commentBytes(cfg),
 	})
 	if err != nil {
 		return nil, err
@@ -106,7 +107,7 @@ func (a *App) WriteComment(ctx context.Context, req CommentRequest) (*Comment, e
 		return nil, fmt.Errorf("writer %s: invalid comment: %w", writer.ID, err)
 	}
 	missing := missingFindings(review, rep.Body)
-	if max := cfg.Loop.MaxCommentBytes; len(rep.Body) > max {
+	if max := commentBytes(cfg); len(rep.Body) > max {
 		rep.Body = agent.TruncateField(rep.Body, max)
 		warnings = append(warnings, fmt.Sprintf("the comment was cut to %d bytes", max))
 	}
@@ -121,6 +122,16 @@ func (a *App) WriteComment(ctx context.Context, req CommentRequest) (*Comment, e
 	log.Info("writer finished", "agent", writer.ID, "language", rep.Language, "bytes", len(rep.Body), "duration", res.Duration.Round(time.Millisecond))
 	return &Comment{Body: rep.Body, Language: rep.Language, Warnings: warnings}, nil
 }
+
+// loopMarkRoom is the room kept for the loop's mark under
+// loop.max_comment_bytes: a run id, a commit id, a verdict and a round fit
+// in well under it.
+const loopMarkRoom = 256
+
+// commentBytes is the size of the comment proper: the comment is checked at
+// that size, and what the forge receives, the mark included, stays under
+// loop.max_comment_bytes.
+func commentBytes(cfg *config.Config) int { return cfg.Loop.MaxCommentBytes - loopMarkRoom }
 
 // missingFindings returns the files of the findings rated medium or above,
 // out-of-scope ones aside, that a comment does not name. The writer is told to keep them all, and a

@@ -347,7 +347,7 @@ func (l *loop) review(ctx context.Context, pr domain.PullRequest, d loopDecision
 		}
 		// The whole review is the longest body the loop submits: capped like
 		// the writer's, or the forge refuses it.
-		body = agent.TruncateField(roundNotice(d.Round, cfg.Loop.MaxRounds, review.Verdict)+"\n\n"+md.String(), cfg.Loop.MaxCommentBytes)
+		body = agent.TruncateField(roundNotice(d.Round, cfg.Loop.MaxRounds, review.Verdict)+"\n\n"+md.String(), commentBytes(cfg))
 	} else {
 		for _, w := range comment.Warnings {
 			log.Warn("writer", "number", pr.Number, "warning", w)
@@ -355,16 +355,9 @@ func (l *loop) review(ctx context.Context, pr domain.PullRequest, d loopDecision
 		body = comment.Body
 	}
 	mark := loopMark{Round: d.Round, Head: review.Meta.HeadSHA, Run: review.Meta.RunID, Verdict: review.Verdict}
-	// loop.max_comment_bytes bounds what the forge receives, the mark
-	// included.
-	tail := "\n\n" + mark.String() + "\n"
-	if room := cfg.Loop.MaxCommentBytes - len(tail) - len("…"); len(body) > room {
-		body = agent.TruncateField(body, max(room, 0))
-	}
-	body += tail
-	if store, err := artifact.Open(filepath.Dir(res.RunDir), filepath.Base(res.RunDir)); err == nil {
-		_ = store.Write("final", "comment.md", []byte(body))
-	}
+	// The comment was cut to leave the mark its room: the body the forge
+	// receives is the one that was checked.
+	body += "\n\n" + mark.String() + "\n"
 	if l.req.DryRun {
 		out := l.req.Out
 		if out == nil {
@@ -386,6 +379,10 @@ func (l *loop) review(ctx context.Context, pr domain.PullRequest, d loopDecision
 func (l *loop) submit(ctx context.Context, number int64, u loopSubmission) error {
 	if err := l.reviewer.SubmitReview(ctx, l.repo, number, u.mark.Head, u.mark.Verdict, u.body); err != nil {
 		return fmt.Errorf("submit review: %w", err)
+	}
+	// The run keeps what the author reads, once it is theirs to read.
+	if store, err := artifact.Open(l.runsBase, u.mark.Run); err == nil {
+		_ = store.Write("final", "comment.md", []byte(u.body))
 	}
 	l.app.logger().Info("review submitted", "number", number, "round", u.mark.Round, "verdict", u.mark.Verdict, "run", u.mark.Run)
 	return nil
@@ -431,7 +428,9 @@ func (l *loop) responses(ctx context.Context, number int64, since string) string
 		l.app.logger().Warn("previous round without a submission time, every comment is passed as a response", "number", number, "submitted_at", since)
 	}
 	// The newest answers are the ones the round is for: they are collected
-	// first, each within the room left, and given oldest first.
+	// first, each within the room left, and given oldest first. The cap is
+	// the review's own, which cuts the responses again with a warning when
+	// the separators push them a few bytes over.
 	room := cfg.Review.Limits.MaxCommentBytes
 	var entries []string
 	for i := len(discussion) - 1; i >= 0 && room > 0; i-- {
@@ -450,7 +449,9 @@ func (l *loop) responses(ctx context.Context, number int64, since string) string
 		if len(head) >= room {
 			break
 		}
-		entry := head + agent.TruncateField(c.Body, room-len(head)) + "\n\n"
+		// One long answer does not crowd out the others: each gets at
+		// most a quarter of the cap.
+		entry := head + agent.TruncateField(c.Body, min(room-len(head), max(cfg.Review.Limits.MaxCommentBytes/4, 1))) + "\n\n"
 		room -= len(entry)
 		entries = append(entries, entry)
 	}

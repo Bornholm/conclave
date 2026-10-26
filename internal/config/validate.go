@@ -143,8 +143,8 @@ func Validate(cfg *Config) error {
 	if cfg.Loop.MaxRounds < 0 {
 		add("loop.max_rounds: must be positive")
 	}
-	if cfg.Loop.MaxCommentBytes < 0 {
-		add("loop.max_comment_bytes: must be positive")
+	if cfg.Loop.MaxCommentBytes < MinLoopCommentBytes {
+		add("loop.max_comment_bytes: must be at least %d", MinLoopCommentBytes)
 	}
 
 	switch cfg.Output.Format {

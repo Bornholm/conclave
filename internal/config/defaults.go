@@ -44,6 +44,8 @@ const (
 	DefaultLoopInterval        = 10 * time.Minute
 	DefaultLoopMaxRounds       = 3
 	DefaultLoopMaxCommentBytes = 60 << 10
+	// MinLoopCommentBytes leaves a comment room past the loop's mark.
+	MinLoopCommentBytes = 1 << 10
 
 	DefaultPlanMaxParallel = 3
 	DefaultMaxPlanSteps    = 30

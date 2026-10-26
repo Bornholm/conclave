@@ -326,16 +326,17 @@ func TestLoopRejectsACommentThatDropsAFinding(t *testing.T) {
 	a, f, _ := newLoopApp(t, agentCfg(t, "r1", config.RoleReviewer, "valid"), agentCfg(t, "lead", config.RoleLead, "valid"),
 		agentCfg(t, "w", config.RoleReviewer, "writer-drops"))
 	a.Config.Loop.Writer = "w"
-	a.Config.Loop.MaxCommentBytes = 300
+	a.Config.Loop.MaxCommentBytes = 400
 	if err := a.Loop(context.Background(), LoopRequest{Once: true}); err != nil {
 		t.Fatal(err)
 	}
 	body := f.reviews[7][0].Body
 	m, ok := parseLoopMark(body)
-	if !strings.HasPrefix(body, "Automatic review 1 of at most 3.\n\n## Conclave review") || !ok || len(body) > 300 {
+	if !strings.HasPrefix(body, "Automatic review 1 of at most 3.\n\n## Conclave review") || !ok || len(body) > 400 {
 		t.Errorf("a comment without the high finding was published, or the fallback is not capped, mark included: %d bytes %q", len(body), body)
 	}
-	// The run keeps what the author read, and the comment turned down.
+	// The run keeps what the author read, and the comment turned down. A
+	// dry run, which submits nothing, writes no comment.md.
 	published, _ := os.ReadFile(filepath.Join(a.RunsBase, m.Run, "final", "comment.md"))
 	rejected, _ := os.ReadFile(filepath.Join(a.RunsBase, m.Run, "final", "comment-rejected.md"))
 	if string(published) != body || !strings.Contains(string(rejected), "Commentaire en français") {
@@ -384,6 +385,9 @@ func TestLoopGivesUpASubmissionTheForgeKeepsRefusing(t *testing.T) {
 	// One review, two refusals, then nothing until a new head.
 	if f.submitErrs != 100-loopMaxFailures || runs(t, a) != 1 || len(l.unsent) != 0 {
 		t.Errorf("submissions tried=%d runs=%d unsent=%d", 100-f.submitErrs, runs(t, a), len(l.unsent))
+	}
+	if matches, _ := filepath.Glob(filepath.Join(a.RunsBase, "*", "final", "comment.md")); len(matches) != 0 {
+		t.Errorf("a comment that never reached the forge is kept as read: %v", matches)
 	}
 	// A pull request closed with a review unsent drops it.
 	b, g, _ := newLoopApp(t, agentCfg(t, "r1", config.RoleReviewer, "valid"), agentCfg(t, "lead", config.RoleLead, "valid"))
@@ -466,6 +470,15 @@ func TestLoopResponsesKeepTheNewestWithinTheCap(t *testing.T) {
 		!strings.HasPrefix(got, "alice (comment, 2026-01-02") || len(got) > 300+len("…") {
 		t.Errorf("%d bytes:\n%s", len(got), got)
 	}
+	// A long newest answer does not crowd out the older one.
+	l.forge = discussionForge{f, []domain.Comment{
+		{Kind: "comment", Author: "alice", CreatedAt: "2026-01-02T00:00:00Z", Body: "first answer"},
+		{Kind: "comment", Author: "alice", CreatedAt: "2026-01-04T00:00:00Z", Body: strings.Repeat("long ", 200)},
+	}}
+	if got := l.responses(context.Background(), 7, "2026-01-01T12:00:00Z"); !strings.Contains(got, "first answer") || !strings.Contains(got, "long long") {
+		t.Errorf("a long answer crowds out the others:\n%s", got)
+	}
+	l.forge = discussionForge{f, []domain.Comment{{Kind: "comment", Author: "alice", CreatedAt: "2026-01-04T00:00:00Z", Body: "newest answer"}}}
 	// A previous round without a time opens the window.
 	if got := l.responses(context.Background(), 7, ""); !strings.Contains(got, "newest answer") {
 		t.Errorf("open window: %s", got)

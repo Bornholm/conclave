@@ -301,7 +301,6 @@ func (l *loop) pass(ctx context.Context) error {
 			continue
 		}
 		delete(l.failures, pr.Number)
-		delete(l.include, pr.Number)
 	}
 	for number := range l.include {
 		if !listed[number] {
@@ -439,6 +438,8 @@ func (l *loop) submit(ctx context.Context, number int64, u loopSubmission) error
 	if err := l.reviewer.SubmitReview(ctx, l.repo, number, u.mark.Head, u.mark.Verdict, u.body); err != nil {
 		return fmt.Errorf("submit review: %w", err)
 	}
+	// The mark is on the forge: the loop follows the pull request by it.
+	delete(l.include, number)
 	// The run keeps what the author reads, once it is theirs to read.
 	if store, err := artifact.Open(l.runsBase, u.mark.Run); err == nil {
 		_ = store.Write("final", "comment.md", []byte(u.body))

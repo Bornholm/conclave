@@ -597,3 +597,39 @@ func TestLoopTakesUpAnIncludedPullRequestReviewedByHand(t *testing.T) {
 		t.Errorf("the rounds started over: %d runs", runs(t, a))
 	}
 }
+
+func TestLoopIncludeFromTheRequest(t *testing.T) {
+	a, f, _ := newLoopApp(t, agentCfg(t, "r1", config.RoleReviewer, "valid"), agentCfg(t, "lead", config.RoleLead, "valid"))
+	f.reviews[7] = []domain.ForgeReview{{Author: loopUser, State: "changes_requested", Body: "Please fix."}}
+	if err := a.Loop(context.Background(), LoopRequest{Once: true, Include: []int64{7}}); err != nil {
+		t.Fatal(err)
+	}
+	if len(f.reviews[7]) != 2 {
+		t.Errorf("--include did not take the pull request up: %+v", f.reviews[7])
+	}
+}
+
+func TestLoopKeepsTheIncludeUntilTheReviewIsSubmitted(t *testing.T) {
+	a, f, dir := newLoopApp(t, agentCfg(t, "r1", config.RoleReviewer, "valid"), agentCfg(t, "lead", config.RoleLead, "valid"))
+	f.reviews[7] = []domain.ForgeReview{{Author: loopUser, State: "changes_requested", Body: "Please fix."}}
+	f.submitErrs = loopMaxFailures
+	ctx := context.Background()
+	l := newLoop(a, f)
+	l.include[7] = true
+	// The review is refused until given up, then the head moves.
+	for range 2 {
+		if err := l.pass(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if !l.include[7] {
+		t.Fatal("the include was spent on a review the forge refused")
+	}
+	advanceHead(t, a, dir)
+	if err := l.pass(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if len(f.reviews[7]) != 2 || l.include[7] {
+		t.Errorf("the new head was not taken up, or the include not spent: %+v", f.reviews[7])
+	}
+}

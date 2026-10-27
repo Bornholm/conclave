@@ -63,6 +63,9 @@ findings and requesting changes:
 - A finding that makes a request fail, loses or leaks data, breaks an API
   contract or a protocol invariant (for example a request/response pairing
   required by a provider) is at least "high", whatever the reviewers said.
+- A finding that gives users a wrong behaviour in a case the pull request
+  supports, or leaves part of the defect the pull request sets out to fix,
+  is at least "medium", even when only a fallback path reaches it.
 - Missing tests for a behaviour the pull request introduces are "medium"
   when that behaviour has an error or fallback path that is never exercised.
 - A finding the author has explicitly deferred to a tracked issue in the

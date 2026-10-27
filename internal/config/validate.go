@@ -146,6 +146,9 @@ func Validate(cfg *Config) error {
 	if cfg.Loop.MaxCommentBytes < MinLoopCommentBytes {
 		add("loop.max_comment_bytes: must be at least %d", MinLoopCommentBytes)
 	}
+	if s := domain.Severity(cfg.Loop.RequestChangesFrom); !s.Valid() || s == domain.SeverityInfo {
+		add("loop.request_changes_from: %q is not one of critical, high, medium, low", cfg.Loop.RequestChangesFrom)
+	}
 
 	switch cfg.Output.Format {
 	case FormatMarkdown, FormatJSON:

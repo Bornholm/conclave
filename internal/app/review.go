@@ -35,6 +35,9 @@ type ReviewRequest struct {
 	Since string
 	// Responses is the author's free-text answer to the previous review.
 	Responses string
+	// RequestChangesFrom, when set, is the lowest severity of an in-scope
+	// finding that makes the verdict request_changes, whatever the lead's.
+	RequestChangesFrom domain.Severity
 }
 
 // ReviewResult carries the consolidated review and where artifacts live.
@@ -280,12 +283,31 @@ func (a *App) Review(ctx context.Context, req ReviewRequest) (*ReviewResult, err
 	if runErr != nil {
 		return &ReviewResult{RunDir: store.Root, Manifest: r.manifest}, runErr
 	}
+	if w := requestChangesFrom(review, req.RequestChangesFrom); w != "" {
+		review.Warnings = append(review.Warnings, w)
+	}
 	_ = store.WriteJSON("final", "review.json", review)
 	var md bytes.Buffer
 	if err := output.Markdown(&md, review, output.Options{ShowAttribution: cfg.ShowAttribution(), ShowFailedAgents: cfg.ShowFailedAgents()}); err == nil {
 		_ = store.Write("final", "review.md", md.Bytes())
 	}
 	return &ReviewResult{Review: review, RunDir: store.Root, Manifest: r.manifest}, nil
+}
+
+// requestChangesFrom makes the verdict request_changes when an in-scope
+// finding is rated from or above the given severity, and says why. The
+// findings are sorted, the most severe first.
+func requestChangesFrom(review *domain.ConsolidatedReview, from domain.Severity) string {
+	if from == "" || review.Verdict == domain.VerdictRequestChanges {
+		return ""
+	}
+	for _, f := range review.Findings {
+		if !f.OutOfScope && f.Severity.Rank() <= from.Rank() {
+			review.Verdict = domain.VerdictRequestChanges
+			return fmt.Sprintf("finding %q is %s, at or above %s: the verdict is request_changes", f.Title, f.Severity, from)
+		}
+	}
+	return ""
 }
 
 // runningLabelTimeout bounds the call that takes the running label off: it

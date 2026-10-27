@@ -30,7 +30,7 @@ Or let Conclave watch the repository. `conclave loop` reviews the open pull requ
 
 ```bash
 conclave loop --dry-run    # one pass, the comments printed instead of submitted
-conclave loop              # a pass every 10 minutes
+conclave loop              # a pass every 5 minutes
 ```
 
 The same agents also triage issues. Each one is labelled from the taxonomy the forge defines, and gets a status that has to be backed by evidence: still present, fixed, obsolete, duplicate or needs information.

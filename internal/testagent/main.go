@@ -275,6 +275,10 @@ func main() {
 		fmt.Println(`{"type":"message_start","message":{"role":"assistant","content":[]}}`)
 		fmt.Println(`{"type":"message_end","message":{"role":"assistant","provider":"fake","model":"fake/lead","content":[{"type":"text","text":"` + rep + `"}]}}`)
 		time.Sleep(time.Minute)
+	case "lead-low":
+		// A lead that rates its one finding low and only comments.
+		rep := strings.Replace(leadReport(), `"verdict": "request_changes"`, `"verdict": "comment"`, 1)
+		fmt.Print(strings.Replace(rep, `"severity": "high"`, `"severity": "low"`, 1))
 	case "lead-impostor":
 		fmt.Print(strings.Replace(leadReport(), `"reported_by": ["r1"]`, `"reported_by": ["ghost"]`, 1))
 	default:

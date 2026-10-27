@@ -29,7 +29,7 @@ const usageText = `conclave — multi-agent pull request review
 Usage:
   conclave review <number> [--config PATH] [--format markdown|json] [--keep-worktrees] [--verbose]
                   [--since last|RUN [--responses FILE|-]]
-  conclave loop [--once] [--dry-run] [--interval 10m] [--max-rounds N] [--include N]... [--config PATH] [--verbose]
+  conclave loop [--once] [--dry-run] [--interval 5m] [--max-rounds N] [--include N]... [--config PATH] [--verbose]
   conclave triage <number>... [--apply] [--rev REV] [--config PATH] [--format markdown|json]
   conclave triage --all [--state open|closed|all] [--label L] [--since 90d] [--limit N]
   conclave plan <number> [--rev REV] [--config PATH] [--format markdown|json] [--keep-worktrees]

@@ -22,6 +22,16 @@ Run it again to update. It does nothing when the installed version already match
 | | `CONCLAVE_REPO` | GitHub repository, default `bornholm/conclave` |
 | | `CONCLAVE_BASE_URL` | artifact mirror, default the GitHub release |
 
+## From the AUR
+
+On Arch Linux and its derivatives, `conclave-bin` packages the release binaries and follows each release:
+
+```bash
+yay -S conclave-bin
+```
+
+`conclave` on the AUR is an unrelated game.
+
 ## With Go
 
 ```bash

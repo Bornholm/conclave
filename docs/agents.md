@@ -6,6 +6,7 @@
 conclave agents install pi
 conclave agents install claude
 conclave agents install opencode
+conclave agents install codex
 conclave agents install pi --project .
 conclave agents install pi --force
 ```
@@ -23,7 +24,7 @@ conclave agents install pi --force
 
 The files are embedded in the binary. What is installed is always the version that matches the Conclave installing it, the names of the variables it exports or the report it expects, and an upgrade of Conclave is followed by the same command to bring them in line.
 
-Claude Code and OpenCode get the skills only. Neither has an extension yet: a reviewer run with them is stopped at its timeout without being told to conclude first, and `report_grace` is what catches its report.
+Claude Code, OpenCode and Codex get the skills only. None has an extension yet: a reviewer run with them is stopped at its timeout without being told to conclude first, and `report_grace` is what catches its report.
 
 ## Where
 
@@ -32,6 +33,9 @@ Claude Code and OpenCode get the skills only. Neither has an extension yet: a re
 | `pi` | `~/.pi/agent`, or `PI_CODING_AGENT_DIR` | `.pi/` |
 | `claude` | `~/.claude`, or `CLAUDE_CONFIG_DIR` | `.claude/` |
 | `opencode` | `~/.config/opencode`, or `$XDG_CONFIG_HOME/opencode` when it is absolute | `.opencode/` |
+| `codex` | `~/.agents` | `.agents/` |
+
+Codex reads skills from `~/.agents/skills` and a repository's `.agents/skills`, the agents convention Pi and OpenCode also read: a Codex install reaches them too, and theirs do not report it, since it is the same skill.
 
 By default, the files go into the user's configuration. For Pi, this is what Conclave's own runs use: Pi loads every extension of that directory, so the reviewers configured in `.conclave.yaml` need nothing on their command line. An agent configured with `inherit_env: false` does not receive `PI_CODING_AGENT_DIR` and reads `~/.pi/agent`: pass it in the agent's `environment` in that case.
 
@@ -43,7 +47,7 @@ A file that already holds the bundled content is reported `unchanged`. One that 
 
 Warnings name files that compete with the installed ones, without touching them:
 
-- a skill of the same name in another directory the agent also reads, which loads only one of them: `~/.agents/skills` for Pi, `~/.claude/skills` and `~/.agents/skills` for OpenCode (at these paths whatever `CLAUDE_CONFIG_DIR` says, as OpenCode reads them) and the singular `skill/` below its own directory, or their `.agents/skills` and `.claude/skills` counterparts for a project, and for a project install the user's own configuration as well. A copy that holds exactly the bundled skill, no file more and none different, as an install for another agent leaves, is the same skill and is not reported;
+- a skill of the same name in another directory the agent also reads, which loads only one of them: `~/.agents/skills` for Pi, `~/.claude/skills` and `~/.agents/skills` for OpenCode (at these paths whatever `CLAUDE_CONFIG_DIR` says, as OpenCode reads them) and the singular `skill/` below its own directory, `~/.codex/skills`, deprecated but still read, for Codex (at this path whatever `CODEX_HOME` says), or their `.agents/skills`, `.claude/skills` and `.codex/skills` counterparts for a project, and for a project install the user's own configuration as well. A copy that holds exactly the bundled skill, no file more and none different, as an install for another agent leaves, is the same skill and is not reported;
 - for Pi, an `extensions/deadline.ts`, the standalone extension `conclave.ts` comes from, in the directory installed into or, for a project install, in the user's: with both, two extensions steer the same run.
 
 The command also reads `.conclave.yaml`, or the file named by `--config`, when it exists, and warns about an agent whose `command` still passes `deadline.ts`, with `pi --extension …/deadline.ts`, or the `--deadline-env-prefix CONCLAVE` that Conclave 0.9.0 documented for it. Remove both once `conclave.ts` is installed: the first would steer the same run twice, and Pi rejects the second once the standalone extension is gone.

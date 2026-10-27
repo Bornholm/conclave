@@ -88,6 +88,17 @@ var agents = map[string]Agent{
 		SkillDirs:     []string{filepath.Join(".claude", "skills"), filepath.Join(".agents", "skills")},
 		RootSkillDirs: []string{"skill"},
 	},
+	// Codex reads the user's skills from ~/.agents/skills and a repository's
+	// from .agents/skills, the agents convention Pi and OpenCode read too.
+	// It still reads the skills/ of its own directory, deprecated, for the
+	// user and for the project: .codex/skills. A CODEX_HOME elsewhere than
+	// ~/.codex is not looked at for competing skills.
+	"codex": {
+		Name:       "codex",
+		UserRoot:   userRoot("", "", "", ".agents"),
+		ProjectDir: ".agents",
+		SkillDirs:  []string{filepath.Join(".codex", "skills")},
+	},
 }
 
 // userRoot returns an agent's configuration directory: the one env names, or

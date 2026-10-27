@@ -487,6 +487,67 @@ func TestInstallOpencodeIntoAProject(t *testing.T) {
 	}
 }
 
+func TestInstallCodex(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("PI_CODING_AGENT_DIR", "")
+	a, err := Lookup("codex")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Codex still reads its deprecated ~/.codex/skills.
+	old := filepath.Join(home, ".codex", "skills", "conclave-review")
+	if err := os.MkdirAll(old, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	rep, err := Install(a, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := filepath.Join(home, ".agents"); rep.Root != want {
+		t.Fatalf("root = %s, want %s", rep.Root, want)
+	}
+	if len(rep.Results) != 3 {
+		t.Errorf("Codex gets the skills only: %+v", rep.Results)
+	}
+	for _, r := range rep.Results {
+		if r.Status != Created || !strings.HasPrefix(r.Path, filepath.Join(home, ".agents", "skills")) {
+			t.Errorf("%s: %v", r.Path, r.Status)
+		}
+	}
+	if len(rep.Warnings) != 1 || !strings.Contains(rep.Warnings[0], old) {
+		t.Errorf("warnings = %v, want one about %s only", rep.Warnings, old)
+	}
+	// Pi reads ~/.agents/skills too, where Codex's install is the same skill.
+	if rep, err = Install(pi(t), Options{}); err != nil || len(rep.Warnings) != 0 {
+		t.Errorf("pi after codex: %v, warnings %v", err, rep.Warnings)
+	}
+}
+
+func TestInstallCodexIntoAProject(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	a, _ := Lookup("codex")
+	repo := t.TempDir()
+	old := filepath.Join(repo, ".codex", "skills", "conclave-ask")
+	if err := os.MkdirAll(old, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	rep, err := Install(a, Options{Project: repo})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := filepath.Join(repo, ".agents"); rep.Root != want {
+		t.Fatalf("root = %s, want %s", rep.Root, want)
+	}
+	if _, err := os.Stat(filepath.Join(repo, ".agents", "skills", "conclave-review", "SKILL.md")); err != nil {
+		t.Error(err)
+	}
+	if len(rep.Warnings) != 1 || !strings.Contains(rep.Warnings[0], old) {
+		t.Errorf("warnings = %v, want one about %s only", rep.Warnings, old)
+	}
+}
+
 func TestRelativeXDGConfigHomeIsIgnored(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)

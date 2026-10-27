@@ -482,13 +482,13 @@ func TestReadResponsesIsBounded(t *testing.T) {
 	}
 }
 
-func TestAgentsInstallClaudeAndOpencode(t *testing.T) {
+func TestAgentsInstallSkillsOnly(t *testing.T) {
 	repo := t.TempDir()
 	if out, err := exec.Command("git", "init", "-q", repo).CombinedOutput(); err != nil {
 		t.Fatalf("git init: %v %s", err, out)
 	}
 	t.Setenv("HOME", t.TempDir())
-	for agent, dir := range map[string]string{"claude": ".claude", "opencode": ".opencode"} {
+	for agent, dir := range map[string]string{"claude": ".claude", "codex": ".agents", "opencode": ".opencode"} {
 		var out, errb bytes.Buffer
 		if code := Main([]string{"agents", "install", agent, "--project", repo}, &out, &errb); code != 0 {
 			t.Fatalf("%s: %d %s%s", agent, code, out.String(), errb.String())
@@ -504,7 +504,7 @@ func TestAgentsInstallClaudeAndOpencode(t *testing.T) {
 	}
 	var out bytes.Buffer
 	Main([]string{"help"}, &out, &out)
-	if !strings.Contains(out.String(), "conclave agents install claude|opencode|pi") {
+	if !strings.Contains(out.String(), "conclave agents install claude|codex|opencode|pi") {
 		t.Errorf("usage does not list the agents:\n%s", out.String())
 	}
 }

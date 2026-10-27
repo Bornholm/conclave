@@ -459,6 +459,10 @@ type CommentInput struct {
 	// Incremental says the review followed up on a previous one.
 	Incremental bool
 	MaxBytes    int
+	// KeepFrom is the lowest severity of a finding the comment must keep,
+	// each with its file: medium, or lower when the loop requests changes
+	// from lower.
+	KeepFrom domain.Severity
 }
 
 // Comment renders the prompt turning a review into the comment published on

@@ -249,13 +249,14 @@ func TestSincePromptSaysTheDiffFileIsTruncated(t *testing.T) {
 
 func TestCommentPrompt(t *testing.T) {
 	in := CommentInput{AgentID: "lead", Worktree: "/w", PR: &domain.PullRequest{Number: 4, Title: "Ajoute un cache", Description: "Évite les appels répétés."},
-		Review: "## Conclave review\n**Verdict:** Changes requested", Verdict: domain.VerdictRequestChanges, Round: 3, MaxRounds: 3, Incremental: true, MaxBytes: 1000}
+		Review: "## Conclave review\n**Verdict:** Changes requested", Verdict: domain.VerdictRequestChanges, Round: 3, MaxRounds: 3, Incremental: true, MaxBytes: 1000,
+		KeepFrom: domain.SeverityMedium}
 	p, err := Comment(in)
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, want := range []string{"pull request\n#4", `skill named "unslop"`, "language the pull request is written in", "Ajoute un cache", "Évite les appels répétés.",
-		"--- BEGIN UNTRUSTED REVIEW ---\n## Conclave review", "changes are requested", "follows up on the previous one", "review 3 of at most 3", "no further automatic review", "At most 1000 bytes"} {
+		"--- BEGIN UNTRUSTED REVIEW ---\n## Conclave review", "changes are requested", "follows up on the previous one", "review 3 of at most 3", "no further automatic review", "At most 1000 bytes", "rated medium or above is rejected", "Findings rated below medium"} {
 		if !strings.Contains(string(p), want) {
 			t.Errorf("comment prompt lacks %q:\n%s", want, p)
 		}
@@ -269,5 +270,10 @@ func TestCommentPrompt(t *testing.T) {
 	}
 	if !strings.Contains(string(p), "the pull request is approved") {
 		t.Error("approval not said")
+	}
+	in.KeepFrom = domain.SeverityLow
+	p, _ = Comment(in)
+	if !strings.Contains(string(p), "rated low or above is rejected") || !strings.Contains(string(p), "Informational findings\n  go in one short list") {
+		t.Errorf("a comment that must keep the low findings:\n%s", p)
 	}
 }

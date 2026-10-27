@@ -1757,6 +1757,8 @@ func TestRequestChangesFrom(t *testing.T) {
 		want   domain.Verdict
 	}{
 		{name: "unset", review: review(domain.VerdictComment, low), want: domain.VerdictComment},
+		{name: "unknown", review: review(domain.VerdictComment, info), from: "bogus", want: domain.VerdictComment},
+		{name: "info", review: review(domain.VerdictComment, info), from: domain.SeverityInfo, want: domain.VerdictComment},
 		{name: "at the threshold", review: review(domain.VerdictComment, low), from: domain.SeverityLow, want: domain.VerdictRequestChanges},
 		{name: "an approval too", review: review(domain.VerdictApprove, info, low), from: domain.SeverityLow, want: domain.VerdictRequestChanges},
 		{name: "under the threshold", review: review(domain.VerdictComment, low), from: domain.SeverityMedium, want: domain.VerdictComment},

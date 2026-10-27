@@ -194,7 +194,7 @@ func (a *App) Loop(ctx context.Context, req LoopRequest) error {
 	}
 	l := &loop{app: a, forge: f, reviewer: rv, repo: repo, me: me, runsBase: runsBase, req: req,
 		failures: map[int64]loopFailure{}, unsent: map[int64]loopSubmission{}, skipped: map[int64]string{},
-		include: map[int64]bool{}, unheeded: map[int64]bool{}}
+		include: map[int64]bool{}, unheeded: map[int64]string{}}
 	for _, n := range req.Include {
 		l.include[n] = true
 	}
@@ -230,9 +230,10 @@ type loop struct {
 	// include is the pull requests of --include the loop has not taken up
 	// yet: once it has, its mark is what it follows them by.
 	include map[int64]bool
-	// unheeded is the included pull requests already reported as not taken
-	// up, reported once rather than on every pass.
-	unheeded map[int64]bool
+	// unheeded is the reason each included pull request was last reported
+	// as not taken up for, reported once per reason rather than on every
+	// pass.
+	unheeded map[int64]string
 	// skipped is the head and the reason with which each pull request
 	// reviewed by hand or in draft was last logged: it is logged once per
 	// head and reason, not on every pass.
@@ -333,13 +334,13 @@ func (l *loop) pass(ctx context.Context) error {
 	return nil
 }
 
-// unheed reports once that an included pull request is not taken up: the
-// flag asked for it, so it is said without --verbose.
+// unheed reports once per reason that an included pull request is not taken
+// up: the flag asked for it, so it is said without --verbose.
 func (l *loop) unheed(number int64, reason string) {
-	if l.unheeded[number] {
+	if l.unheeded[number] == reason {
 		return
 	}
-	l.unheeded[number] = true
+	l.unheeded[number] = reason
 	l.app.logger().Warn("included pull request not taken up", "number", number, "reason", reason)
 }
 

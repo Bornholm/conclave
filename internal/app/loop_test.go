@@ -236,7 +236,7 @@ func runs(t *testing.T, a *App) int {
 }
 
 func newLoop(a *App, f *fakeForge) *loop {
-	return &loop{app: a, forge: f, reviewer: f, me: loopUser, runsBase: a.RunsBase, failures: map[int64]loopFailure{}, unsent: map[int64]loopSubmission{}, skipped: map[int64]string{}, include: map[int64]bool{}, unheeded: map[int64]bool{}}
+	return &loop{app: a, forge: f, reviewer: f, me: loopUser, runsBase: a.RunsBase, failures: map[int64]loopFailure{}, unsent: map[int64]loopSubmission{}, skipped: map[int64]string{}, include: map[int64]bool{}, unheeded: map[int64]string{}}
 }
 
 func TestLoopRetriesASubmissionWithoutReviewingAgain(t *testing.T) {
@@ -426,11 +426,15 @@ func TestMissingFindings(t *testing.T) {
 		{Severity: domain.SeverityLow, File: "c.go"},
 		{Severity: domain.SeverityCritical, File: "d.go", OutOfScope: true},
 	}}
-	if got := missingFindings(review, "Voir a.go:3."); len(got) != 1 || got[0] != "b.go" {
+	if got := missingFindings(review, "Voir a.go:3.", domain.SeverityMedium); len(got) != 1 || got[0] != "b.go" {
 		t.Errorf("missing: %v", got)
 	}
-	if got := missingFindings(review, "Voir b.go."); len(got) != 1 || got[0] != "a.go" {
+	if got := missingFindings(review, "Voir b.go.", domain.SeverityMedium); len(got) != 1 || got[0] != "a.go" {
 		t.Errorf("a high finding left out: %v", got)
+	}
+	// A low finding requests changes from low: the comment keeps it too.
+	if got := missingFindings(review, "Voir a.go, b.go.", domain.SeverityLow); len(got) != 1 || got[0] != "c.go" {
+		t.Errorf("a low finding left out: %v", got)
 	}
 }
 
@@ -642,10 +646,19 @@ func TestLoopIncludedPullRequestAlreadyFollowedIsReported(t *testing.T) {
 	a.Logger = slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelInfo}))
 	l := newLoop(a, f)
 	l.include[7] = true
+	// A draft first: the include is not spent, and the reason is reported.
+	f.pr.State = "draft"
+	if err := l.pass(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	f.pr.State = "open"
 	for range 2 {
 		if err := l.pass(context.Background()); err != nil {
 			t.Fatal(err)
 		}
+	}
+	if n := strings.Count(logs.String(), `level=WARN msg="included pull request not taken up" number=7 reason=draft`); n != 1 {
+		t.Errorf("an included draft reported %d times, want 1:\n%s", n, logs.String())
 	}
 	if n := strings.Count(logs.String(), `level=WARN msg="included pull request not taken up" number=7 reason="no change since the last round"`); n != 1 {
 		t.Errorf("an included pull request already followed reported %d times, want 1:\n%s", n, logs.String())
@@ -660,12 +673,16 @@ func TestLoopRequestsChangesFromTheConfiguredSeverity(t *testing.T) {
 		from string
 		want domain.Verdict
 	}{
+		{from: "", want: domain.VerdictRequestChanges},
 		{from: "low", want: domain.VerdictRequestChanges},
 		{from: "medium", want: domain.VerdictComment},
 	} {
 		t.Run(c.from, func(t *testing.T) {
 			a, f, _ := newLoopApp(t, agentCfg(t, "r1", config.RoleReviewer, "valid"), agentCfg(t, "lead", config.RoleLead, "lead-low"))
-			a.Config.Loop.RequestChangesFrom = c.from
+			// Empty, the default applies.
+			if c.from != "" {
+				a.Config.Loop.RequestChangesFrom = c.from
+			}
 			if err := a.Loop(context.Background(), LoopRequest{Once: true}); err != nil {
 				t.Fatal(err)
 			}

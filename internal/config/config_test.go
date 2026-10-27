@@ -344,7 +344,8 @@ func TestLoopWriter(t *testing.T) {
 	if w := cfg.LoopWriter(); w.ID != "lead" {
 		t.Errorf("default writer: %s", w.ID)
 	}
-	if cfg.Loop.Interval != DefaultLoopInterval || cfg.Loop.MaxRounds != DefaultLoopMaxRounds || cfg.Loop.MaxCommentBytes != DefaultLoopMaxCommentBytes {
+	if cfg.Loop.Interval != DefaultLoopInterval || cfg.Loop.MaxRounds != DefaultLoopMaxRounds || cfg.Loop.MaxCommentBytes != DefaultLoopMaxCommentBytes ||
+		cfg.Loop.RequestChangesFrom != DefaultLoopRequestChangesFrom {
 		t.Errorf("defaults: %+v", cfg.Loop)
 	}
 	cfg.Loop.Writer = "rev"

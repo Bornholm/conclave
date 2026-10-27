@@ -295,10 +295,10 @@ func (a *App) Review(ctx context.Context, req ReviewRequest) (*ReviewResult, err
 }
 
 // requestChangesFrom makes the verdict request_changes when an in-scope
-// finding is rated from or above the given severity, and says why. The
-// findings are sorted, the most severe first.
+// finding is rated from or above the given severity, and says why. An
+// empty, unknown or informational severity changes nothing.
 func requestChangesFrom(review *domain.ConsolidatedReview, from domain.Severity) string {
-	if from == "" || review.Verdict == domain.VerdictRequestChanges {
+	if !from.Valid() || from == domain.SeverityInfo || review.Verdict == domain.VerdictRequestChanges {
 		return ""
 	}
 	for _, f := range review.Findings {

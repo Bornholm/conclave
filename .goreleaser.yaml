@@ -55,6 +55,38 @@ nfpms:
       - src: LICENSE
         dst: /usr/share/doc/conclave/LICENSE
 
+# A PKGBUILD for the prebuilt archives, pushed to the AUR on each release.
+# "conclave" is taken there by an unrelated game, hence conclave-bin only.
+# The workflow passes AUR_KEY, the private SSH key of the AUR account, with
+# no passphrase; without it nothing is pushed and the PKGBUILD stays in dist.
+aurs:
+  - name: conclave-bin
+    ids: [conclave]
+    homepage: https://github.com/bornholm/conclave
+    description: Multi-agent pull request review with local coding agents
+    maintainers:
+      - William Petit <will.arcanadelirium@gmail.com>
+    license: MIT
+    private_key: "{{ .Env.AUR_KEY }}"
+    git_url: ssh://aur@aur.archlinux.org/conclave-bin.git
+    skip_upload: '{{ if index .Env "AUR_KEY" }}auto{{ else }}true{{ end }}'
+    # The pacman package the nfpms block builds, which install.sh installs
+    # on Arch, owns the same files.
+    provides:
+      - conclave
+    conflicts:
+      - conclave
+    depends:
+      - git
+    commit_author:
+      name: William Petit
+      email: will.arcanadelirium@gmail.com
+    package: |-
+      install -Dm755 ./conclave "${pkgdir}/usr/bin/conclave"
+      install -Dm644 ./LICENSE "${pkgdir}/usr/share/licenses/conclave-bin/LICENSE"
+      install -Dm644 ./README.md "${pkgdir}/usr/share/doc/conclave-bin/README.md"
+      install -Dm644 ./.conclave.example.yaml "${pkgdir}/usr/share/doc/conclave-bin/conclave.example.yaml"
+
 checksum:
   name_template: "checksums.txt"
 

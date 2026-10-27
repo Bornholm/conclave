@@ -519,8 +519,11 @@ func TestInstallCodex(t *testing.T) {
 		t.Errorf("warnings = %v, want one about %s only", rep.Warnings, old)
 	}
 	// Pi reads ~/.agents/skills too, where Codex's install is the same skill.
-	if rep, err = Install(pi(t), Options{}); err != nil || len(rep.Warnings) != 0 {
-		t.Errorf("pi after codex: %v, warnings %v", err, rep.Warnings)
+	if rep, err = Install(pi(t), Options{}); err != nil {
+		t.Fatalf("pi after codex: %v", err)
+	}
+	if len(rep.Warnings) != 0 {
+		t.Errorf("pi after codex: warnings %v", rep.Warnings)
 	}
 }
 

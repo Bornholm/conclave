@@ -9,16 +9,16 @@ import (
 )
 
 func TestParseEnv(t *testing.T) {
-	data := "\uFEFF# comment\n\nA=1\nexport B = two words # comment\nC='single # kept \\n'\nD=\"line\\nnext \\\"q\\\" \\\\\" # comment\nE=\nF=a=b\nG= # comment\nH=#x\nI=\"C:\\Users\\bob\"\nA=last\n"
+	data := "\uFEFF# comment\n\nA=1\nexport B = two words # comment\nC='single # kept \\n'\nD=\"line\\nnext \\\"q\\\" \\\\\" # comment\nE=\nF=a=b\nG= # comment\nH=#x\nI=\"C:\\Users\\bob\"\nJ=token\t#note\nA=last\n"
 	vars, err := ParseEnv([]byte(data))
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []EnvVar{{"A", "last"}, {"B", "two words"}, {"C", "single # kept \\n"}, {"D", "line\nnext \"q\" \\"}, {"E", ""}, {"F", "a=b"}, {"G", ""}, {"H", "#x"}, {"I", `C:\Users\bob`}}
+	want := []EnvVar{{"A", "last"}, {"B", "two words"}, {"C", "single # kept \\n"}, {"D", "line\nnext \"q\" \\"}, {"E", ""}, {"F", "a=b"}, {"G", ""}, {"H", "#x"}, {"I", `C:\Users\bob`}, {"J", "token"}}
 	if !slices.Equal(vars, want) {
 		t.Errorf("got %q\nwant %q", vars, want)
 	}
-	for _, bad := range []string{"NOEQUALS", "1A=x", "A B=x", "A='open", "A=\"open", "A='x' y"} {
+	for _, bad := range []string{"NOEQUALS", "1A=x", "A B=x", "A='open", "A=\"open", "A='x' y", "A=a\x00b"} {
 		if _, err := ParseEnv([]byte("OK=1\n" + bad + "\n")); err == nil || !strings.Contains(err.Error(), "line 2") {
 			t.Errorf("%q: %v", bad, err)
 		}

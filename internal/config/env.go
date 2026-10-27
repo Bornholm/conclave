@@ -99,8 +99,8 @@ type EnvVar struct {
 // the key, blank lines and # comments. A value in single quotes is taken as
 // it is, one in double quotes understands \n, \r, \t, \" and \\ and keeps
 // any other backslash, and an unquoted one ends at a # that follows a
-// space. Variables are not expanded. A key
-// given twice keeps its last value.
+// space or a tab. Variables are not expanded, and a NUL byte, which no
+// environment can hold, is refused. A key given twice keeps its last value.
 func ParseEnv(data []byte) ([]EnvVar, error) {
 	var vars []EnvVar
 	index := map[string]int{}
@@ -123,6 +123,9 @@ func ParseEnv(data []byte) ([]EnvVar, error) {
 		value, err := parseEnvValue(raw)
 		if err != nil {
 			return nil, fmt.Errorf("line %d: %s: %w", n, key, err)
+		}
+		if strings.ContainsRune(value, 0) {
+			return nil, fmt.Errorf("line %d: %s: a NUL byte", n, key)
 		}
 		if i, ok := index[key]; ok {
 			vars[i].Value = value
@@ -180,8 +183,11 @@ func parseEnvValue(raw string) (string, error) {
 		}
 		return "", errors.New("unclosed quote")
 	}
-	if i := strings.Index(raw, " #"); i >= 0 {
-		raw = raw[:i]
+	for i := 1; i < len(raw); i++ {
+		if raw[i] == '#' && (raw[i-1] == ' ' || raw[i-1] == '\t') {
+			raw = raw[:i]
+			break
+		}
 	}
 	return strings.TrimSpace(raw), nil
 }

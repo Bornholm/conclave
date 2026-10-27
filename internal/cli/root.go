@@ -120,7 +120,7 @@ func logSources(logger *slog.Logger, cfg *config.Config) {
 	}
 	switch env := cfg.Env; {
 	case env.Ignored != nil:
-		logger.Warn("env file ignored: it does not parse", "file", env.File, "error", env.Ignored)
+		logger.Warn("env file ignored: it cannot be read or does not parse", "file", env.File, "error", env.Ignored)
 	case env.File != "":
 		logger.Info("environment loaded", "file", env.File, "set", env.Set, "kept", env.Kept)
 		if len(env.Refused) > 0 {
@@ -134,7 +134,7 @@ func logSources(logger *slog.Logger, cfg *config.Config) {
 func printEnv(w io.Writer, env config.EnvReport) {
 	switch {
 	case env.Ignored != nil:
-		fmt.Fprintf(w, "! %s ignored, it does not parse: %v\n", env.File, env.Ignored)
+		fmt.Fprintf(w, "! %s ignored, it cannot be read or does not parse: %v\n", env.File, env.Ignored)
 	case env.File != "":
 		fmt.Fprintf(w, "✓ environment from %s: set %s; already set %s\n", env.File, names(env.Set), names(env.Kept))
 		if len(env.Refused) > 0 {

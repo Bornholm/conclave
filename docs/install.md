@@ -30,7 +30,7 @@ On Arch Linux and its derivatives, `conclave-bin` packages the release binaries 
 yay -S conclave-bin
 ```
 
-`conclave` on the AUR is an unrelated game.
+`conclave` on the AUR is an unrelated game. `conclave-bin` conflicts with the `conclave` package the script installs on Arch: remove one before installing the other.
 
 ## With Go
 

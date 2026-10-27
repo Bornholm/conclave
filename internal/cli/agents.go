@@ -97,6 +97,7 @@ func staleCommands(a integration.Agent, path string) []string {
 	if _, err := os.Stat(path); err != nil {
 		return nil
 	}
+	// The commands are read, not run: the env file is not needed.
 	cfg, err := config.Load(path)
 	if err != nil {
 		return []string{fmt.Sprintf("agent commands not checked: %v", err)}
@@ -130,7 +131,7 @@ func runAgentsCheck(ctx context.Context, args []string, stdout, stderr io.Writer
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	cfg, err := config.Load(*configPath)
+	cfg, err := loadConfig(*configPath)
 	if err != nil {
 		return err
 	}
@@ -138,6 +139,7 @@ func runAgentsCheck(ctx context.Context, args []string, stdout, stderr io.Writer
 	for _, src := range cfg.Inherited() {
 		fmt.Fprintf(stdout, "✓ inherits %s\n", src)
 	}
+	printEnv(stdout, cfg.Env)
 	failed := 0
 	for _, a := range cfg.Agents {
 		path, err := agent.Check(a)

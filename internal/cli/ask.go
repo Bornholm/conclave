@@ -70,7 +70,7 @@ func runAsk(ctx context.Context, args []string, stdout, stderr io.Writer) error 
 	if err != nil {
 		return err
 	}
-	cfg, err := config.Load(resolved)
+	cfg, err := loadConfig(resolved)
 	if err != nil {
 		return err
 	}
@@ -105,7 +105,7 @@ func runAsk(ctx context.Context, args []string, stdout, stderr io.Writer) error 
 		return errors.New("no question: pass it as an argument, with --question, or on standard input")
 	}
 	logger := newLogger(stderr, *verbose)
-	logInherited(logger, cfg)
+	logSources(logger, cfg)
 	for _, w := range config.Warnings(cfg) {
 		logger.Warn(w)
 	}

@@ -20,6 +20,8 @@ conclave review 42 --since last --responses answers.txt > round3.md
 | a directory | that run directory |
 | a file | that `review.json` |
 
+A review of local commits (`conclave review feat/x`, see the [README](../README.md#use)) is measured the same way: `last` is then the most recent successful review of the same branch, or of the same range when one was given: a review of `HEAD~3..HEAD` is never taken for one of the whole branch, nor a review of a pull request for one of local commits. A branch is known by its name and a range by the names of its two ends, so after `git switch -c` or a review of a bare SHA, `last` finds nothing: name the previous run instead.
+
 The previous review must be of the same pull request, in the same repository: measured against another one's findings, every finding would come out fixed. The pull request's URL in the review and the repository in the run's manifest are checked, and `last` skips the runs of another repository. A `review.json` outside its run directory has only its URL to go by: it is refused without one, or when the forge gives the pull request none to compare, as Redmine does. Pass its run directory instead. A run that failed has no `final/review.json`, and `last` skips it.
 
 ## What the agents get

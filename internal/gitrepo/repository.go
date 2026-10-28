@@ -245,6 +245,136 @@ func (g *Git) DiffNames(ctx context.Context, baseSHA, headSHA string) ([]string,
 	return strings.Fields(out), nil
 }
 
+// ChangedFiles lists the files changed between two commits, with their
+// status and line counts, as a forge lists those of a pull request. A binary
+// file counts no lines.
+func (g *Git) ChangedFiles(ctx context.Context, baseSHA, headSHA string) ([]domain.ChangedFile, error) {
+	out, err := g.run(ctx, "diff", "--name-status", "-z", "--find-renames", "--no-ext-diff", baseSHA, headSHA)
+	if err != nil {
+		return nil, err
+	}
+	var files []domain.ChangedFile
+	fields := strings.Split(strings.TrimSuffix(out, "\x00"), "\x00")
+	for i := 0; i < len(fields) && fields[i] != ""; {
+		status := fields[i]
+		f := domain.ChangedFile{Status: fileStatus(status)}
+		if (status[0] == 'R' || status[0] == 'C') && i+2 < len(fields) {
+			f.PreviousPath, f.Path = fields[i+1], fields[i+2]
+			i += 3
+		} else if i+1 < len(fields) {
+			f.Path = fields[i+1]
+			i += 2
+		} else {
+			return nil, fmt.Errorf("git diff --name-status: truncated entry %q", status)
+		}
+		files = append(files, f)
+	}
+	counts, err := g.lineCounts(ctx, baseSHA, headSHA)
+	if err != nil {
+		return nil, err
+	}
+	for i := range files {
+		c := counts[files[i].Path]
+		files[i].Additions, files[i].Deletions = c[0], c[1]
+	}
+	return files, nil
+}
+
+// lineCounts maps each path changed between two commits to its added and
+// deleted line counts.
+func (g *Git) lineCounts(ctx context.Context, baseSHA, headSHA string) (map[string][2]int, error) {
+	out, err := g.run(ctx, "diff", "--numstat", "-z", "--find-renames", "--no-ext-diff", baseSHA, headSHA)
+	if err != nil {
+		return nil, err
+	}
+	counts := map[string][2]int{}
+	fields := strings.Split(strings.TrimSuffix(out, "\x00"), "\x00")
+	for i := 0; i < len(fields) && fields[i] != ""; i++ {
+		parts := strings.SplitN(fields[i], "\t", 3)
+		if len(parts) != 3 {
+			return nil, fmt.Errorf("git diff --numstat: unexpected entry %q", fields[i])
+		}
+		path := parts[2]
+		// A rename leaves the path empty and gives the old and new paths as
+		// the next two fields.
+		if path == "" && i+2 < len(fields) {
+			path = fields[i+2]
+			i += 2
+		}
+		// "-" stands for a binary file: no line counts.
+		add, _ := strconv.Atoi(parts[0])
+		del, _ := strconv.Atoi(parts[1])
+		counts[path] = [2]int{add, del}
+	}
+	return counts, nil
+}
+
+func fileStatus(code string) string {
+	switch code[0] {
+	case 'A':
+		return domain.FileAdded
+	case 'M':
+		return domain.FileModified
+	case 'D':
+		return domain.FileDeleted
+	case 'R':
+		return domain.FileRenamed
+	case 'C':
+		return domain.FileCopied
+	}
+	return domain.FileChanged
+}
+
+// Log returns the commits reachable from headSHA but not from baseSHA, newest
+// first, with their author, date and full message.
+func (g *Git) Log(ctx context.Context, baseSHA, headSHA string) (string, error) {
+	return g.run(ctx, "log", "--no-color", "--no-decorate", "--format=medium", baseSHA+".."+headSHA)
+}
+
+// CommitSubjects returns the subject of each commit reachable from headSHA
+// but not from baseSHA, newest first.
+func (g *Git) CommitSubjects(ctx context.Context, baseSHA, headSHA string) ([]string, error) {
+	out, err := g.run(ctx, "log", "--no-color", "--format=%s", baseSHA+".."+headSHA)
+	if err != nil {
+		return nil, err
+	}
+	out = strings.TrimSuffix(out, "\n")
+	if out == "" {
+		return nil, nil
+	}
+	return strings.Split(out, "\n"), nil
+}
+
+// DefaultBranch returns the branch a local review is measured against when
+// none is given: the one the remote's HEAD points to, else a local main or
+// master, else the remote's.
+func (g *Git) DefaultBranch(ctx context.Context, remote string) (string, error) {
+	if remote != "" {
+		if out, err := g.run(ctx, "symbolic-ref", "--quiet", "--short", "refs/remotes/"+remote+"/HEAD"); err == nil {
+			if b := strings.TrimSpace(out); b != "" {
+				return b, nil
+			}
+		}
+	}
+	candidates := []string{"refs/heads/main", "refs/heads/master"}
+	if remote != "" {
+		candidates = append(candidates, "refs/remotes/"+remote+"/main", "refs/remotes/"+remote+"/master")
+	}
+	for _, ref := range candidates {
+		if _, err := g.run(ctx, "rev-parse", "--verify", "--quiet", ref+"^{commit}"); err == nil {
+			return strings.TrimPrefix(strings.TrimPrefix(ref, "refs/heads/"), "refs/remotes/"), nil
+		}
+	}
+	return "", errors.New("no default branch found: the remote names no HEAD and there is no main or master branch")
+}
+
+// HasUncommittedChanges reports whether the work tree or the index differ
+// from HEAD, untracked files aside.
+func (g *Git) HasUncommittedChanges(ctx context.Context) bool {
+	out, err := g.run(ctx, "status", "--porcelain", "--untracked-files=no")
+	return err == nil && strings.TrimSpace(out) != ""
+}
+
 // CreateWorktree adds a detached worktree at path checked out at sha.
 func (g *Git) CreateWorktree(ctx context.Context, path, sha string) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {

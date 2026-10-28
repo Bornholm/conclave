@@ -26,6 +26,18 @@ conclave review 123 --since last > review.md   # after fixes: what was fixed, wh
 
 Only the review goes to `stdout`. Logs go to `stderr`.
 
+A branch can be reviewed before it has a pull request. Without a number, `conclave review` reviews local commits: the forge is not contacted, the commit messages stand in for the description, and there is no discussion or linked issue to read.
+
+```bash
+conclave review                    # HEAD against the default branch
+conclave review feat/cache         # a branch against the default branch
+conclave review main..feat/cache   # against an explicit base
+conclave review HEAD~3..HEAD       # the last three commits only
+conclave review --since last       # after fixes, against the last review of the same branch or range
+```
+
+The default branch is the one the remote's `HEAD` names, else `main` or `master`. A range is reviewed from the merge base of its two ends, as a pull request would be. Uncommitted changes are not reviewed: Conclave warns when there are some.
+
 Or let Conclave watch the repository. `conclave loop` reviews the open pull requests nobody has reviewed yet, submits the review on the forge in the pull request's language, and runs another round on each push until it approves or the rounds run out.
 
 ```bash

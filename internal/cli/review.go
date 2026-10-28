@@ -25,12 +25,23 @@ func runReview(ctx context.Context, args []string, stdout, stderr io.Writer) err
 	if err != nil {
 		return err
 	}
-	if len(positional) != 1 {
-		return errors.New("usage: conclave review <pull-request-number>")
+	if len(positional) > 1 {
+		return errors.New("usage: conclave review [<pull-request-number> | <revision> | <base>..<head>]")
 	}
-	number, err := strconv.ParseInt(positional[0], 10, 64)
-	if err != nil || number <= 0 {
-		return fmt.Errorf("invalid pull request number %q", positional[0])
+	// A number is a pull request. Anything else, or nothing, is a review of
+	// local commits: a revision against the default branch, or a range.
+	var number int64
+	var revision string
+	if len(positional) == 1 {
+		n, err := strconv.ParseInt(positional[0], 10, 64)
+		switch {
+		case err == nil && n <= 0:
+			return fmt.Errorf("invalid pull request number %q", positional[0])
+		case err == nil:
+			number = n
+		default:
+			revision = positional[0]
+		}
 	}
 	if *responses != "" && *since == "" {
 		return errors.New("--responses answers a previous review: it needs --since")
@@ -59,7 +70,7 @@ func runReview(ctx context.Context, args []string, stdout, stderr io.Writer) err
 		logger.Warn(w)
 	}
 	a := &app.App{Config: cfg, Logger: logger}
-	res, err := a.Review(ctx, app.ReviewRequest{Number: number, KeepWorktrees: *keep, Since: *since, Responses: answers})
+	res, err := a.Review(ctx, app.ReviewRequest{Number: number, Revision: revision, KeepWorktrees: *keep, Since: *since, Responses: answers})
 	if err != nil {
 		if res != nil && res.RunDir != "" {
 			fmt.Fprintln(stderr, "artifacts:", res.RunDir)

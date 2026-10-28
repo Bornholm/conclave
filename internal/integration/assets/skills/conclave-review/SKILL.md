@@ -1,6 +1,6 @@
 ---
 name: conclave-review
-description: Run a Conclave multi-agent review on a pull request, verify its findings in the tree, and report or post them; relaunch it after fixes as an incremental review that says what was fixed, what remains and what is new. Use when asked to review a pull request with Conclave, or to relaunch a review.
+description: Run a Conclave multi-agent review on a pull request or on local commits, verify its findings in the tree, and report or post them; relaunch it after fixes as an incremental review that says what was fixed, what remains and what is new. Use when asked to review a pull request with Conclave, or to relaunch a review.
 ---
 
 # Conclave review loop
@@ -42,6 +42,16 @@ agent marked `disabled: true` is dropped. The log names each inherited file
 ("configuration inherited"), and `conclave config validate` lists them and
 says what is missing. The report goes to stdout, logs
 to stderr, artifacts to `.git/conclave/runs/<run-id>/`.
+
+### Local commits, before a pull request
+
+Without a number, `conclave review` reviews local commits and does not contact
+the forge: `conclave review` (HEAD against the default branch),
+`conclave review feat/x`, `conclave review main..feat/x` or
+`conclave review HEAD~3..HEAD`. Pass the revision where the command above
+passes `N`. Commit first: uncommitted changes are not reviewed. The log line
+`reviewing local commits ... base=<base> head=<head>` replaces the pull request
+fetch, and the revision check below does not apply.
 
 ## Wait on the sentinel
 

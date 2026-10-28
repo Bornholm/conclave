@@ -52,7 +52,18 @@ Give extra scrutiny to the following areas. They are priorities, not a
 boundary: report any impactful problem you find outside of them as well.
 {{range .Specialties}}- {{.}}
 {{end}}{{end}}
-PULL REQUEST
+{{if .PR.Local}}LOCAL COMMITS
+There is no pull request: the changes are local commits, reviewed as one
+would be. Their messages stand in for its description, and there is no
+discussion. Read "pull request" below as these commits.
+Base: {{.PR.Base.Branch}} ({{.PR.Base.SHA}})
+Head: {{.PR.Head.Branch}} ({{.PR.Head.SHA}})
+Merge base: {{.MergeBaseSHA}}
+
+--- BEGIN UNTRUSTED COMMIT MESSAGES (newest first) ---
+{{.PR.Description}}
+--- END UNTRUSTED COMMIT MESSAGES ---
+{{else}}PULL REQUEST
 Number: #{{.PR.Number}}
 Title: {{.PR.Title}}
 Author: {{.PR.Author}}
@@ -65,7 +76,7 @@ Merge base: {{.MergeBaseSHA}}
 --- BEGIN UNTRUSTED PULL REQUEST DESCRIPTION ---
 {{.PR.Description}}
 --- END UNTRUSTED PULL REQUEST DESCRIPTION ---
-{{if .IncludeFiles}}
+{{end}}{{if .IncludeFiles}}
 CHANGED FILES ({{len .PR.ChangedFiles}})
 {{range .PR.ChangedFiles}}- {{.Status}} {{.Path}}{{if .PreviousPath}} (from {{.PreviousPath}}){{end}} (+{{.Additions}} -{{.Deletions}})
 {{end}}{{end}}

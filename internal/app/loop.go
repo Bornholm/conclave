@@ -75,6 +75,10 @@ func parseLoopMark(body string) (loopMark, bool) {
 // so that it does not look like the loop missed the push.
 const loopSkipReviewed = "already manually reviewed"
 
+// loopSkipDraft is why the loop leaves alone a draft, logged too: the pull
+// request is open, and only the log tells why the loop waits on it.
+const loopSkipDraft = "draft"
+
 // loopDecision is what the loop does with one pull request.
 type loopDecision struct {
 	// Skip says why the pull request is left alone, empty when it is
@@ -101,7 +105,7 @@ func decideLoop(pr domain.PullRequest, me string, reviews []domain.ForgeReview, 
 		return loopDecision{Skip: "opened by the authenticated user"}
 	}
 	if pr.State == "draft" {
-		return loopDecision{Skip: "draft"}
+		return loopDecision{Skip: loopSkipDraft}
 	}
 	var last *loopMark
 	var lastAt string
@@ -190,7 +194,7 @@ func (a *App) Loop(ctx context.Context, req LoopRequest) error {
 	}
 	l := &loop{app: a, forge: f, reviewer: rv, repo: repo, me: me, runsBase: runsBase, req: req,
 		failures: map[int64]loopFailure{}, unsent: map[int64]loopSubmission{}, skipped: map[int64]string{},
-		include: map[int64]bool{}, unheeded: map[int64]bool{}}
+		include: map[int64]bool{}, unheeded: map[int64]string{}}
 	for _, n := range req.Include {
 		l.include[n] = true
 	}
@@ -226,11 +230,13 @@ type loop struct {
 	// include is the pull requests of --include the loop has not taken up
 	// yet: once it has, its mark is what it follows them by.
 	include map[int64]bool
-	// unheeded is the included pull requests already reported as not taken
-	// up, reported once rather than on every pass.
-	unheeded map[int64]bool
-	// skipped is the head on which each pull request reviewed by hand was
-	// last logged: it is logged once per head, not on every pass.
+	// unheeded is the reason each included pull request was last reported
+	// as not taken up for: it is reported again only when the reason
+	// changes, not on every pass.
+	unheeded map[int64]string
+	// skipped is the head and the reason with which each pull request
+	// reviewed by hand or in draft was last logged: it is logged once per
+	// head and reason, not on every pass.
 	skipped map[int64]string
 }
 
@@ -266,17 +272,22 @@ func (l *loop) pass(ctx context.Context) error {
 			}
 		}
 		d := decideLoop(pr, l.me, reviews, l.app.Config.Loop.MaxRounds, l.include[pr.Number])
+		// An included pull request the loop already follows, with no new
+		// head for instance, is reported like the others it leaves alone.
+		if d.Skip != "" && l.include[pr.Number] {
+			l.unheed(pr.Number, d.Skip)
+			if d.Followed {
+				delete(l.include, pr.Number)
+			}
+			continue
+		}
 		if d.Followed {
 			delete(l.include, pr.Number)
 		}
-		if d.Skip != "" && l.include[pr.Number] {
-			l.unheed(pr.Number, d.Skip)
-			continue
-		}
 		if d.Skip != "" {
 			level := slog.LevelDebug
-			if d.Skip == loopSkipReviewed && l.skipped[pr.Number] != pr.Head.SHA {
-				l.skipped[pr.Number] = pr.Head.SHA
+			if seen := pr.Head.SHA + " " + d.Skip; (d.Skip == loopSkipReviewed || d.Skip == loopSkipDraft) && l.skipped[pr.Number] != seen {
+				l.skipped[pr.Number] = seen
 				level = slog.LevelInfo
 			}
 			log.Log(ctx, level, "pull request skipped", "number", pr.Number, "reason", d.Skip)
@@ -323,13 +334,14 @@ func (l *loop) pass(ctx context.Context) error {
 	return nil
 }
 
-// unheed reports once that an included pull request is not taken up: the
-// flag asked for it, so it is said without --verbose.
+// unheed reports that an included pull request is not taken up, once until
+// the reason changes: the flag asked for it, so it is said without
+// --verbose.
 func (l *loop) unheed(number int64, reason string) {
-	if l.unheeded[number] {
+	if l.unheeded[number] == reason {
 		return
 	}
-	l.unheeded[number] = true
+	l.unheeded[number] = reason
 	l.app.logger().Warn("included pull request not taken up", "number", number, "reason", reason)
 }
 
@@ -375,7 +387,7 @@ func (l *loop) review(ctx context.Context, pr domain.PullRequest, d loopDecision
 	a := l.app
 	cfg := a.Config
 	log := a.logger()
-	req := ReviewRequest{Number: pr.Number}
+	req := ReviewRequest{Number: pr.Number, RequestChangesFrom: domain.Severity(cfg.Loop.RequestChangesFrom)}
 	if d.Previous != nil {
 		if l.hasRun(d.Previous.Run) {
 			req.Since = d.Previous.Run
@@ -391,7 +403,7 @@ func (l *loop) review(ctx context.Context, pr domain.PullRequest, d loopDecision
 	}
 	review := res.Review
 	body := ""
-	comment, err := a.WriteComment(ctx, CommentRequest{Result: res, PR: &pr, Round: d.Round, MaxRounds: cfg.Loop.MaxRounds})
+	comment, err := a.WriteComment(ctx, CommentRequest{Result: res, PR: &pr, Round: d.Round, MaxRounds: cfg.Loop.MaxRounds, RequestChangesFrom: req.RequestChangesFrom})
 	if err != nil {
 		if ctx.Err() != nil {
 			return err

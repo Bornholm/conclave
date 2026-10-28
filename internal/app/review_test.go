@@ -1741,3 +1741,33 @@ func TestLeadPromptLeavesTheExcerptsOutOverTheArgumentLimit(t *testing.T) {
 		t.Errorf("stdin: dropped=%v err=%v", dropped, err)
 	}
 }
+
+func TestRequestChangesFrom(t *testing.T) {
+	review := func(v domain.Verdict, findings ...domain.ConsolidatedFinding) *domain.ConsolidatedReview {
+		return &domain.ConsolidatedReview{Verdict: v, Findings: findings}
+	}
+	low := domain.ConsolidatedFinding{Title: "t", Severity: domain.SeverityLow}
+	info := domain.ConsolidatedFinding{Title: "i", Severity: domain.SeverityInfo}
+	outLow := low
+	outLow.OutOfScope = true
+	for _, c := range []struct {
+		name   string
+		review *domain.ConsolidatedReview
+		from   domain.Severity
+		want   domain.Verdict
+	}{
+		{name: "unset", review: review(domain.VerdictComment, low), want: domain.VerdictComment},
+		{name: "unknown", review: review(domain.VerdictComment, info), from: "bogus", want: domain.VerdictComment},
+		{name: "info", review: review(domain.VerdictComment, info), from: domain.SeverityInfo, want: domain.VerdictComment},
+		{name: "at the threshold", review: review(domain.VerdictComment, low), from: domain.SeverityLow, want: domain.VerdictRequestChanges},
+		{name: "an approval too", review: review(domain.VerdictApprove, info, low), from: domain.SeverityLow, want: domain.VerdictRequestChanges},
+		{name: "under the threshold", review: review(domain.VerdictComment, low), from: domain.SeverityMedium, want: domain.VerdictComment},
+		{name: "info only", review: review(domain.VerdictApprove, info), from: domain.SeverityLow, want: domain.VerdictApprove},
+		{name: "out of scope", review: review(domain.VerdictComment, outLow), from: domain.SeverityLow, want: domain.VerdictComment},
+	} {
+		w := requestChangesFrom(c.review, c.from)
+		if c.review.Verdict != c.want || (w != "") != (c.want == domain.VerdictRequestChanges && c.name != "unset") {
+			t.Errorf("%s: verdict %s, warning %q, want %s", c.name, c.review.Verdict, w, c.want)
+		}
+	}
+}

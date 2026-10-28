@@ -73,6 +73,7 @@ func TestDecodeRejects(t *testing.T) {
 		"planner twice":       {strings.Replace(validYAML, "review:", "plan:\n  planners: [rev, rev]\nreview:", 1), `plan.planners: "rev" is listed twice`},
 		"unknown writer":      {strings.Replace(validYAML, "review:", "loop:\n  writer: nope\nreview:", 1), `loop.writer: "nope" is not a configured agent`},
 		"tiny comment cap":    {strings.Replace(validYAML, "review:", "loop:\n  max_comment_bytes: 100\nreview:", 1), "loop.max_comment_bytes: must be at least 1024"},
+		"info threshold":      {strings.Replace(validYAML, "review:", "loop:\n  request_changes_from: info\nreview:", 1), `loop.request_changes_from: "info" is not one of critical, high, medium, low`},
 		"negative rounds":     {strings.Replace(validYAML, "review:", "loop:\n  max_rounds: -1\nreview:", 1), "loop.max_rounds"},
 		"empty":               {"", "empty document"},
 	}
@@ -343,7 +344,8 @@ func TestLoopWriter(t *testing.T) {
 	if w := cfg.LoopWriter(); w.ID != "lead" {
 		t.Errorf("default writer: %s", w.ID)
 	}
-	if cfg.Loop.Interval != DefaultLoopInterval || cfg.Loop.MaxRounds != DefaultLoopMaxRounds || cfg.Loop.MaxCommentBytes != DefaultLoopMaxCommentBytes {
+	if cfg.Loop.Interval != DefaultLoopInterval || cfg.Loop.MaxRounds != DefaultLoopMaxRounds || cfg.Loop.MaxCommentBytes != DefaultLoopMaxCommentBytes ||
+		cfg.Loop.RequestChangesFrom != DefaultLoopRequestChangesFrom {
 		t.Errorf("defaults: %+v", cfg.Loop)
 	}
 	cfg.Loop.Writer = "rev"

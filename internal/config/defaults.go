@@ -41,9 +41,11 @@ const (
 	DefaultMaxAnswerKeyPoint = 10
 	DefaultMaxAnswerRefs     = 50
 
-	DefaultLoopInterval        = 10 * time.Minute
+	DefaultLoopInterval        = 5 * time.Minute
 	DefaultLoopMaxRounds       = 3
 	DefaultLoopMaxCommentBytes = 60 << 10
+	// DefaultLoopRequestChangesFrom lets only informational findings pass.
+	DefaultLoopRequestChangesFrom = "low"
 	// MinLoopCommentBytes leaves a comment room past the loop's mark.
 	MinLoopCommentBytes = 1 << 10
 
@@ -165,6 +167,9 @@ func applyDefaults(cfg *Config) {
 	}
 	if cfg.Loop.MaxCommentBytes == 0 {
 		cfg.Loop.MaxCommentBytes = DefaultLoopMaxCommentBytes
+	}
+	if cfg.Loop.RequestChangesFrom == "" {
+		cfg.Loop.RequestChangesFrom = DefaultLoopRequestChangesFrom
 	}
 	if cfg.Output.Format == "" {
 		cfg.Output.Format = FormatMarkdown

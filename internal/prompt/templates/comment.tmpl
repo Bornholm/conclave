@@ -27,8 +27,8 @@ comment before you answer. Whether or not it is:
   paragraph.
 - Each finding the author has to act on gets its file and line, the
   mechanism (what goes wrong, with which input or state), and the fix.
-- Low and informational findings go in one short list at the end, one line
-  each.
+- {{if eq .KeepFrom "low"}}Informational findings{{else}}Findings rated below {{.KeepFrom}}, and informational ones,{{end}}
+  go in one short list at the end, one line each.
 - Leave out how the review was produced: no agent ids, no models, no counts
   of reviewers, no warnings about agents. Keep a warning only when it says
   the review is incomplete, in one sentence.
@@ -38,10 +38,10 @@ CONTENT
   sentence; list what remains, if anything, as optional.{{else if eq .Verdict "request_changes"}}changes are requested. The first
   sentence says what blocks the merge.{{else}}remarks, without blocking the merge. The first
   sentence says so.{{end}} Do not change the verdict.
-- Do not add findings and do not drop one the review rates medium or above.
+- Do not add findings and do not drop one the review rates {{.KeepFrom}} or above.
   Do not soften or harden a severity. Write each file path exactly as the
-  review does: a comment that leaves out the path of a finding rated medium
-  or above is rejected.
+  review does: a comment that leaves out the path of a finding
+  rated {{.KeepFrom}} or above is rejected.
 {{- if .Incremental}}
 - This review follows up on the previous one. Start with what the author
   fixed since, in one or two sentences: they should not have to guess

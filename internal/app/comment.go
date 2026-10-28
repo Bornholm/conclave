@@ -27,6 +27,9 @@ type CommentRequest struct {
 	// language of the comment.
 	PR               *domain.PullRequest
 	Round, MaxRounds int
+	// RequestChangesFrom is the threshold the review's verdict was raised
+	// from, if any: the comment keeps every finding at or above it.
+	RequestChangesFrom domain.Severity
 }
 
 // Comment is what a writer made of a review.
@@ -78,7 +81,7 @@ func (a *App) WriteComment(ctx context.Context, req CommentRequest) (*Comment, e
 	p, err := prompt.Comment(prompt.CommentInput{
 		AgentID: writer.ID, Worktree: workdir, PR: req.PR, Review: md.String(),
 		Verdict: review.Verdict, Round: req.Round, MaxRounds: req.MaxRounds,
-		Incremental: review.Meta.Since != nil, MaxBytes: commentBytes(cfg),
+		Incremental: review.Meta.Since != nil, MaxBytes: commentBytes(cfg), KeepFrom: keepFrom(req.RequestChangesFrom),
 	})
 	if err != nil {
 		return nil, err
@@ -106,13 +109,13 @@ func (a *App) WriteComment(ctx context.Context, req CommentRequest) (*Comment, e
 	if err != nil {
 		return nil, fmt.Errorf("writer %s: invalid comment: %w", writer.ID, err)
 	}
-	missing := missingFindings(review, rep.Body)
+	missing := missingFindings(review, rep.Body, keepFrom(req.RequestChangesFrom))
 	warnings = append(ex.Warnings, warnings...)
 	// final/comment.md is what the author reads, which the loop writes once
 	// it knows: this comment, or the review it falls back to.
 	if len(missing) > 0 {
 		_ = store.Write("final", "comment-rejected.md", []byte(rep.Body+"\n"))
-		return nil, fmt.Errorf("writer %s: the comment leaves out the finding(s) at %s, rated medium or above", writer.ID, strings.Join(missing, ", "))
+		return nil, fmt.Errorf("writer %s: the comment leaves out the finding(s) at %s, rated %s or above", writer.ID, strings.Join(missing, ", "), keepFrom(req.RequestChangesFrom))
 	}
 	_ = store.WriteJSON("final", "comment.json", rep)
 	log.Info("writer finished", "agent", writer.ID, "language", rep.Language, "bytes", len(rep.Body), "duration", res.Duration.Round(time.Millisecond))
@@ -129,15 +132,26 @@ const loopMarkRoom = 256
 // loop.max_comment_bytes.
 func commentBytes(cfg *config.Config) int { return cfg.Loop.MaxCommentBytes - loopMarkRoom }
 
-// missingFindings returns the files of the findings rated medium or above,
+// keepFrom is the lowest severity of a finding the comment must keep:
+// medium, or the threshold the verdict was raised from when it is lower,
+// since a finding that requests changes is one the author has to be told
+// about.
+func keepFrom(from domain.Severity) domain.Severity {
+	if from.Valid() && from.Rank() > domain.SeverityMedium.Rank() && from != domain.SeverityInfo {
+		return from
+	}
+	return domain.SeverityMedium
+}
+
+// missingFindings returns the files of the findings rated from or above,
 // out-of-scope ones aside, that a comment does not name. The writer is told to keep them all, and a
 // comment published under the user's account that silently drops one says
 // less than the decision it comes with. The file path is the one part of a
 // finding no translation changes.
-func missingFindings(review *domain.ConsolidatedReview, body string) []string {
+func missingFindings(review *domain.ConsolidatedReview, body string, from domain.Severity) []string {
 	var missing []string
 	for _, f := range review.Findings {
-		if f.Severity.Rank() > domain.SeverityMedium.Rank() || f.OutOfScope || f.File == "" || strings.Contains(body, f.File) || slices.Contains(missing, f.File) {
+		if f.Severity.Rank() > from.Rank() || f.OutOfScope || f.File == "" || strings.Contains(body, f.File) || slices.Contains(missing, f.File) {
 			continue
 		}
 		missing = append(missing, f.File)

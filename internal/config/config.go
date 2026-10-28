@@ -128,6 +128,11 @@ type LoopConfig struct {
 	// MaxCommentBytes caps the review body submitted, the loop's mark
 	// included, under the forges' own limit on a review body.
 	MaxCommentBytes int `yaml:"max_comment_bytes"`
+	// RequestChangesFrom is the lowest severity of an in-scope finding that
+	// makes the loop request changes, whatever verdict the lead gave: a
+	// comment does not block the merge, and the loop only comes back on a
+	// new head.
+	RequestChangesFrom string `yaml:"request_changes_from"`
 }
 
 // AskLimits bound an ask run.

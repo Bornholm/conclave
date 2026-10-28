@@ -236,7 +236,7 @@ func runs(t *testing.T, a *App) int {
 }
 
 func newLoop(a *App, f *fakeForge) *loop {
-	return &loop{app: a, forge: f, reviewer: f, me: loopUser, runsBase: a.RunsBase, failures: map[int64]loopFailure{}, unsent: map[int64]loopSubmission{}, skipped: map[int64]string{}, include: map[int64]bool{}, unheeded: map[int64]bool{}}
+	return &loop{app: a, forge: f, reviewer: f, me: loopUser, runsBase: a.RunsBase, failures: map[int64]loopFailure{}, unsent: map[int64]loopSubmission{}, skipped: map[int64]string{}, include: map[int64]bool{}, unheeded: map[int64]string{}}
 }
 
 func TestLoopRetriesASubmissionWithoutReviewingAgain(t *testing.T) {
@@ -426,11 +426,15 @@ func TestMissingFindings(t *testing.T) {
 		{Severity: domain.SeverityLow, File: "c.go"},
 		{Severity: domain.SeverityCritical, File: "d.go", OutOfScope: true},
 	}}
-	if got := missingFindings(review, "Voir a.go:3."); len(got) != 1 || got[0] != "b.go" {
+	if got := missingFindings(review, "Voir a.go:3.", domain.SeverityMedium); len(got) != 1 || got[0] != "b.go" {
 		t.Errorf("missing: %v", got)
 	}
-	if got := missingFindings(review, "Voir b.go."); len(got) != 1 || got[0] != "a.go" {
+	if got := missingFindings(review, "Voir b.go.", domain.SeverityMedium); len(got) != 1 || got[0] != "a.go" {
 		t.Errorf("a high finding left out: %v", got)
+	}
+	// A low finding requests changes from low: the comment keeps it too.
+	if got := missingFindings(review, "Voir a.go, b.go.", domain.SeverityLow); len(got) != 1 || got[0] != "c.go" {
+		t.Errorf("a low finding left out: %v", got)
 	}
 }
 
@@ -631,5 +635,93 @@ func TestLoopKeepsTheIncludeUntilTheReviewIsSubmitted(t *testing.T) {
 	}
 	if len(f.reviews[7]) != 2 || l.include[7] {
 		t.Errorf("the new head was not taken up, or the include not spent: %+v", f.reviews[7])
+	}
+}
+
+func TestLoopIncludedPullRequestAlreadyFollowedIsReported(t *testing.T) {
+	a, f, _ := newLoopApp(t, agentCfg(t, "r1", config.RoleReviewer, "valid"), agentCfg(t, "lead", config.RoleLead, "valid"))
+	mark := loopMark{Round: 1, Head: f.pr.Head.SHA, Run: "run", Verdict: domain.VerdictRequestChanges}
+	f.reviews[7] = []domain.ForgeReview{{Author: loopUser, Body: "Fix it.\n\n" + mark.String()}}
+	var logs bytes.Buffer
+	a.Logger = slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	l := newLoop(a, f)
+	l.include[7] = true
+	// A draft first: the include is not spent, and the reason is reported.
+	f.pr.State = "draft"
+	if err := l.pass(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	f.pr.State = "open"
+	for range 2 {
+		if err := l.pass(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if n := strings.Count(logs.String(), `level=WARN msg="included pull request not taken up" number=7 reason=draft`); n != 1 {
+		t.Errorf("an included draft reported %d times, want 1:\n%s", n, logs.String())
+	}
+	if n := strings.Count(logs.String(), `level=WARN msg="included pull request not taken up" number=7 reason="no change since the last round"`); n != 1 {
+		t.Errorf("an included pull request already followed reported %d times, want 1:\n%s", n, logs.String())
+	}
+	if l.include[7] || runs(t, a) != 0 {
+		t.Errorf("include=%v, %d runs", l.include[7], runs(t, a))
+	}
+}
+
+func TestLoopRequestsChangesFromTheConfiguredSeverity(t *testing.T) {
+	for _, c := range []struct {
+		from string
+		want domain.Verdict
+	}{
+		{from: "", want: domain.VerdictRequestChanges},
+		{from: "low", want: domain.VerdictRequestChanges},
+		{from: "medium", want: domain.VerdictComment},
+	} {
+		t.Run(c.from, func(t *testing.T) {
+			a, f, _ := newLoopApp(t, agentCfg(t, "r1", config.RoleReviewer, "valid"), agentCfg(t, "lead", config.RoleLead, "lead-low"))
+			// Empty, the default applies.
+			if c.from != "" {
+				a.Config.Loop.RequestChangesFrom = c.from
+			}
+			if err := a.Loop(context.Background(), LoopRequest{Once: true}); err != nil {
+				t.Fatal(err)
+			}
+			rv := f.reviews[7][0]
+			m, _ := parseLoopMark(rv.Body)
+			if rv.State != string(c.want) || m.Verdict != c.want || !strings.Contains(rv.Body, "Verdict "+string(c.want)) {
+				t.Errorf("state %s, mark %s, body %q, want %s", rv.State, m.Verdict, rv.Body, c.want)
+			}
+		})
+	}
+}
+
+func TestLoopLogsADraftOncePerHead(t *testing.T) {
+	a, f, dir := newLoopApp(t, agentCfg(t, "r1", config.RoleReviewer, "valid"), agentCfg(t, "lead", config.RoleLead, "valid"))
+	f.pr.State = "draft"
+	var logs bytes.Buffer
+	a.Logger = slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	ctx := context.Background()
+	l := newLoop(a, f)
+	logged := func(level string) int {
+		return strings.Count(logs.String(), "level="+level+` msg="pull request skipped" number=7 reason=`+loopSkipDraft)
+	}
+	for range 2 {
+		if err := l.pass(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if info, debug := logged("INFO"), logged("DEBUG"); info != 1 || debug != 1 {
+		t.Fatalf("on the same head: %d at Info, %d at Debug, want 1 and 1", info, debug)
+	}
+	advanceHead(t, a, dir)
+	f.pr.State = "draft"
+	if err := l.pass(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if info := logged("INFO"); info != 2 {
+		t.Errorf("after a new head: %d at Info, want 2", info)
+	}
+	if runs(t, a) != 0 {
+		t.Errorf("a draft was reviewed")
 	}
 }

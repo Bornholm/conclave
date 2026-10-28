@@ -129,12 +129,15 @@ ask:
 # one: a new round on each new head, until it approves or has run max_rounds.
 # The token needs write access to the pull requests.
 loop:
-  interval: 10m             # time between two passes
+  interval: 5m              # time between two passes
   max_rounds: 3             # reviews a pull request gets at most
   # The agent that turns the review into the comment published, in the pull
   # request's language. Empty means the lead.
   writer: ""
   max_comment_bytes: 61440  # under the forges' limit on a review body
+  # The lowest severity of an in-scope finding that makes the loop request
+  # changes, whatever the lead's verdict: critical | high | medium | low.
+  request_changes_from: low
 
 output:
   format: markdown          # markdown | json

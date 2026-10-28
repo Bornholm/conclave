@@ -147,9 +147,9 @@ An ask run reads no forge, so a configuration used only for questions never need
 
 ## Loop
 
-`loop.interval` is the time between two passes of `conclave loop`, 10 minutes by default. A pass that reviews something lasts as long as the reviews, and the next one starts `interval` after it ends. `loop.max_rounds`, 3 by default, is how many reviews a pull request gets at most. `--interval` and `--max-rounds` override both for one run.
+`loop.interval` is the time between two passes of `conclave loop`, 5 minutes by default. A pass that reviews something lasts as long as the reviews, and the next one starts `interval` after it ends. `loop.max_rounds`, 3 by default, is how many reviews a pull request gets at most. `--interval` and `--max-rounds` override both for one run.
 
-`loop.writer` names the agent that turns a review into the comment published, any configured agent, the lead by default. A cheaper model does the job: the writing is a translation and a cut, not a review. `loop.max_comment_bytes` caps the review body at 60 KiB, the loop's mark included, under GitHub's limit on a review body. It cannot go under 1 KiB. See [Loop](loop.md).
+`loop.writer` names the agent that turns a review into the comment published, any configured agent, the lead by default. A cheaper model does the job: the writing is a translation and a cut, not a review. `loop.max_comment_bytes` caps the review body at 60 KiB, the loop's mark included, under GitHub's limit on a review body. It cannot go under 1 KiB. `loop.request_changes_from` is the lowest severity of an in-scope finding that makes the loop request changes, whatever the lead's verdict: `critical`, `high`, `medium` or `low`, the default. See [Loop](loop.md).
 
 ## Agent contract
 

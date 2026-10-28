@@ -3,6 +3,7 @@ package app
 import (
 	"bytes"
 	"context"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -127,5 +128,31 @@ func TestReviewLocalCommits(t *testing.T) {
 	}
 	if fifth.Manifest.SinceRunID != third.Manifest.ID {
 		t.Errorf("--since last on the range found %q, want %q", fifth.Manifest.SinceRunID, third.Manifest.ID)
+	}
+
+	// A review.json taken out of its run directory has nothing tying it to
+	// this repository.
+	loose := filepath.Join(t.TempDir(), "review.json")
+	data, _ := os.ReadFile(filepath.Join(first.RunDir, "final", "review.json"))
+	if err := os.WriteFile(loose, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.Review(ctx, ReviewRequest{Revision: "feature", Since: loose}); err == nil || !strings.Contains(err.Error(), "outside a run directory: nothing tells it is a review of local branch feature") {
+		t.Errorf("a loose review.json: %v", err)
+	}
+
+	// The work tree is reported whatever names the head checked out.
+	if err := os.WriteFile(filepath.Join(dir, "changed.txt"), []byte("dirty\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, rev := range []string{"", "feature", "main..HEAD", "main..feature~1"} {
+		var logs bytes.Buffer
+		a.Logger = slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelWarn}))
+		a.Config.Agents = a.Config.Agents[:0:0]
+		_, _ = a.Review(ctx, ReviewRequest{Revision: rev})
+		warned := strings.Contains(logs.String(), "uncommitted changes")
+		if want := rev != "main..feature~1"; warned != want {
+			t.Errorf("%q: warned %v, want %v\n%s", rev, warned, want, logs.String())
+		}
 	}
 }

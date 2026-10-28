@@ -7,8 +7,10 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/bornholm/conclave/internal/domain"
 	"github.com/bornholm/conclave/internal/gitrepo"
@@ -49,6 +51,9 @@ func loadPrevious(base string, repo domain.Repository, pr *domain.PullRequest, s
 	// Outside a run directory, the pull request's URL is all that ties the
 	// review to a repository, and only when both sides have one: Conclave
 	// always writes it, but a forge may give none, Redmine for one.
+	if !hasManifest && pr.Local {
+		return nil, fmt.Errorf("--since: %s is outside a run directory: nothing tells it is a review of %s in this repository; pass its run directory instead", path, reviewed(0, localBranch(pr)))
+	}
 	if !hasManifest && (review.Meta.PRURL == "" || pr.WebURL == "") {
 		return nil, fmt.Errorf("--since: %s is outside a run directory and there is no pull request URL to compare: nothing tells it is a review of %s/%s; pass its run directory instead", path, repo.Owner, repo.Name)
 	}
@@ -111,29 +116,40 @@ func previousPath(base string, repo domain.Repository, pr *domain.PullRequest, s
 
 // lastReview returns the review.json of the most recent successful review of
 // pull request number of repo under base, or, for a local review (number 0),
-// of the same branch or range. Run ids start with their UTC start time, so they sort
-// chronologically.
+// of the same branch or range.
 func lastReview(base string, repo domain.Repository, number int64, branch string) (string, error) {
 	entries, err := os.ReadDir(base)
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return "", fmt.Errorf("--since last: %w", err)
 	}
-	names := make([]string, 0, len(entries))
-	for _, e := range entries {
-		if e.IsDir() {
-			names = append(names, e.Name())
-		}
+	// Run ids sort by their start to the second only: two runs started in
+	// the same second are ordered by their manifest's start time.
+	type candidate struct {
+		path    string
+		started time.Time
 	}
-	sort.Sort(sort.Reverse(sort.StringSlice(names)))
-	for _, name := range names {
-		m, ok := runManifest(filepath.Join(base, name))
+	var runs []candidate
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		m, ok := runManifest(filepath.Join(base, e.Name()))
 		if !ok || m.PRNumber != number || m.Branch != branch || m.Status != domain.RunSucceeded || !sameRepository(m, repo) {
 			continue
 		}
-		path := filepath.Join(base, name, "final", "review.json")
+		path := filepath.Join(base, e.Name(), "final", "review.json")
 		if _, err := os.Stat(path); err == nil {
-			return path, nil
+			runs = append(runs, candidate{path, m.StartedAt})
 		}
+	}
+	if len(runs) > 0 {
+		latest := slices.MaxFunc(runs, func(a, b candidate) int {
+			if c := a.started.Compare(b.started); c != 0 {
+				return c
+			}
+			return strings.Compare(a.path, b.path)
+		})
+		return latest.path, nil
 	}
 	return "", fmt.Errorf("--since last: no successful review of %s under %s", reviewed(number, branch), base)
 }

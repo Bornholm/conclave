@@ -20,7 +20,7 @@ to confirm a line number or a detail, but do not start the review over: the
 report is what is missing.
 
 {{if .PR.Local}}LOCAL COMMITS
-Branch: {{.PR.Head.Branch}}
+Revision: {{.PR.Revision}}
 {{else}}PULL REQUEST
 Number: #{{.PR.Number}}
 {{end}}Title: {{.PR.Title}}

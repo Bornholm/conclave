@@ -326,15 +326,16 @@ func fileStatus(code string) string {
 }
 
 // Log returns the commits reachable from headSHA but not from baseSHA, newest
-// first, with their author, date and full message.
-func (g *Git) Log(ctx context.Context, baseSHA, headSHA string) (string, error) {
-	return g.run(ctx, "log", "--no-color", "--no-decorate", "--format=medium", baseSHA+".."+headSHA)
+// first, with their author, date and full message: at most max of them, so
+// that a long divergence is not read whole only to be cut.
+func (g *Git) Log(ctx context.Context, baseSHA, headSHA string, max int) (string, error) {
+	return g.run(ctx, "log", "--no-color", "--no-decorate", "--format=medium", "--max-count="+strconv.Itoa(max), baseSHA+".."+headSHA)
 }
 
 // CommitSubjects returns the subject of each commit reachable from headSHA
-// but not from baseSHA, newest first.
-func (g *Git) CommitSubjects(ctx context.Context, baseSHA, headSHA string) ([]string, error) {
-	out, err := g.run(ctx, "log", "--no-color", "--format=%s", baseSHA+".."+headSHA)
+// but not from baseSHA, newest first, at most max of them.
+func (g *Git) CommitSubjects(ctx context.Context, baseSHA, headSHA string, max int) ([]string, error) {
+	out, err := g.run(ctx, "log", "--no-color", "--format=%s", "--max-count="+strconv.Itoa(max), baseSHA+".."+headSHA)
 	if err != nil {
 		return nil, err
 	}

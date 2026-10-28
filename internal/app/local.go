@@ -34,6 +34,10 @@ func splitRange(rev string) (base, head string, isRange bool) {
 	return base, head, true
 }
 
+// maxLogCommits bounds the commit messages read for a local review: their
+// text is cut to review.limits.max_comment_bytes anyway.
+const maxLogCommits = 200
+
 // localPullRequest builds, from the local repository alone, what a pull
 // request would give a review: the commits between the base and the head,
 // the files they change and their messages in place of a description. No
@@ -64,7 +68,12 @@ func (a *App) localPullRequest(ctx context.Context, git *gitrepo.Git, rev string
 	if mergeBase == headSHA {
 		return nil, fmt.Errorf("nothing to review: %s has no commit that %s does not have", headName, baseName)
 	}
-	if headRev == "HEAD" && git.HasUncommittedChanges(ctx) {
+	if baseSHA != mergeBase {
+		log.Info("the base has moved on: the commits are reviewed from the merge base, as a pull request would be", "base", baseName, "merge_base", mergeBase)
+	}
+	// The work tree matters whatever names the head: nothing, HEAD or the
+	// branch checked out.
+	if current, _, err := git.ResolveRevision(ctx, "HEAD"); err == nil && current == headSHA && git.HasUncommittedChanges(ctx) {
 		log.Warn("the work tree has uncommitted changes: only the commits are reviewed")
 	}
 	files, err := git.ChangedFiles(ctx, mergeBase, headSHA)
@@ -74,11 +83,12 @@ func (a *App) localPullRequest(ctx context.Context, git *gitrepo.Git, rev string
 	if max := cfg.Review.Limits.MaxFiles; max > 0 && len(files) > max {
 		return nil, fmt.Errorf("%w (%d > %d)", forge.ErrTooManyFiles, len(files), max)
 	}
-	subjects, err := git.CommitSubjects(ctx, mergeBase, headSHA)
+	// Two subjects tell whether there is only one commit.
+	subjects, err := git.CommitSubjects(ctx, mergeBase, headSHA, 2)
 	if err != nil {
 		return nil, err
 	}
-	messages, err := git.Log(ctx, mergeBase, headSHA)
+	messages, err := git.Log(ctx, mergeBase, headSHA, maxLogCommits)
 	if err != nil {
 		return nil, err
 	}

@@ -281,13 +281,16 @@ func TestChangedFilesAndLog(t *testing.T) {
 	if !maps.Equal(got, want) {
 		t.Errorf("changed files:\n got %v\nwant %v", got, want)
 	}
-	subjects, err := g.CommitSubjects(ctx, mb, tip)
+	subjects, err := g.CommitSubjects(ctx, mb, tip, 10)
 	if err != nil || !slices.Equal(subjects, []string{"binary", "feature"}) {
 		t.Errorf("subjects = %q, %v", subjects, err)
 	}
-	log, err := g.Log(ctx, mb, tip)
-	if err != nil || !strings.Contains(log, "with a body") || strings.Contains(log, "main moves on") {
+	log, err := g.Log(ctx, mb, tip, 10)
+	if err != nil || !strings.Contains(log, "with a body") || !strings.Contains(log, "    feature\n") || strings.Contains(log, "main moves on") {
 		t.Errorf("log = %q, %v", log, err)
+	}
+	if log, err := g.Log(ctx, mb, tip, 1); err != nil || strings.Contains(log, "    feature\n") {
+		t.Errorf("log bounded to one commit = %q, %v", log, err)
 	}
 }
 

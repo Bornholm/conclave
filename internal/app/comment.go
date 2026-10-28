@@ -27,6 +27,9 @@ type CommentRequest struct {
 	// language of the comment.
 	PR               *domain.PullRequest
 	Round, MaxRounds int
+	// RequestChangesFrom is the threshold the review's verdict was raised
+	// from, if any: the comment keeps every finding at or above it.
+	RequestChangesFrom domain.Severity
 }
 
 // Comment is what a writer made of a review.
@@ -78,7 +81,7 @@ func (a *App) WriteComment(ctx context.Context, req CommentRequest) (*Comment, e
 	p, err := prompt.Comment(prompt.CommentInput{
 		AgentID: writer.ID, Worktree: workdir, PR: req.PR, Review: md.String(),
 		Verdict: review.Verdict, Round: req.Round, MaxRounds: req.MaxRounds,
-		Incremental: review.Meta.Since != nil, MaxBytes: commentBytes(cfg), KeepFrom: keepFrom(cfg),
+		Incremental: review.Meta.Since != nil, MaxBytes: commentBytes(cfg), KeepFrom: keepFrom(req.RequestChangesFrom),
 	})
 	if err != nil {
 		return nil, err
@@ -106,13 +109,13 @@ func (a *App) WriteComment(ctx context.Context, req CommentRequest) (*Comment, e
 	if err != nil {
 		return nil, fmt.Errorf("writer %s: invalid comment: %w", writer.ID, err)
 	}
-	missing := missingFindings(review, rep.Body, keepFrom(cfg))
+	missing := missingFindings(review, rep.Body, keepFrom(req.RequestChangesFrom))
 	warnings = append(ex.Warnings, warnings...)
 	// final/comment.md is what the author reads, which the loop writes once
 	// it knows: this comment, or the review it falls back to.
 	if len(missing) > 0 {
 		_ = store.Write("final", "comment-rejected.md", []byte(rep.Body+"\n"))
-		return nil, fmt.Errorf("writer %s: the comment leaves out the finding(s) at %s, rated %s or above", writer.ID, strings.Join(missing, ", "), keepFrom(cfg))
+		return nil, fmt.Errorf("writer %s: the comment leaves out the finding(s) at %s, rated %s or above", writer.ID, strings.Join(missing, ", "), keepFrom(req.RequestChangesFrom))
 	}
 	_ = store.WriteJSON("final", "comment.json", rep)
 	log.Info("writer finished", "agent", writer.ID, "language", rep.Language, "bytes", len(rep.Body), "duration", res.Duration.Round(time.Millisecond))
@@ -130,10 +133,11 @@ const loopMarkRoom = 256
 func commentBytes(cfg *config.Config) int { return cfg.Loop.MaxCommentBytes - loopMarkRoom }
 
 // keepFrom is the lowest severity of a finding the comment must keep:
-// medium, or loop.request_changes_from when it is lower, since a finding
-// that requests changes is one the author has to be told about.
-func keepFrom(cfg *config.Config) domain.Severity {
-	if from := domain.Severity(cfg.Loop.RequestChangesFrom); from.Valid() && from.Rank() > domain.SeverityMedium.Rank() && from != domain.SeverityInfo {
+// medium, or the threshold the verdict was raised from when it is lower,
+// since a finding that requests changes is one the author has to be told
+// about.
+func keepFrom(from domain.Severity) domain.Severity {
+	if from.Valid() && from.Rank() > domain.SeverityMedium.Rank() && from != domain.SeverityInfo {
 		return from
 	}
 	return domain.SeverityMedium

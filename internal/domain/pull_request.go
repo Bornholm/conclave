@@ -25,6 +25,15 @@ type PullRequest struct {
 
 	MergeBaseSHA string `json:"merge_base_sha"`
 
+	// Local is set for a review of local commits rather than of a pull
+	// request: Number is 0, the description is the commits' log, and there
+	// is no discussion, issue or forge behind it.
+	Local bool `json:"local,omitempty"`
+	// Revision names what a local review reviewed: the branch, or the range
+	// base..head when one was given, so that a review of a few commits is
+	// never taken for one of the whole branch.
+	Revision string `json:"revision,omitempty"`
+
 	Labels       []string      `json:"labels"`
 	ChangedFiles []ChangedFile `json:"changed_files"`
 	Issues       []Issue       `json:"issues"`

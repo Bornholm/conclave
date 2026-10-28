@@ -1213,7 +1213,7 @@ func TestIncrementalReviewNeedsAPreviousReviewOfTheSamePullRequest(t *testing.T)
 	if err := os.WriteFile(other, bytes.Replace(data, []byte(`"pr_number": 7`), []byte(`"pr_number": 8`), 1), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := a.Review(context.Background(), ReviewRequest{Number: 7, Since: other}); err == nil || !strings.Contains(err.Error(), "not #7") {
+	if _, err := a.Review(context.Background(), ReviewRequest{Number: 7, Since: other}); err == nil || !strings.Contains(err.Error(), "not pull request #7") {
 		t.Fatalf("a review of another pull request must be refused: %v", err)
 	}
 }

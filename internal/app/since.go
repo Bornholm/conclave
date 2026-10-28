@@ -7,8 +7,10 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/bornholm/conclave/internal/domain"
 	"github.com/bornholm/conclave/internal/gitrepo"
@@ -24,7 +26,7 @@ const SinceLast = "last"
 // repository: measuring one pull request against another's findings would
 // mark them all as fixed.
 func loadPrevious(base string, repo domain.Repository, pr *domain.PullRequest, since string) (*domain.PreviousReview, error) {
-	path, err := previousPath(base, repo, pr.Number, since)
+	path, err := previousPath(base, repo, pr, since)
 	if err != nil {
 		return nil, err
 	}
@@ -36,8 +38,8 @@ func loadPrevious(base string, repo domain.Repository, pr *domain.PullRequest, s
 	if err := json.Unmarshal(data, &review); err != nil {
 		return nil, fmt.Errorf("--since: %s is not a review: %w", path, err)
 	}
-	if review.Meta.PRNumber != pr.Number {
-		return nil, fmt.Errorf("--since: %s reviewed pull request #%d, not #%d", path, review.Meta.PRNumber, pr.Number)
+	if review.Meta.PRNumber != pr.Number || review.Meta.Branch != localBranch(pr) {
+		return nil, fmt.Errorf("--since: %s reviewed %s, not %s", path, reviewed(review.Meta.PRNumber, review.Meta.Branch), reviewed(pr.Number, localBranch(pr)))
 	}
 	if review.Meta.PRURL != "" && pr.WebURL != "" && review.Meta.PRURL != pr.WebURL {
 		return nil, fmt.Errorf("--since: %s reviewed %s, not %s", path, review.Meta.PRURL, pr.WebURL)
@@ -49,6 +51,9 @@ func loadPrevious(base string, repo domain.Repository, pr *domain.PullRequest, s
 	// Outside a run directory, the pull request's URL is all that ties the
 	// review to a repository, and only when both sides have one: Conclave
 	// always writes it, but a forge may give none, Redmine for one.
+	if !hasManifest && pr.Local {
+		return nil, fmt.Errorf("--since: %s is outside a run directory: nothing tells it is a review of %s in this repository; pass its run directory instead", path, reviewed(0, localBranch(pr)))
+	}
 	if !hasManifest && (review.Meta.PRURL == "" || pr.WebURL == "") {
 		return nil, fmt.Errorf("--since: %s is outside a run directory and there is no pull request URL to compare: nothing tells it is a review of %s/%s; pass its run directory instead", path, repo.Owner, repo.Name)
 	}
@@ -81,9 +86,20 @@ func sameRepository(m domain.RunManifest, repo domain.Repository) bool {
 	return (m.Owner == "" || m.Owner == repo.Owner) && (m.Repo == "" || m.Repo == repo.Name)
 }
 
-func previousPath(base string, repo domain.Repository, number int64, since string) (string, error) {
+// reviewed names what a review was of: a pull request, or local commits.
+func reviewed(number int64, branch string) string {
+	if number == 0 && strings.Contains(branch, "..") {
+		return "local commits " + branch
+	}
+	if number == 0 {
+		return "local branch " + branch
+	}
+	return fmt.Sprintf("pull request #%d", number)
+}
+
+func previousPath(base string, repo domain.Repository, pr *domain.PullRequest, since string) (string, error) {
 	if since == SinceLast {
-		return lastReview(base, repo, number)
+		return lastReview(base, repo, pr.Number, localBranch(pr))
 	}
 	if info, err := os.Stat(since); err == nil {
 		if info.IsDir() {
@@ -99,31 +115,43 @@ func previousPath(base string, repo domain.Repository, number int64, since strin
 }
 
 // lastReview returns the review.json of the most recent successful review of
-// pull request number of repo under base. Run ids start with their UTC start
-// time, so they sort chronologically.
-func lastReview(base string, repo domain.Repository, number int64) (string, error) {
+// pull request number of repo under base, or, for a local review (number 0),
+// of the same branch or range.
+func lastReview(base string, repo domain.Repository, number int64, branch string) (string, error) {
 	entries, err := os.ReadDir(base)
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return "", fmt.Errorf("--since last: %w", err)
 	}
-	names := make([]string, 0, len(entries))
-	for _, e := range entries {
-		if e.IsDir() {
-			names = append(names, e.Name())
-		}
+	// Run ids sort by their start to the second only: two runs started in
+	// the same second are ordered by their manifest's start time.
+	type candidate struct {
+		path    string
+		started time.Time
 	}
-	sort.Sort(sort.Reverse(sort.StringSlice(names)))
-	for _, name := range names {
-		m, ok := runManifest(filepath.Join(base, name))
-		if !ok || m.PRNumber != number || m.Status != domain.RunSucceeded || !sameRepository(m, repo) {
+	var runs []candidate
+	for _, e := range entries {
+		if !e.IsDir() {
 			continue
 		}
-		path := filepath.Join(base, name, "final", "review.json")
+		m, ok := runManifest(filepath.Join(base, e.Name()))
+		if !ok || m.PRNumber != number || m.Branch != branch || m.Status != domain.RunSucceeded || !sameRepository(m, repo) {
+			continue
+		}
+		path := filepath.Join(base, e.Name(), "final", "review.json")
 		if _, err := os.Stat(path); err == nil {
-			return path, nil
+			runs = append(runs, candidate{path, m.StartedAt})
 		}
 	}
-	return "", fmt.Errorf("--since last: no successful review of pull request #%d under %s", number, base)
+	if len(runs) > 0 {
+		latest := slices.MaxFunc(runs, func(a, b candidate) int {
+			if c := a.started.Compare(b.started); c != 0 {
+				return c
+			}
+			return strings.Compare(a.path, b.path)
+		})
+		return latest.path, nil
+	}
+	return "", fmt.Errorf("--since last: no successful review of %s under %s", reviewed(number, branch), base)
 }
 
 // sinceDiff is the diff from the previous review's head to this one, and a
@@ -139,7 +167,11 @@ func (a *App) sinceDiff(ctx context.Context, r *run) {
 	// The previous head may be missing from this clone for reasons other than
 	// a force push: pruned, or reviewed from another clone. The pull request
 	// ref still holds it when the branch was only extended.
-	if err := r.git.EnsureCommit(ctx, prev.HeadSHA, gitrepo.PullRequestRef(r.pr.Number), r.cfg.Forge.Remote, r.pr.Head.CloneURL); err != nil {
+	prRef := gitrepo.PullRequestRef(r.pr.Number)
+	if r.pr.Local {
+		prRef = ""
+	}
+	if err := r.git.EnsureCommit(ctx, prev.HeadSHA, prRef, r.cfg.Forge.Remote, r.pr.Head.CloneURL); err != nil {
 		a.logger().Warn("previous head unavailable", "since", prev.HeadSHA, "error", err)
 		r.sinceNote = fmt.Sprintf("The previous review's head %s is not available, here or from the remote: there is no diff since it. The branch may have been rewritten since. Compare each previous finding with the code at HEAD.", prev.HeadSHA)
 		return

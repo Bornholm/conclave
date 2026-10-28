@@ -19,9 +19,11 @@ had reached, with their evidence. You may read files in the working directory
 to confirm a line number or a detail, but do not start the review over: the
 report is what is missing.
 
-PULL REQUEST
+{{if .PR.Local}}LOCAL COMMITS
+Revision: {{.PR.Revision}}
+{{else}}PULL REQUEST
 Number: #{{.PR.Number}}
-Title: {{.PR.Title}}
+{{end}}Title: {{.PR.Title}}
 Head: {{.HeadSHA}}
 Merge base: {{.MergeBaseSHA}}
 

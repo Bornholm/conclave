@@ -28,7 +28,12 @@ import (
 
 // ReviewRequest parameterizes a run.
 type ReviewRequest struct {
+	// Number is the pull request to review. When it is 0, the review is of
+	// local commits instead: Revision, a revision or a range such as
+	// main..feature, reviewed against the default branch when it is not a
+	// range.
 	Number        int64
+	Revision      string
 	KeepWorktrees bool
 	// Since, when set, makes the review incremental: SinceLast, a run id, a
 	// run directory or a review.json, whose findings each get a status.
@@ -129,68 +134,85 @@ func (a *App) Review(ctx context.Context, req ReviewRequest) (*ReviewResult, err
 	if err != nil {
 		return nil, err
 	}
-	repo, err := git.Repository(ctx, cfg.Forge.Remote)
-	if err != nil {
-		return nil, err
-	}
-	if !factory.MatchesRepository(cfg.Forge, repo) {
-		return nil, fmt.Errorf("remote %q points to %s but forge.base_url expects %s", cfg.Forge.Remote, repo.Host, factory.ExpectedHost(cfg.Forge))
-	}
-	f, err := a.forge()
-	if err != nil {
-		return nil, err
-	}
-	log.Info("fetching pull request", "forge", f.Name(), "repo", repo.FullName(), "number", req.Number)
-	pr, err := f.GetPullRequest(ctx, repo, req.Number)
-	if err != nil {
-		if errors.Is(err, forge.ErrNotFound) {
-			if hint := a.forkHint(ctx, f, repo, "pull request"); hint != "" {
-				return nil, fmt.Errorf("get pull request #%d: %w\n%s", req.Number, err, hint)
+	var repo domain.Repository
+	var pr *domain.PullRequest
+	var forgeName string
+	if req.Number == 0 {
+		// A local review needs no forge: the remote only names the
+		// repository in the manifest, when there is one.
+		if repo, err = git.Repository(ctx, cfg.Forge.Remote); err != nil {
+			log.Debug("remote not resolved, the run will not name a repository", "remote", cfg.Forge.Remote, "error", err)
+			repo = domain.Repository{}
+		}
+		if pr, err = a.localPullRequest(ctx, git, req.Revision); err != nil {
+			return nil, err
+		}
+		log.Info("reviewing local commits", "base", pr.Base.Branch, "head", pr.Head.Branch, "files", len(pr.ChangedFiles))
+	} else {
+		if repo, err = git.Repository(ctx, cfg.Forge.Remote); err != nil {
+			return nil, err
+		}
+		if !factory.MatchesRepository(cfg.Forge, repo) {
+			return nil, fmt.Errorf("remote %q points to %s but forge.base_url expects %s", cfg.Forge.Remote, repo.Host, factory.ExpectedHost(cfg.Forge))
+		}
+		f, err := a.forge()
+		if err != nil {
+			return nil, err
+		}
+		log.Info("fetching pull request", "forge", f.Name(), "repo", repo.FullName(), "number", req.Number)
+		pr, err = f.GetPullRequest(ctx, repo, req.Number)
+		if err != nil {
+			if errors.Is(err, forge.ErrNotFound) {
+				if hint := a.forkHint(ctx, f, repo, "pull request"); hint != "" {
+					return nil, fmt.Errorf("get pull request #%d: %w\n%s", req.Number, err, hint)
+				}
 			}
+			return nil, fmt.Errorf("get pull request #%d: %w", req.Number, err)
 		}
-		return nil, fmt.Errorf("get pull request #%d: %w", req.Number, err)
-	}
-	if label := cfg.Review.RunningLabel; label != "" {
-		defer a.markRunning(ctx, f, repo, pr.Number, label)()
-	}
-	files, err := f.ListChangedFiles(ctx, repo, req.Number, cfg.Review.Limits.MaxFiles)
-	if err != nil {
-		return nil, fmt.Errorf("list changed files: %w", err)
-	}
-	pr.ChangedFiles = files
-	if cfg.IncludeDiscussion() {
-		discussion, err := f.ListDiscussion(ctx, repo, req.Number, cfg.Review.Limits.MaxComments)
+		if label := cfg.Review.RunningLabel; label != "" {
+			defer a.markRunning(ctx, f, repo, pr.Number, label)()
+		}
+		files, err := f.ListChangedFiles(ctx, repo, req.Number, cfg.Review.Limits.MaxFiles)
 		if err != nil {
-			log.Warn("discussion not loaded", "error", err)
+			return nil, fmt.Errorf("list changed files: %w", err)
 		}
-		for i := range discussion {
-			discussion[i].Body = truncateBytes(discussion[i].Body, cfg.Review.Limits.MaxCommentBytes)
+		pr.ChangedFiles = files
+		if cfg.IncludeDiscussion() {
+			discussion, err := f.ListDiscussion(ctx, repo, req.Number, cfg.Review.Limits.MaxComments)
+			if err != nil {
+				log.Warn("discussion not loaded", "error", err)
+			}
+			for i := range discussion {
+				discussion[i].Body = truncateBytes(discussion[i].Body, cfg.Review.Limits.MaxCommentBytes)
+			}
+			pr.Discussion = discussion
 		}
-		pr.Discussion = discussion
-	}
-	if cfg.IncludeIssues() {
-		issues, err := forge.LoadAssociatedIssues(ctx, f, repo, pr, cfg.Review.Limits.MaxIssues)
-		if err != nil {
-			log.Warn("associated issues partially loaded", "error", err)
+		if cfg.IncludeIssues() {
+			issues, err := forge.LoadAssociatedIssues(ctx, f, repo, pr, cfg.Review.Limits.MaxIssues)
+			if err != nil {
+				log.Warn("associated issues partially loaded", "error", err)
+			}
+			for i := range issues {
+				issues[i].Description = truncateBytes(issues[i].Description, cfg.Review.Limits.MaxCommentBytes)
+			}
+			pr.Issues = issues
 		}
-		for i := range issues {
-			issues[i].Description = truncateBytes(issues[i].Description, cfg.Review.Limits.MaxCommentBytes)
-		}
-		pr.Issues = issues
-	}
 
-	log.Info("ensuring commits", "base", pr.Base.SHA, "head", pr.Head.SHA)
-	if err := git.EnsureCommit(ctx, pr.Base.SHA, "", cfg.Forge.Remote, pr.Base.CloneURL); err != nil {
-		return nil, fmt.Errorf("base commit: %w", err)
+		log.Info("ensuring commits", "base", pr.Base.SHA, "head", pr.Head.SHA)
+		if err := git.EnsureCommit(ctx, pr.Base.SHA, "", cfg.Forge.Remote, pr.Base.CloneURL); err != nil {
+			return nil, fmt.Errorf("base commit: %w", err)
+		}
+		if err := git.EnsureCommit(ctx, pr.Head.SHA, gitrepo.PullRequestRef(pr.Number), cfg.Forge.Remote, pr.Head.CloneURL); err != nil {
+			return nil, fmt.Errorf("head commit: %w", err)
+		}
+		mergeBase, err := git.MergeBase(ctx, pr.Base.SHA, pr.Head.SHA)
+		if err != nil {
+			return nil, err
+		}
+		pr.MergeBaseSHA = mergeBase
+		forgeName = f.Name()
 	}
-	if err := git.EnsureCommit(ctx, pr.Head.SHA, gitrepo.PullRequestRef(pr.Number), cfg.Forge.Remote, pr.Head.CloneURL); err != nil {
-		return nil, fmt.Errorf("head commit: %w", err)
-	}
-	mergeBase, err := git.MergeBase(ctx, pr.Base.SHA, pr.Head.SHA)
-	if err != nil {
-		return nil, err
-	}
-	pr.MergeBaseSHA = mergeBase
+	mergeBase := pr.MergeBaseSHA
 
 	runsBase := a.RunsBase
 	if runsBase == "" {
@@ -212,6 +234,9 @@ func (a *App) Review(ctx context.Context, req ReviewRequest) (*ReviewResult, err
 	}
 	now := time.Now()
 	runID := artifact.NewRunID(now, pr.Number)
+	if pr.Local {
+		runID = artifact.NewLocalRunID(now, pr.Head.Branch)
+	}
 	store, err := artifact.Open(runsBase, runID)
 	if err != nil {
 		return nil, err
@@ -231,7 +256,7 @@ func (a *App) Review(ctx context.Context, req ReviewRequest) (*ReviewResult, err
 		runner:  &agent.Runner{Process: a.process(), TempDir: runTmp},
 		manifest: &domain.RunManifest{
 			ID: runID, StartedAt: now, Status: domain.RunRunning, ConfigSources: a.Config.Sources,
-			Forge: f.Name(), Owner: repo.Owner, Repo: repo.Name, PRNumber: pr.Number,
+			Forge: forgeName, Owner: repo.Owner, Repo: repo.Name, PRNumber: pr.Number, Branch: localBranch(pr),
 			BaseSHA: pr.Base.SHA, HeadSHA: pr.Head.SHA, MergeBaseSHA: mergeBase,
 		},
 	}
@@ -386,7 +411,7 @@ func (a *App) execute(ctx context.Context, r *run, req ReviewRequest) (*domain.C
 	_ = r.store.WriteJSON("final", "groups.json", groups)
 
 	meta := domain.ReviewMeta{
-		RunID: r.manifest.ID, PRNumber: r.pr.Number, PRTitle: r.pr.Title, PRURL: r.pr.WebURL,
+		RunID: r.manifest.ID, PRNumber: r.pr.Number, PRTitle: r.pr.Title, PRURL: r.pr.WebURL, Branch: localBranch(r.pr),
 		HeadSHA: r.pr.Head.SHA, MergeBaseSHA: r.pr.MergeBaseSHA,
 		ReviewersTotal: len(reviewers), ReviewersSucceeded: len(succeeded),
 		LeadID: lead.ID, SucceededReviewers: succeeded, Since: r.previous,

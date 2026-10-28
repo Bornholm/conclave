@@ -240,10 +240,13 @@ type FailedReviewer struct {
 
 // ReviewMeta carries run information for rendering.
 type ReviewMeta struct {
-	RunID              string   `json:"run_id"`
-	PRNumber           int64    `json:"pr_number"`
-	PRTitle            string   `json:"pr_title"`
-	PRURL              string   `json:"pr_url"`
+	RunID    string `json:"run_id"`
+	PRNumber int64  `json:"pr_number"`
+	PRTitle  string `json:"pr_title"`
+	PRURL    string `json:"pr_url"`
+	// Branch is the revision a local review reviewed, a branch or a range
+	// such as main..feature, empty for a pull request.
+	Branch             string   `json:"branch,omitempty"`
 	HeadSHA            string   `json:"head_sha"`
 	MergeBaseSHA       string   `json:"merge_base_sha"`
 	ReviewersTotal     int      `json:"reviewers_total"`

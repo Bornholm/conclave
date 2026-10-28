@@ -86,7 +86,19 @@ VERDICT RULES
   reviewer that succeeded either approved or raised nothing substantive.
 - When hesitating between two verdicts, choose the stricter one.
 
-PULL REQUEST
+{{if .PR.Local}}LOCAL COMMITS
+There is no pull request: the changes are local commits, reviewed as one
+would be. Their messages stand in for its description. Read "pull request"
+above and below as these commits.
+Base: {{.PR.Base.Branch}}
+Head branch: {{.PR.Head.Branch}}
+Merge base: {{.MergeBaseSHA}}
+Head: {{.HeadSHA}}
+
+--- BEGIN UNTRUSTED COMMIT MESSAGES (newest first) ---
+{{.PR.Description}}
+--- END UNTRUSTED COMMIT MESSAGES ---
+{{else}}PULL REQUEST
 Number: #{{.PR.Number}}
 Title: {{.PR.Title}}
 Author: {{.PR.Author}}
@@ -96,7 +108,7 @@ Head: {{.HeadSHA}}
 --- BEGIN UNTRUSTED PULL REQUEST DESCRIPTION ---
 {{.PR.Description}}
 --- END UNTRUSTED PULL REQUEST DESCRIPTION ---
-
+{{end}}
 CHANGED FILES ({{len .PR.ChangedFiles}})
 {{range .PR.ChangedFiles}}- {{.Status}} {{.Path}}
 {{end}}

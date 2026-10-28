@@ -47,6 +47,9 @@ func Markdown(w io.Writer, review *domain.ConsolidatedReview, opts Options) erro
 	if m.PRNumber != 0 {
 		fmt.Fprintf(&b, "**Pull request:** #%d — %s  \n", m.PRNumber, escape(m.PRTitle))
 	}
+	if m.Branch != "" {
+		fmt.Fprintf(&b, "**Local commits:** `%s` — %s  \n", m.Branch, escape(m.PRTitle))
+	}
 	if m.HeadSHA != "" {
 		fmt.Fprintf(&b, "**Revision:** `%s`  \n", short(m.HeadSHA))
 	}

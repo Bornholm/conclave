@@ -2,10 +2,13 @@ package gitrepo
 
 import (
 	"context"
+	"fmt"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -235,5 +238,84 @@ func TestCreateWorktreeCleansUpAFailedAdd(t *testing.T) {
 	out, _ := g.run(ctx, "worktree", "list", "--porcelain")
 	if strings.Contains(out, wt) {
 		t.Errorf("worktree still registered:\n%s", out)
+	}
+}
+
+func TestChangedFilesAndLog(t *testing.T) {
+	g, newBase, head := fixtureRepo(t)
+	ctx := context.Background()
+	if _, err := g.run(ctx, "checkout", "-q", "feature"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(g.Root(), "added.bin"), []byte{0, 1, 2, 0}, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := g.run(ctx, "add", "added.bin"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := g.run(ctx, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "binary\n\nwith a body"); err != nil {
+		t.Fatal(err)
+	}
+	tip, _, err := g.ResolveRevision(ctx, "feature")
+	if err != nil {
+		t.Fatal(err)
+	}
+	mb, err := g.MergeBase(ctx, newBase, head)
+	if err != nil {
+		t.Fatal(err)
+	}
+	files, err := g.ChangedFiles(ctx, mb, tip)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]string{}
+	for _, f := range files {
+		got[f.Path] = fmt.Sprintf("%s %s +%d -%d", f.Status, f.PreviousPath, f.Additions, f.Deletions)
+	}
+	want := map[string]string{
+		"added.bin":   "added  +0 -0",
+		"changed.txt": "modified  +1 -1",
+		"deleted.txt": "deleted  +0 -1",
+		"new.txt":     "renamed old.txt +0 -0",
+	}
+	if !maps.Equal(got, want) {
+		t.Errorf("changed files:\n got %v\nwant %v", got, want)
+	}
+	subjects, err := g.CommitSubjects(ctx, mb, tip, 10)
+	if err != nil || !slices.Equal(subjects, []string{"binary", "feature"}) {
+		t.Errorf("subjects = %q, %v", subjects, err)
+	}
+	log, err := g.Log(ctx, mb, tip, 10)
+	if err != nil || !strings.Contains(log, "with a body") || !strings.Contains(log, "    feature\n") || strings.Contains(log, "main moves on") {
+		t.Errorf("log = %q, %v", log, err)
+	}
+	if log, err := g.Log(ctx, mb, tip, 1); err != nil || strings.Contains(log, "    feature\n") {
+		t.Errorf("log bounded to one commit = %q, %v", log, err)
+	}
+}
+
+func TestDefaultBranch(t *testing.T) {
+	g, _, _ := fixtureRepo(t)
+	ctx := context.Background()
+	if b, err := g.DefaultBranch(ctx, "origin"); err != nil || b != "main" {
+		t.Errorf("without a remote HEAD: %q, %v", b, err)
+	}
+	// The remote's HEAD wins over a local main.
+	for _, args := range [][]string{
+		{"update-ref", "refs/remotes/origin/trunk", "main"},
+		{"symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/trunk"},
+	} {
+		if _, err := g.run(ctx, args...); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if b, err := g.DefaultBranch(ctx, "origin"); err != nil || b != "origin/trunk" {
+		t.Errorf("with a remote HEAD: %q, %v", b, err)
+	}
+	if _, err := g.run(ctx, "branch", "-q", "-m", "main", "dev"); err != nil {
+		t.Fatal(err)
+	}
+	if b, err := g.DefaultBranch(ctx, ""); err == nil {
+		t.Errorf("no main, no master, no remote: got %q", b)
 	}
 }

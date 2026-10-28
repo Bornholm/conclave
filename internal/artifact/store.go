@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 	"time"
 
 	"github.com/bornholm/conclave/internal/domain"
@@ -19,6 +20,20 @@ var safeNameRe = regexp.MustCompile(`[^A-Za-z0-9._-]+`)
 // NewRunID builds an identifier such as 20260911T210100Z-pr-123-a1b2c3d4.
 func NewRunID(now time.Time, prNumber int64) string {
 	return newID(now, fmt.Sprintf("pr-%d", prNumber))
+}
+
+// NewLocalRunID builds an identifier such as
+// 20260911T210100Z-local-feat-x-a1b2c3d4 for a review of local commits, from
+// the name of the revision reviewed.
+func NewLocalRunID(now time.Time, branch string) string {
+	name := strings.Trim(safeNameRe.ReplaceAllString(strings.ReplaceAll(branch, "/", "-"), "_"), "._-")
+	if len(name) > 40 {
+		name = strings.TrimRight(name[:40], "._-")
+	}
+	if name == "" {
+		return newID(now, "local")
+	}
+	return newID(now, "local-"+name)
 }
 
 // NewTriageRunID builds an identifier such as 20260911T210100Z-triage-12-a1b2c3d4,

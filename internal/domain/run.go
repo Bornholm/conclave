@@ -20,11 +20,15 @@ type RunManifest struct {
 	Status    RunStatus  `json:"status"`
 	Error     string     `json:"error,omitempty"`
 
-	Forge    string  `json:"forge"`
-	Owner    string  `json:"owner"`
-	Repo     string  `json:"repo"`
-	PRNumber int64   `json:"pr_number,omitempty"`
-	Issues   []int64 `json:"issues,omitempty"`
+	Forge    string `json:"forge"`
+	Owner    string `json:"owner"`
+	Repo     string `json:"repo"`
+	PRNumber int64  `json:"pr_number,omitempty"`
+	// Branch is the revision a local review reviewed, a branch or a range
+	// such as main..feature: `--since last` finds the previous review of the
+	// same one by it.
+	Branch string  `json:"branch,omitempty"`
+	Issues []int64 `json:"issues,omitempty"`
 
 	BaseSHA      string `json:"base_sha"`
 	HeadSHA      string `json:"head_sha"`

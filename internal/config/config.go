@@ -201,6 +201,14 @@ type ReviewConfig struct {
 	// returned no usable report is run again, with its own last words and
 	// the output contract. Nil means DefaultReportRetries; 0 disables it.
 	ReportRetries *int `yaml:"report_retries"`
+	// APIRetries is how many times a reviewer whose model could not be
+	// reached (a connection timeout, an overloaded provider) is run again
+	// from the start, after APIRetryDelay. A refusal (quota, budget) is never
+	// retried. Nil means DefaultAPIRetries; 0 disables it.
+	APIRetries *int `yaml:"api_retries"`
+	// APIRetryDelay is the pause before such a run. Nil means
+	// DefaultAPIRetryDelay.
+	APIRetryDelay *time.Duration `yaml:"api_retry_delay"`
 	// ReportGrace is how much time past its timeout a reviewer that ran out of
 	// time gets to turn what it wrote into a report, on a run of its own and
 	// with its tools. Nil means DefaultReportGrace; 0 disables it, which is
@@ -471,6 +479,24 @@ func (c *Config) ReviewReportRetries() int {
 		return DefaultReportRetries
 	}
 	return *c.Review.ReportRetries
+}
+
+// ReviewAPIRetries returns how many times a reviewer whose model could not be
+// reached is run again.
+func (c *Config) ReviewAPIRetries() int {
+	if c.Review.APIRetries == nil {
+		return DefaultAPIRetries
+	}
+	return *c.Review.APIRetries
+}
+
+// ReviewAPIRetryDelay returns the pause before a reviewer whose model could
+// not be reached is run again.
+func (c *Config) ReviewAPIRetryDelay() time.Duration {
+	if c.Review.APIRetryDelay == nil {
+		return DefaultAPIRetryDelay
+	}
+	return *c.Review.APIRetryDelay
 }
 
 // ShowAttribution reports whether reviewer attribution is rendered.

@@ -2,6 +2,7 @@ package agent
 
 import (
 	"errors"
+	"fmt"
 	"strconv"
 	"strings"
 	"testing"
@@ -252,5 +253,25 @@ func TestAdaptPiJSONDoesNotMarkACompleteRunPartial(t *testing.T) {
 	}
 	if n := strings.Count(string(ad.Transcript), "weighing it up"); n != 1 {
 		t.Errorf("the reasoning appears %d times in the transcript, want 1", n)
+	}
+}
+
+func TestIsTransientAPIError(t *testing.T) {
+	for msg, want := range map[string]bool{
+		"Request timed out.":      true,
+		"Connection error.":       true,
+		"503 Service Unavailable": true,
+		"529: overloaded":         true,
+		"429: over budget":        false,
+		"401: invalid api key":    false,
+		"insufficient_quota":      false,
+	} {
+		err := fmt.Errorf("pi-json: %w: %s", ErrModelAPI, msg)
+		if got := IsTransientAPIError(err); got != want {
+			t.Errorf("%q: transient = %v, want %v", msg, got, want)
+		}
+	}
+	if IsTransientAPIError(errors.New("pi-json: no assistant text message in output; timed out")) {
+		t.Error("an error that is not a model API error is never transient")
 	}
 }

@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
 	"sort"
+	"strings"
 	"unicode/utf8"
 
 	"github.com/bornholm/conclave/internal/config"
@@ -15,6 +17,38 @@ import (
 // limit, provider outage) so that it produced no answer. The agent may still
 // exit 0: asking it again for its report would hit the same failure.
 var ErrModelAPI = errors.New("model API error")
+
+// transientAPIErrors are the provider messages of a failure that may not
+// happen again a little later: the model was unreachable, too slow to
+// connect, or overloaded. A refusal (quota, budget, rate limit, credentials)
+// is left out on purpose: it would only be refused again.
+var transientAPIErrors = []string{
+	"timed out", "timeout", "connection error", "connection refused", "connection reset",
+	"econnreset", "econnrefused", "etimedout", "enotfound", "eai_again", "socket hang up",
+	"fetch failed", "network error", "bad gateway", "service unavailable", "gateway timeout",
+	"overloaded",
+}
+
+// transientAPIStatus matches the HTTP statuses of a gateway or a provider
+// that could not answer, as whole numbers: a token count in a context length
+// refusal must not pass for one.
+var transientAPIStatus = regexp.MustCompile(`\b(502|503|504|529)\b`)
+
+// IsTransientAPIError reports whether err is a model API error that a new
+// run, after a pause, may not hit again: a provider that could not be reached
+// or was overloaded, as opposed to one that refused the call.
+func IsTransientAPIError(err error) bool {
+	if !errors.Is(err, ErrModelAPI) {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	for _, s := range transientAPIErrors {
+		if strings.Contains(msg, s) {
+			return true
+		}
+	}
+	return transientAPIStatus.MatchString(msg)
+}
 
 // maxAPIErrorBytes bounds the provider message kept in the error.
 const maxAPIErrorBytes = 300

@@ -604,6 +604,17 @@ func (a *App) runReviewer(ctx, actx context.Context, r *run, rv config.AgentConf
 		return ex, nil, err
 	}
 	report, transcript, err := a.reviewerAttempt(actx, r, rv, worktree, rv.ID, p, &ex)
+	// A model that could not be reached may answer a little later: the
+	// reviewer is run again from the start, within its own budget. A refusal
+	// (quota, budget) would only be refused again, and is not.
+	for attempt := 1; agent.IsTransientAPIError(err) && attempt <= r.cfg.ReviewAPIRetries(); attempt++ {
+		if !a.waitAPIRetry(actx, rv, r.cfg.ReviewAPIRetryDelay(), attempt, err) {
+			break
+		}
+		ex.APIRetries = attempt
+		ex.Error = ""
+		report, transcript, err = a.reviewerAttempt(actx, r, rv, worktree, fmt.Sprintf("%s.api-retry%d", rv.ID, attempt), p, &ex)
+	}
 	if isStopped(err) {
 		// The agent used its whole budget, but what it wrote before stopping is
 		// often a complete or nearly complete report. Reading it queries git for
@@ -962,6 +973,31 @@ func stopReason(ctx context.Context, timeout time.Duration) runStop {
 		return runStop{err: errStraggler, by: "once the other reviewers had reported"}
 	}
 	return runStop{err: fmt.Errorf("timed out after %s", timeout.Round(time.Second)), by: "by its time budget"}
+}
+
+// minAPIRetryWindow is the least time a reviewer must have left, past the
+// pause, to be run again after its model could not be reached: under it, the
+// run would be stopped before it had read anything.
+const minAPIRetryWindow = 2 * time.Minute
+
+// waitAPIRetry pauses before a reviewer whose model could not be reached is
+// run again, and reports whether it should be: not when the pause and a
+// useful run no longer fit in its budget, nor once it is stopped, by its own
+// deadline, the quorum or a cancellation.
+func (a *App) waitAPIRetry(ctx context.Context, rv config.AgentConfig, delay time.Duration, attempt int, cause error) bool {
+	if deadline, ok := ctx.Deadline(); ok && time.Until(deadline) < delay+minAPIRetryWindow {
+		a.logger().Warn("reviewer's model could not be reached, too little time left to run it again", "agent", rv.ID, "reason", cause.Error())
+		return false
+	}
+	a.logger().Warn("reviewer's model could not be reached, running it again", "agent", rv.ID, "attempt", attempt, "delay", delay, "reason", cause.Error())
+	t := time.NewTimer(delay)
+	defer t.Stop()
+	select {
+	case <-ctx.Done():
+		return false
+	case <-t.C:
+		return ctx.Err() == nil && !isStraggler(ctx)
+	}
 }
 
 // reviewerAttempt runs a reviewer once with the given prompt, storing its

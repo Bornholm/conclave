@@ -2,7 +2,6 @@ package agent
 
 import (
 	"errors"
-	"fmt"
 	"strconv"
 	"strings"
 	"testing"

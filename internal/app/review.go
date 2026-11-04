@@ -603,17 +603,32 @@ func (a *App) runReviewer(ctx, actx context.Context, r *run, rv config.AgentConf
 		ex.Error = err.Error()
 		return ex, nil, err
 	}
+	start := time.Now()
 	report, transcript, err := a.reviewerAttempt(actx, r, rv, worktree, rv.ID, p, &ex)
-	// A model that could not be reached may answer a little later: the
-	// reviewer is run again from the start, within its own budget. A refusal
-	// (quota, budget) would only be refused again, and is not.
-	for attempt := 1; agent.IsTransientAPIError(err) && attempt <= r.cfg.ReviewAPIRetries(); attempt++ {
-		if !a.waitAPIRetry(actx, rv, r.cfg.ReviewAPIRetryDelay(), attempt, err) {
-			break
+	// name is the run whose output the salvage reads: the last one.
+	name := rv.ID
+	if agent.IsTransientAPIError(err) && r.cfg.ReviewAPIRetries() > 0 {
+		// A model that could not be reached may answer a little later: the
+		// reviewer is run again from the start, on what is left of its own
+		// budget, which the first run started. A refusal (quota, budget) would
+		// only be refused again, and is not.
+		budgetCtx, cancelBudget := context.WithDeadline(actx, start.Add(r.cfg.EffectiveTimeout(rv)))
+		defer cancelBudget()
+		for attempt := 1; agent.IsTransientAPIError(err) && attempt <= r.cfg.ReviewAPIRetries(); attempt++ {
+			if !a.waitAPIRetry(budgetCtx, rv, r.cfg.ReviewAPIRetryDelay(), attempt, err) {
+				break
+			}
+			// The same review, with the time it now has.
+			in.Budget = timeBudget(budgetCtx, r.cfg, rv)
+			again, perr := prompt.Reviewer(in)
+			if perr != nil {
+				break
+			}
+			ex.APIRetries = attempt
+			ex.Error = ""
+			name = fmt.Sprintf("%s.api-retry%d", rv.ID, attempt)
+			report, transcript, err = a.reviewerAttempt(budgetCtx, r, rv, worktree, name, again, &ex)
 		}
-		ex.APIRetries = attempt
-		ex.Error = ""
-		report, transcript, err = a.reviewerAttempt(actx, r, rv, worktree, fmt.Sprintf("%s.api-retry%d", rv.ID, attempt), p, &ex)
 	}
 	if isStopped(err) {
 		// The agent used its whole budget, but what it wrote before stopping is
@@ -629,7 +644,7 @@ func (a *App) runReviewer(ctx, actx context.Context, r *run, rv config.AgentConf
 		if errors.As(err, &stopped) && stopped.timeout > 0 {
 			timeout = stopped.timeout
 		}
-		report, transcript, err = a.salvageTimedOut(salvageCtx, r, rv, worktree, rv.ID, stopReason(actx, timeout), transcript, &ex)
+		report, transcript, err = a.salvageTimedOut(salvageCtx, r, rv, worktree, name, stopReason(actx, timeout), transcript, &ex)
 		cancelSalvage()
 	}
 	// A reviewer that ran to its end but left no usable report is asked once
@@ -982,8 +997,8 @@ const minAPIRetryWindow = 2 * time.Minute
 
 // waitAPIRetry pauses before a reviewer whose model could not be reached is
 // run again, and reports whether it should be: not when the pause and a
-// useful run no longer fit in its budget, nor once it is stopped, by its own
-// deadline, the quorum or a cancellation.
+// useful run no longer fit in what is left of its budget, ctx's deadline, nor
+// once it is stopped, by that deadline, the quorum or a cancellation.
 func (a *App) waitAPIRetry(ctx context.Context, rv config.AgentConfig, delay time.Duration, attempt int, cause error) bool {
 	if deadline, ok := ctx.Deadline(); ok && time.Until(deadline) < delay+minAPIRetryWindow {
 		a.logger().Warn("reviewer's model could not be reached, too little time left to run it again", "agent", rv.ID, "reason", cause.Error())

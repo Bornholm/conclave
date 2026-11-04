@@ -258,15 +258,24 @@ func TestAdaptPiJSONDoesNotMarkACompleteRunPartial(t *testing.T) {
 
 func TestIsTransientAPIError(t *testing.T) {
 	for msg, want := range map[string]bool{
-		"Request timed out.":      true,
-		"Connection error.":       true,
-		"503 Service Unavailable": true,
-		"529: overloaded":         true,
-		"429: over budget":        false,
-		"401: invalid api key":    false,
-		"insufficient_quota":      false,
+		"Request timed out.":                         true,
+		"Connection error.":                          true,
+		"503 Service Unavailable":                    true,
+		"upstream returned status 502":               true,
+		"HTTP 504":                                   true,
+		"529: overloaded":                            true,
+		"429: over budget":                           false,
+		"401: invalid api key":                       false,
+		"insufficient_quota":                         false,
+		"400: reduce your prompt by 502 tokens":      false,
+		"400: requested 150203 tokens, maximum 1000": false,
+		// The marker past the cut of the error's text still counts.
+		strings.Repeat("x", 2*maxAPIErrorBytes) + " overloaded": true,
 	} {
-		err := fmt.Errorf("pi-json: %w: %s", ErrModelAPI, msg)
+		_, err := Adapt(config.OutputPiJSON, []byte(`{"type":"message_end","message":{"role":"assistant","content":[],"stopReason":"error","errorMessage":`+strconv.Quote(msg)+`}}`))
+		if !errors.Is(err, ErrModelAPI) {
+			t.Fatalf("%q: not a model API error: %v", msg, err)
+		}
 		if got := IsTransientAPIError(err); got != want {
 			t.Errorf("%q: transient = %v, want %v", msg, got, want)
 		}

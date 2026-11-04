@@ -576,8 +576,22 @@ func TestReviewRunsAgainAReviewerWhoseModelCouldNotBeReached(t *testing.T) {
 	}
 	first, _ := os.ReadFile(filepath.Join(res.RunDir, "prompts", "reviewer-r1.txt"))
 	again, err := os.ReadFile(filepath.Join(res.RunDir, "prompts", "reviewer-r1.api-retry1.txt"))
-	if err != nil || string(again) != string(first) {
-		t.Errorf("the rerun must get the first prompt: %v", err)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The same review, on the same budget: the deadline it states is the one
+	// the first run had, give or take the second it is rounded to.
+	until := regexp.MustCompile(`until (\d\d:\d\d:\d\d) UTC`)
+	withoutBudget := func(b []byte) string {
+		return until.ReplaceAllString(regexp.MustCompile(`You have \S+ \S+ of wall-clock`).ReplaceAllString(string(b), ""), "")
+	}
+	if withoutBudget(again) != withoutBudget(first) {
+		t.Errorf("the rerun must get the first prompt, its time budget aside")
+	}
+	d1, e1 := time.Parse("15:04:05", string(until.FindSubmatch(first)[1]))
+	d2, e2 := time.Parse("15:04:05", string(until.FindSubmatch(again)[1]))
+	if e1 != nil || e2 != nil || d2.Sub(d1) > time.Second || d1.Sub(d2) > time.Second {
+		t.Errorf("the rerun must end when the first run's budget does: %s, then %s", d1, d2)
 	}
 	if out, _ := os.ReadFile(filepath.Join(res.RunDir, "raw", "r1.stdout")); !strings.Contains(string(out), "Request timed out.") {
 		t.Errorf("the failed run's output is not kept: %s", out)
@@ -592,7 +606,9 @@ func TestReviewDoesNotRunAgainAnUnreachableModelWhenDisabledOrOutOfTime(t *testi
 		"disabled": func(c *config.ReviewConfig) {
 			c.Timeout, c.AgentTimeout, c.APIRetries = 10*time.Minute, 5*time.Minute, &none
 		},
-		"out of time": func(c *config.ReviewConfig) {},
+		// The review has time; what the reviewer's own budget leaves past the
+		// first run is under two minutes.
+		"out of time": func(c *config.ReviewConfig) { c.Timeout, c.AgentTimeout = 10*time.Minute, 2*time.Minute },
 	} {
 		t.Run(name, func(t *testing.T) {
 			a, _ := newApp(t, unreachableReviewer(t),
@@ -613,6 +629,35 @@ func TestReviewDoesNotRunAgainAnUnreachableModelWhenDisabledOrOutOfTime(t *testi
 				t.Errorf("the reviewer was run again: %v", err)
 			}
 		})
+	}
+}
+
+// TestReviewDoesNotRunAgainAnUnreachableModelStoppedByTheQuorum: a reviewer
+// pausing before its rerun when the quorum stops it is not run again: the
+// quorum is there to bound the wait.
+func TestReviewDoesNotRunAgainAnUnreachableModelStoppedByTheQuorum(t *testing.T) {
+	a, _ := newApp(t, unreachableReviewer(t),
+		agentCfg(t, "r2", config.RoleReviewer, "valid"),
+		agentCfg(t, "lead", config.RoleLead, "valid"))
+	a.Config.Review.Timeout, a.Config.Review.AgentTimeout = 10*time.Minute, 5*time.Minute
+	pause, grace := time.Minute, 200*time.Millisecond
+	a.Config.Review.APIRetryDelay = &pause
+	a.Config.Review.Quorum = 1
+	a.Config.Review.StragglerGrace = &grace
+	start := time.Now()
+	res, err := a.Review(context.Background(), ReviewRequest{Number: 7})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d := time.Since(start); d > 20*time.Second {
+		t.Errorf("the review waited for the pause: %s", d)
+	}
+	r1 := reviewerExecution(t, res.Manifest, "r1")
+	if r1.Succeeded || r1.APIRetries != 0 {
+		t.Errorf("manifest: %+v", r1)
+	}
+	if _, err := os.Stat(filepath.Join(res.RunDir, "prompts", "reviewer-r1.api-retry1.txt")); !os.IsNotExist(err) {
+		t.Errorf("the reviewer was run again: %v", err)
 	}
 }
 

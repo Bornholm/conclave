@@ -194,6 +194,9 @@ func TestLoopReleasesARequestForChangesOnTheLastRound(t *testing.T) {
 	if reports, _ := os.ReadDir(filepath.Join(a.RunsBase, m2.Run, "reports")); len(reports) != 0 {
 		t.Errorf("the agents ran past loop.max_rounds: %v", reports)
 	}
+	if prompt, _ := os.ReadFile(filepath.Join(a.RunsBase, m2.Run, "prompts", "comment-lead.txt")); !strings.Contains(string(prompt), "and failed") {
+		t.Errorf("the writer is not told the CI failed: %s", prompt)
+	}
 }
 
 func TestLoopRunsARoundWhenTheHeldRunIsMissing(t *testing.T) {
@@ -410,10 +413,11 @@ func TestLoopGivesAHeldApprovalOnceWhenTheForgeListsItLate(t *testing.T) {
 	a, f, _, _ := heldApproval(t)
 	f.checks[0].State = domain.CheckSuccess
 	late := &lateForge{fakeForge: f, frozen: append([]domain.ForgeReview(nil), f.reviews[7]...)}
-	l := newLoop(a, f)
-	l.reviewer = late
 	before := runs(t, a)
+	// A new loop on each pass, as `--once` from cron.
 	for range 3 {
+		l := newLoop(a, f)
+		l.reviewer = late
 		if err := l.pass(context.Background()); err != nil {
 			t.Fatal(err)
 		}

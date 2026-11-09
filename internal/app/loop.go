@@ -94,6 +94,10 @@ type ciWait struct {
 	Since time.Time `json:"since"`
 }
 
+// releasedFile is written in a run whose held approval the loop gave, and
+// names the run that gave it.
+const releasedFile = "released.json"
+
 // ciWaitFile is where the loop keeps, next to the runs, when it started
 // waiting for the CI of each pull request: `conclave loop --once` run from
 // cron is a new process on each pass, and an in-memory wait would never
@@ -243,6 +247,9 @@ type loopSubmission struct {
 	// refusing, a body it will never take, is given up after
 	// loopMaxFailures of them.
 	attempts int
+	// releases is the run whose held verdict the review gives, which is
+	// told once it is submitted.
+	releases string
 }
 
 // Loop reviews the open pull requests waiting for a review, and follows
@@ -341,10 +348,6 @@ type loop struct {
 	waiting      map[int64]ciWait
 	waitFile     string
 	waitsChanged bool
-	// given is the head and round of each pull request whose held
-	// approval the loop gave: a forge slow to list the release back would
-	// otherwise have it given again on the next pass.
-	given map[int64]string
 	// now is the clock, replaced in tests.
 	now func() time.Time
 }
@@ -457,11 +460,6 @@ func (l *loop) pass(ctx context.Context) error {
 	for number := range l.skipped {
 		if !listed[number] {
 			delete(l.skipped, number)
-		}
-	}
-	for number := range l.given {
-		if !listed[number] {
-			delete(l.given, number)
 		}
 	}
 	for number := range l.waiting {
@@ -604,10 +602,13 @@ func (l *loop) release(ctx context.Context, pr domain.PullRequest, d loopDecisio
 		delete(l.waiting, pr.Number)
 		l.waitsChanged = true
 	}
-	given := fmt.Sprintf("%s %d", pr.Head.SHA, d.Round)
-	if l.given[pr.Number] == given {
-		log.Debug("pull request skipped", "number", pr.Number, "reason", "held approval given already")
-		return false, nil
+	// A forge slow to list the release back would have it given again:
+	// the held run says it was, across loops, `--once` from cron included.
+	if l.hasRun(d.Previous.Run) {
+		if _, err := os.Stat(filepath.Join(l.runsBase, d.Previous.Run, "final", releasedFile)); err == nil {
+			log.Debug("pull request skipped", "number", pr.Number, "reason", "held approval given already")
+			return false, nil
+		}
 	}
 	// No CI to read, ci.enabled turned off or a forge that reports none,
 	// releases the approval: a new round would approve without one too.
@@ -641,15 +642,7 @@ func (l *loop) release(ctx context.Context, pr domain.PullRequest, d loopDecisio
 		return false, nil
 	}
 	log.Info("loop review released", "number", pr.Number, "round", d.Round, "run", d.Previous.Run, "verdict", res.Review.Verdict)
-	if err := l.publish(ctx, pr, d, res); err != nil {
-		return true, err
-	}
-	// Submitted, or kept for retrySubmission: either way, given.
-	if l.given == nil {
-		l.given = map[int64]string{}
-	}
-	l.given[pr.Number] = given
-	return true, nil
+	return true, l.publish(ctx, pr, d, res)
 }
 
 // heldReview reads the review of the round that held an approval back: in
@@ -763,6 +756,9 @@ func (l *loop) publish(ctx context.Context, pr domain.PullRequest, d loopDecisio
 		return err
 	}
 	u := loopSubmission{mark: mark, body: body, attempts: 1}
+	if d.Release {
+		u.releases = d.Previous.Run
+	}
 	if err := l.submit(ctx, pr.Number, u); err != nil {
 		// The review is done: only the submission is tried again.
 		l.unsent[pr.Number] = u
@@ -781,6 +777,12 @@ func (l *loop) submit(ctx context.Context, number int64, u loopSubmission) error
 	// The run keeps what the author reads, once it is theirs to read.
 	if store, err := artifact.Open(l.runsBase, u.mark.Run); err == nil {
 		_ = store.Write("final", "comment.md", []byte(u.body))
+	}
+	if u.releases != "" && l.hasRun(u.releases) {
+		data, _ := json.Marshal(map[string]string{"run": u.mark.Run})
+		if err := os.WriteFile(filepath.Join(l.runsBase, u.releases, "final", releasedFile), data, 0o644); err != nil {
+			l.app.logger().Warn("release not recorded, a forge slow to list it may have it given again", "number", number, "run", u.releases, "error", err)
+		}
 	}
 	l.app.logger().Info("review submitted", "number", number, "round", u.mark.Round, "verdict", u.mark.Verdict, "run", u.mark.Run)
 	return nil

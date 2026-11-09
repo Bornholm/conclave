@@ -317,6 +317,9 @@ type loop struct {
 // pass goes once over the open pull requests, oldest first.
 func (l *loop) pass(ctx context.Context) error {
 	log := l.app.logger()
+	// Also on the way out of a pass cut short: a wait lost restarts the
+	// ci.max_wait clock of the next --once run.
+	defer l.saveWaits()
 	prs, err := l.reviewer.ListOpenPullRequests(ctx, l.repo)
 	if err != nil {
 		return fmt.Errorf("list pull requests: %w", err)
@@ -346,6 +349,13 @@ func (l *loop) pass(ctx context.Context) error {
 			}
 		}
 		d := decideLoop(pr, l.me, reviews, l.app.Config.Loop.MaxRounds, l.include[pr.Number])
+		// A pull request left alone is not waiting for its CI: a head the
+		// loop already reviewed would otherwise keep its wait for as long
+		// as it stays open.
+		if _, ok := l.waiting[pr.Number]; ok && d.Skip != "" {
+			delete(l.waiting, pr.Number)
+			l.waitsChanged = true
+		}
 		// An included pull request the loop already follows, with no new
 		// head for instance, is reported like the others it leaves alone.
 		if d.Skip != "" && l.include[pr.Number] {
@@ -407,7 +417,6 @@ func (l *loop) pass(ctx context.Context) error {
 			l.waitsChanged = true
 		}
 	}
-	l.saveWaits()
 	// A pull request closed or merged with a review unsubmitted.
 	for number, u := range l.unsent {
 		if !listed[number] {

@@ -118,3 +118,27 @@ func TestListChecksAnnotationsError(t *testing.T) {
 		t.Errorf("checks: %+v", checks)
 	}
 }
+
+func TestListChecksPagesBounded(t *testing.T) {
+	calls := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		w.Header().Set("Link", fmt.Sprintf(`<http://%s%s?page=%d>; rel="next"`, r.Host, r.URL.Path, calls+1))
+		if strings.HasSuffix(r.URL.Path, "/check-runs") {
+			fmt.Fprint(w, `{"check_runs":[]}`)
+			return
+		}
+		fmt.Fprint(w, `{"statuses":[]}`)
+	}))
+	defer srv.Close()
+	c, err := New(srv.URL, "tok", srv.Client())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.ListChecks(context.Background(), domain.Repository{Owner: "acme", Name: "proj"}, "abc"); err != nil {
+		t.Fatal(err)
+	}
+	if calls != 2*maxCheckPages {
+		t.Errorf("%d calls to a server that always sends a next link", calls)
+	}
+}

@@ -273,6 +273,19 @@ func TestLoopWaitsForCI(t *testing.T) {
 		t.Error("ci.max_wait 0 waits")
 	}
 
+	// A pull request the loop leaves alone drops its wait.
+	lw, _, _ := newLoopApp(t, agentCfg(t, "r1", config.RoleReviewer, "approving"), agentCfg(t, "lead", config.RoleLead, "approving"))
+	lf := lw.Forge.(*fakeForge)
+	lf.pr.State = "draft"
+	pl := &loop{app: lw, forge: lf, reviewer: lf, me: loopUser, waiting: map[int64]ciWait{7: {Head: "old", Since: now}}, failures: map[int64]loopFailure{},
+		unsent: map[int64]loopSubmission{}, skipped: map[int64]string{}, include: map[int64]bool{}, unheeded: map[int64]string{}, now: time.Now}
+	if err := pl.pass(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := pl.waiting[7]; ok {
+		t.Error("a skipped pull request keeps its wait")
+	}
+
 	// The CI passed: the loop reviews and approves, on the CI it read.
 	f.checks[0].State = domain.CheckSuccess
 	a.Config.CI.MaxWait = nil

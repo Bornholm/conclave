@@ -13,6 +13,11 @@ import (
 	"github.com/bornholm/conclave/internal/forge/httpx"
 )
 
+// maxCheckPages bounds the pages of check runs and of statuses read: a
+// commit with more than a thousand of either is not a CI, and a proxy that
+// always sends a next link must not keep the review paging.
+const maxCheckPages = 10
+
 type checkRuns struct {
 	CheckRuns []checkRun `json:"check_runs"`
 }
@@ -60,7 +65,7 @@ func (c *Client) ListChecks(ctx context.Context, repo domain.Repository, sha str
 	var out []domain.Check
 	next := c.http.Resolve(base+"/commits/"+url.PathEscape(sha)+"/check-runs", url.Values{"per_page": {"100"}})
 	annotated := 0
-	for next != "" {
+	for page := 0; next != "" && page < maxCheckPages; page++ {
 		resp, err := c.http.Do(ctx, http.MethodGet, next, nil, accept)
 		if err != nil {
 			return nil, fmt.Errorf("list check runs: %w", err)
@@ -86,7 +91,7 @@ func (c *Client) ListChecks(ctx context.Context, repo domain.Repository, sha str
 		next = httpx.NextLink(resp.Header)
 	}
 	next = c.http.Resolve(base+"/commits/"+url.PathEscape(sha)+"/status", url.Values{"per_page": {"100"}})
-	for next != "" {
+	for page := 0; next != "" && page < maxCheckPages; page++ {
 		resp, err := c.http.Do(ctx, http.MethodGet, next, nil, accept)
 		if err != nil {
 			return nil, fmt.Errorf("get commit status: %w", err)

@@ -239,6 +239,13 @@ func releaseHeld(review *domain.ConsolidatedReview, status *domain.CIStatus) []s
 	return added
 }
 
+// noCI reports whether a status says nothing of the CI: none read, CI
+// turned off or a forge that reports none, or a read that found no check.
+// An approval given on it is given without a CI, not on one that passed.
+func noCI(status *domain.CIStatus) bool {
+	return status == nil || status.Error == "" && len(status.Checks) == 0
+}
+
 func checkNames(checks []domain.Check) string {
 	names := make([]string, len(checks))
 	for i, c := range checks {

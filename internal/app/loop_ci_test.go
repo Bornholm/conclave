@@ -455,7 +455,7 @@ func TestLoopRunsTheRoundOfAFailedHeldCIOnceWhenTheForgeListsItLate(t *testing.T
 	if len(f.reviews[7]) != 2 {
 		t.Errorf("the round ran %d times", len(f.reviews[7])-1)
 	}
-	if _, err := os.Stat(filepath.Join(a.RunsBase, m.Run, "final", releasedFile)); err != nil {
+	if _, err := os.Stat(newLoop(a, f).releasedPath(m.Run)); err != nil {
 		t.Errorf("the held run does not say its round ran: %v", err)
 	}
 }
@@ -486,6 +486,7 @@ func TestLoopFallbackNoticeOfARelease(t *testing.T) {
 	}{
 		{"passed", domain.CheckSuccess, false, "The CI has passed since the previous comment"},
 		{"failed on the last round", domain.CheckFailure, true, "and it failed: changes are requested"},
+		{"no check reported", "", false, "No CI is read on this head any more"},
 	} {
 		a, f, _, m := heldApproval(t)
 		a.Config.Agents = append(a.Config.Agents, agentCfg(t, "w", config.RoleReviewer, "exit-1"))
@@ -493,12 +494,16 @@ func TestLoopFallbackNoticeOfARelease(t *testing.T) {
 		if c.last {
 			a.Config.Loop.MaxRounds = m.Round
 		}
-		f.checks[0].State = c.state
+		if c.state == "" {
+			f.checks = nil
+		} else {
+			f.checks[0].State = c.state
+		}
 		l := newLoop(a, f)
 		if err := l.pass(context.Background()); err != nil {
 			t.Fatal(err)
 		}
-		if len(f.reviews[7]) != 2 || !strings.Contains(f.reviews[7][1].Body, c.want) {
+		if len(f.reviews[7]) != 2 || !strings.Contains(f.reviews[7][1].Body, c.want) || c.state == "" && strings.Contains(f.reviews[7][1].Body, "has passed") {
 			t.Errorf("%s: %+v", c.name, f.reviews[7])
 		}
 	}
@@ -520,6 +525,9 @@ func TestLoopRunsTheRoundOfAMissingHeldRunOnceWhenTheForgeListsItLate(t *testing
 	}
 	if len(f.reviews[7]) != 2 {
 		t.Errorf("the round ran %d times", len(f.reviews[7])-1)
+	}
+	if _, err := os.Stat(filepath.Join(a.RunsBase, m.Run)); err == nil {
+		t.Error("a run that is not in this clone got a directory")
 	}
 }
 

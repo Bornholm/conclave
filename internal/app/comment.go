@@ -84,7 +84,7 @@ func (a *App) WriteComment(ctx context.Context, req CommentRequest) (*Comment, e
 	p, err := prompt.Comment(prompt.CommentInput{
 		AgentID: writer.ID, Worktree: workdir, PR: req.PR, Review: md.String(),
 		Verdict: review.Verdict, Round: req.Round, MaxRounds: req.MaxRounds,
-		Incremental: review.Meta.Since != nil, Released: req.Released, WithoutCI: review.CI == nil, MaxBytes: commentBytes(cfg), KeepFrom: keepFrom(req.RequestChangesFrom),
+		Incremental: review.Meta.Since != nil, Released: req.Released, WithoutCI: noCI(review.CI), MaxBytes: commentBytes(cfg), KeepFrom: keepFrom(req.RequestChangesFrom),
 	})
 	if err != nil {
 		return nil, err

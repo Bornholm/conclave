@@ -94,9 +94,15 @@ type ciWait struct {
 	Since time.Time `json:"since"`
 }
 
-// releasedFile is written in a run whose held approval the loop gave, and
-// names the run that gave it.
-const releasedFile = "released.json"
+// releasedDir is where the loop keeps, next to the runs, one file per run
+// whose held verdict it gave, named after that run and naming the run that
+// gave it. Outside the runs: the held run may not be in this clone.
+const releasedDir = "loop-released"
+
+// releasedPath is the file that says the held verdict of a run was given.
+func (l *loop) releasedPath(run string) string {
+	return filepath.Join(filepath.Dir(l.runsBase), releasedDir, run+".json")
+}
 
 // ciWaitFile is where the loop keeps, next to the runs, when it started
 // waiting for the CI of each pull request: `conclave loop --once` run from
@@ -551,8 +557,8 @@ func (l *loop) retrySubmission(ctx context.Context, pr domain.PullRequest, revie
 		// A review given once the CI passed is of the round it was held
 		// on: that round's review is not this one. Outside a release, any
 		// other review of the round, from another loop for one, is; a
-		// release only knows its own run, and released.json in the held
-		// run keeps it from being given twice.
+		// release only knows its own run, and the file releasedPath names
+		// keeps it from being given twice.
 		if m, ok := parseLoopMark(rv.Body); ok && strings.EqualFold(rv.Author, l.me) && (m.Round > u.mark.Round || m.Run == u.mark.Run || u.releases == "" && m.Round == u.mark.Round) {
 			return false, false
 		}
@@ -611,9 +617,9 @@ func (l *loop) release(ctx context.Context, pr domain.PullRequest, d loopDecisio
 		l.waitsChanged = true
 	}
 	// A forge slow to list the release back would have it given again:
-	// the held run says it was, across loops, `--once` from cron included.
+	// the file says it was, across loops, `--once` from cron included.
 	if runIDRe.MatchString(d.Previous.Run) {
-		if _, err := os.Stat(filepath.Join(l.runsBase, d.Previous.Run, "final", releasedFile)); err == nil {
+		if _, err := os.Stat(l.releasedPath(d.Previous.Run)); err == nil {
 			log.Debug("pull request skipped", "number", pr.Number, "reason", "held approval given already")
 			return false, nil
 		}
@@ -676,8 +682,7 @@ func (l *loop) heldReview(pr domain.PullRequest, previous string) (*domain.Conso
 // released writes, in a run of its own, the review a previous run held
 // with the verdict the CI held and the CI read since. The previous run's
 // review is copied, not changed: it is what the agents said, and what was
-// published then. Only its final/ directory gets releasedFile, once the
-// release is submitted. A run that could not be written whole is removed.
+// published then. A run that could not be written whole is removed.
 func (l *loop) released(pr domain.PullRequest, previous string, review *domain.ConsolidatedReview, ci *domain.CIStatus) (_ *ReviewResult, err error) {
 	cfg := l.app.Config
 	started := l.now()
@@ -743,7 +748,7 @@ func (l *loop) publish(ctx context.Context, pr domain.PullRequest, d loopDecisio
 		// the writer's, or the forge refuses it.
 		notice := roundNotice(d.Round, cfg.Loop.MaxRounds, review.Verdict)
 		switch {
-		case d.Release && review.Verdict == domain.VerdictApprove && review.CI == nil:
+		case d.Release && review.Verdict == domain.VerdictApprove && noCI(review.CI):
 			notice = "No CI is read on this head any more: the approval the previous comment held back is given. " + notice
 		case d.Release && review.Verdict == domain.VerdictApprove:
 			notice = "The CI has passed since the previous comment, which published this review without the approval the CI held back. " + notice
@@ -795,14 +800,12 @@ func (l *loop) submit(ctx context.Context, number int64, u loopSubmission) error
 	if store, err := artifact.Open(l.runsBase, u.mark.Run); err == nil {
 		_ = store.Write("final", "comment.md", []byte(u.body))
 	}
-	// Written where the held run is, or would be when it is not in this
-	// clone: the release looks for it there.
 	if u.releases != "" && runIDRe.MatchString(u.releases) {
-		dir := filepath.Join(l.runsBase, u.releases, "final")
+		path := l.releasedPath(u.releases)
 		data, _ := json.Marshal(map[string]string{"run": u.mark.Run})
-		err := os.MkdirAll(dir, 0o755)
+		err := os.MkdirAll(filepath.Dir(path), 0o755)
 		if err == nil {
-			err = os.WriteFile(filepath.Join(dir, releasedFile), data, 0o644)
+			err = os.WriteFile(path, data, 0o644)
 		}
 		if err != nil {
 			l.app.logger().Warn("release not recorded, a forge slow to list it may have it given again", "number", number, "run", u.releases, "error", err)

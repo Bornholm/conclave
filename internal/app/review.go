@@ -1026,7 +1026,9 @@ func (a *App) waitAPIRetry(ctx context.Context, rv config.AgentConfig, delay tim
 	case <-ctx.Done():
 		return false
 	case <-t.C:
-		return ctx.Err() == nil && !isStraggler(ctx)
+		// A reviewer the quorum stopped has its context cancelled: the
+		// cause is set only then, so ctx.Err() covers it too.
+		return ctx.Err() == nil
 	}
 }
 

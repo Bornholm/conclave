@@ -291,6 +291,10 @@ func main() {
 		// A lead that rates its one finding low and only comments.
 		rep := strings.Replace(leadReport(), `"verdict": "request_changes"`, `"verdict": "comment"`, 1)
 		fmt.Print(strings.Replace(rep, `"severity": "high"`, `"severity": "low"`, 1))
+	case "lead-held":
+		// A lead that only comments, and claims an approval held by the CI.
+		rep := strings.Replace(leadReport(), `"verdict": "request_changes"`, `"verdict": "comment", "held_by_ci": "approve"`, 1)
+		fmt.Print(strings.Replace(rep, `"severity": "high"`, `"severity": "low"`, 1))
 	case "lead-impostor":
 		fmt.Print(strings.Replace(leadReport(), `"reported_by": ["r1"]`, `"reported_by": ["ghost"]`, 1))
 	default:

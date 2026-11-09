@@ -30,6 +30,9 @@ type CommentRequest struct {
 	// RequestChangesFrom is the threshold the review's verdict was raised
 	// from, if any: the comment keeps every finding at or above it.
 	RequestChangesFrom domain.Severity
+	// Released says the review is the previous round's, given again with
+	// the verdict the CI held back now that it has finished.
+	Released bool
 }
 
 // Comment is what a writer made of a review.
@@ -81,7 +84,7 @@ func (a *App) WriteComment(ctx context.Context, req CommentRequest) (*Comment, e
 	p, err := prompt.Comment(prompt.CommentInput{
 		AgentID: writer.ID, Worktree: workdir, PR: req.PR, Review: md.String(),
 		Verdict: review.Verdict, Round: req.Round, MaxRounds: req.MaxRounds,
-		Incremental: review.Meta.Since != nil, MaxBytes: commentBytes(cfg), KeepFrom: keepFrom(req.RequestChangesFrom),
+		Incremental: review.Meta.Since != nil, Released: req.Released, WithoutCI: noCI(review.CI), MaxBytes: commentBytes(cfg), KeepFrom: keepFrom(req.RequestChangesFrom),
 	})
 	if err != nil {
 		return nil, err

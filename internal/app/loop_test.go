@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/bornholm/conclave/internal/config"
 	"github.com/bornholm/conclave/internal/domain"
@@ -236,7 +237,7 @@ func runs(t *testing.T, a *App) int {
 }
 
 func newLoop(a *App, f *fakeForge) *loop {
-	return &loop{app: a, forge: f, reviewer: f, me: loopUser, runsBase: a.RunsBase, failures: map[int64]loopFailure{}, unsent: map[int64]loopSubmission{}, skipped: map[int64]string{}, include: map[int64]bool{}, unheeded: map[int64]string{}}
+	return &loop{app: a, forge: f, reviewer: f, me: loopUser, runsBase: a.RunsBase, failures: map[int64]loopFailure{}, unsent: map[int64]loopSubmission{}, skipped: map[int64]string{}, include: map[int64]bool{}, unheeded: map[int64]string{}, waiting: map[int64]ciWait{}, now: time.Now}
 }
 
 func TestLoopRetriesASubmissionWithoutReviewingAgain(t *testing.T) {

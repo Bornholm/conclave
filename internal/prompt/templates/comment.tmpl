@@ -46,7 +46,27 @@ CONTENT
   finished, each by its name in backticks exactly as the review writes it,
   with the link when there is one: a comment that leaves out the name of a
   failed check, in backticks, is rejected.
-{{- if .Incremental}}
+{{- if and .Released .WithoutCI}}
+- The previous comment published this same review while the CI had not
+  finished, or could not be read, which kept it from approving. No CI is
+  read on this head any more: the first sentence says the approval is
+  given without one, never that the CI passed. The findings are the ones
+  the previous comment gave: list those still to act on in one line each,
+  without explaining them again.
+{{- else if and .Released (eq .Verdict "approve")}}
+- The previous comment published this same review while the CI had not
+  finished, or could not be read, which kept it from approving. The CI has
+  passed since: the first sentence says so, and gives the verdict. The
+  findings are the ones the previous comment gave: list those still to act
+  on in one line each, without explaining them again.
+{{- else if .Released}}
+- The previous comment published this same review while the CI had not
+  finished, or could not be read. The CI has finished since, and failed:
+  the first sentence says so and names each failed check, which is what
+  blocks the merge now. The findings are the ones the previous comment
+  gave: list those still to act on in one line each, without explaining
+  them again.
+{{- else if .Incremental}}
 - This review follows up on the previous one. Start with what the author
   fixed since, in one or two sentences: they should not have to guess
   whether their fixes were accepted. Then what is still there, then what is

@@ -33,9 +33,55 @@ func (a *App) loadCI(ctx context.Context, f forge.Forge, repo domain.Repository,
 		status.Error = err.Error()
 		return status
 	}
-	status.Checks = classifyChecks(a.Config.CI, checks)
+	status.Checks = classifyChecks(a.Config.CI, sanitizeChecks(checks))
 	log.Debug("CI checks read", "head", sha, "checks", len(status.Checks), "state", status.State())
 	return status
+}
+
+// maxCheckNameBytes caps a check name: it is a line of the prompt and of
+// the review.
+const maxCheckNameBytes = 200
+
+// sanitizeChecks makes what the forge said about the checks safe to quote.
+// A job name and what a job writes are the author's to choose, on a pull
+// request from a fork as on any other: a name is put on one line without
+// backticks, and a line of output that would close the block of untrusted
+// data it is quoted in is defused.
+func sanitizeChecks(checks []domain.Check) []domain.Check {
+	out := make([]domain.Check, len(checks))
+	for i, c := range checks {
+		c.Name = oneLine(c.Name, maxCheckNameBytes)
+		c.Summary = defuseFences(c.Summary)
+		anns := make([]domain.CheckAnnotation, len(c.Annotations))
+		for j, an := range c.Annotations {
+			an.Path = oneLine(an.Path, maxCheckNameBytes)
+			an.Level = oneLine(an.Level, 32)
+			an.Message = defuseFences(an.Message)
+			anns[j] = an
+		}
+		c.Annotations = anns
+		out[i] = c
+	}
+	return out
+}
+
+// oneLine puts s on one line, without backticks, in at most max bytes.
+func oneLine(s string, max int) string {
+	s = strings.Join(strings.Fields(strings.ReplaceAll(s, "`", "'")), " ")
+	return forge.CutText(s, max)
+}
+
+// defuseFences prefixes every line that looks like the start or the end of
+// a block of untrusted data, so that quoted output cannot close the block
+// it is quoted in.
+func defuseFences(s string) string {
+	lines := strings.Split(s, "\n")
+	for i, l := range lines {
+		if strings.HasPrefix(strings.TrimSpace(l), "---") {
+			lines[i] = "| " + l
+		}
+	}
+	return strings.Join(lines, "\n")
 }
 
 // classifyChecks marks the checks that decide the verdict: every one but the

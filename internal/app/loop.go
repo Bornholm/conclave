@@ -313,11 +313,12 @@ func (l *loop) pass(ctx context.Context) error {
 			log.Debug("pull request skipped", "number", pr.Number, "reason", "failed on this head already", "head", pr.Head.SHA)
 			continue
 		}
-		if l.waitForCI(ctx, pr) {
+		wait, ci := l.waitForCI(ctx, pr)
+		if wait {
 			continue
 		}
 		reviewed++
-		if err := l.review(ctx, pr, d); err != nil {
+		if err := l.review(ctx, pr, d, ci); err != nil {
 			if ctx.Err() != nil {
 				return err
 			}
@@ -362,16 +363,17 @@ func (l *loop) pass(ctx context.Context) error {
 // to finish on its head: reviewed before, the review could not approve, and
 // the loop would only come back on a new head. The wait ends after
 // ci.max_wait, and the review then runs anyway. A CI that could not be read
-// is not waited for: waiting would not tell more.
-func (l *loop) waitForCI(ctx context.Context, pr domain.PullRequest) bool {
+// is not waited for: waiting would not tell more. It also returns the CI it
+// read, for the review to use rather than read it again.
+func (l *loop) waitForCI(ctx context.Context, pr domain.PullRequest) (bool, *domain.CIStatus) {
 	maxWait := l.app.Config.CIMaxWait()
 	if maxWait <= 0 {
-		return false
+		return false, nil
 	}
 	ci := l.app.loadCI(ctx, l.forge, l.repo, pr.Head.SHA)
 	if ci == nil || ci.Error != "" || ci.State() != domain.CheckPending {
 		delete(l.waiting, pr.Number)
-		return false
+		return false, ci
 	}
 	log := l.app.logger()
 	w, ok := l.waiting[pr.Number]
@@ -382,10 +384,10 @@ func (l *loop) waitForCI(ctx context.Context, pr domain.PullRequest) bool {
 	}
 	if waited := l.now().Sub(w.since); waited < maxWait {
 		log.Debug("pull request skipped", "number", pr.Number, "reason", loopSkipCI, "waited", waited.Round(time.Second))
-		return true
+		return true, nil
 	}
 	log.Warn("CI still running after ci.max_wait, reviewing without it: the review cannot approve", "number", pr.Number, "checks", checkNames(ci.Blocking(domain.CheckPending)), "max_wait", maxWait)
-	return false
+	return false, ci
 }
 
 // unheed reports that an included pull request is not taken up, once until
@@ -437,11 +439,11 @@ func (l *loop) retrySubmission(ctx context.Context, pr domain.PullRequest, revie
 }
 
 // review runs one round on a pull request and submits its review.
-func (l *loop) review(ctx context.Context, pr domain.PullRequest, d loopDecision) error {
+func (l *loop) review(ctx context.Context, pr domain.PullRequest, d loopDecision, ci *domain.CIStatus) error {
 	a := l.app
 	cfg := a.Config
 	log := a.logger()
-	req := ReviewRequest{Number: pr.Number, RequestChangesFrom: domain.Severity(cfg.Loop.RequestChangesFrom)}
+	req := ReviewRequest{Number: pr.Number, RequestChangesFrom: domain.Severity(cfg.Loop.RequestChangesFrom), CI: ci}
 	if d.Previous != nil {
 		if l.hasRun(d.Previous.Run) {
 			req.Since = d.Previous.Run

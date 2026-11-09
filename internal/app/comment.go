@@ -116,10 +116,14 @@ func (a *App) WriteComment(ctx context.Context, req CommentRequest) (*Comment, e
 	// it knows: this comment, or the review it falls back to.
 	if len(missing) > 0 || len(missingChecks) > 0 {
 		_ = store.Write("final", "comment-rejected.md", []byte(rep.Body+"\n"))
-		if len(missing) == 0 {
-			return nil, fmt.Errorf("writer %s: the comment leaves out the failed CI check(s) %s", writer.ID, strings.Join(missingChecks, ", "))
+		var reasons []string
+		if len(missing) > 0 {
+			reasons = append(reasons, fmt.Sprintf("the finding(s) at %s, rated %s or above", strings.Join(missing, ", "), keepFrom(req.RequestChangesFrom)))
 		}
-		return nil, fmt.Errorf("writer %s: the comment leaves out the finding(s) at %s, rated %s or above", writer.ID, strings.Join(missing, ", "), keepFrom(req.RequestChangesFrom))
+		if len(missingChecks) > 0 {
+			reasons = append(reasons, "the failed CI check(s) "+strings.Join(missingChecks, ", "))
+		}
+		return nil, fmt.Errorf("writer %s: the comment leaves out %s", writer.ID, strings.Join(reasons, ", and "))
 	}
 	_ = store.WriteJSON("final", "comment.json", rep)
 	log.Info("writer finished", "agent", writer.ID, "language", rep.Language, "bytes", len(rep.Body), "duration", res.Duration.Round(time.Millisecond))
@@ -164,12 +168,13 @@ func missingFindings(review *domain.ConsolidatedReview, body string, from domain
 }
 
 // missingChecks returns the names of the failed blocking checks a comment
-// does not name: they request changes as a finding does, and the author has
-// to know which job to look at.
+// does not name in backticks, as the review writes them: they request
+// changes as a finding does, and the author has to know which job to look
+// at. A bare name would be found in any sentence when it is "test".
 func missingChecks(review *domain.ConsolidatedReview, body string) []string {
 	var missing []string
 	for _, c := range review.CI.Blocking(domain.CheckFailure) {
-		if !strings.Contains(body, c.Name) && !slices.Contains(missing, c.Name) {
+		if !strings.Contains(body, "`"+c.Name+"`") && !slices.Contains(missing, c.Name) {
 			missing = append(missing, c.Name)
 		}
 	}

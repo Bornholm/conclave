@@ -33,7 +33,12 @@ func TestListChecks(t *testing.T) {
 		t.Error("annotations of a check that passed are fetched")
 	})
 	mux.HandleFunc("/repos/acme/proj/commits/abc/status", func(w http.ResponseWriter, r *http.Request) {
-		fmt.Fprint(w, `{"state":"failure","statuses":[{"context":"ci/legacy","state":"error","description":"boom","target_url":"https://legacy/1"},{"context":"cla","state":"success"}]}`)
+		if r.URL.Query().Get("page") == "2" {
+			fmt.Fprint(w, `{"state":"failure","statuses":[{"context":"cla","state":"success"}]}`)
+			return
+		}
+		w.Header().Set("Link", fmt.Sprintf(`<http://%s/repos/acme/proj/commits/abc/status?page=2&per_page=100>; rel="next"`, r.Host))
+		fmt.Fprint(w, `{"state":"failure","statuses":[{"context":"ci/legacy","state":"error","description":"boom","target_url":"https://legacy/1"}]}`)
 	})
 	srv := httptest.NewServer(mux)
 	defer srv.Close()

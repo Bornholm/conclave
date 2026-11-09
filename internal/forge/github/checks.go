@@ -81,15 +81,23 @@ func (c *Client) ListChecks(ctx context.Context, repo domain.Repository, sha str
 		}
 		next = httpx.NextLink(resp.Header)
 	}
-	var status combinedStatus
-	if _, err := c.get(ctx, base+"/commits/"+url.PathEscape(sha)+"/status", url.Values{"per_page": {"100"}}, &status); err != nil {
-		return nil, fmt.Errorf("get commit status: %w", err)
-	}
-	for _, s := range status.Statuses {
-		out = append(out, domain.Check{
-			Name: s.Context, Source: domain.CheckSourceStatus, State: forge.StatusState(s.State), Conclusion: s.State,
-			URL: s.TargetURL, Summary: forge.CutText(s.Description, forge.MaxCheckSummaryBytes),
-		})
+	next = c.http.Resolve(base+"/commits/"+url.PathEscape(sha)+"/status", url.Values{"per_page": {"100"}})
+	for next != "" {
+		resp, err := c.http.Do(ctx, http.MethodGet, next, nil, accept)
+		if err != nil {
+			return nil, fmt.Errorf("get commit status: %w", err)
+		}
+		var status combinedStatus
+		if err := decode(resp.Body, &status); err != nil {
+			return nil, fmt.Errorf("get commit status: %w", err)
+		}
+		for _, s := range status.Statuses {
+			out = append(out, domain.Check{
+				Name: s.Context, Source: domain.CheckSourceStatus, State: forge.StatusState(s.State), Conclusion: s.State,
+				URL: s.TargetURL, Summary: forge.CutText(s.Description, forge.MaxCheckSummaryBytes),
+			})
+		}
+		next = httpx.NextLink(resp.Header)
 	}
 	return out, nil
 }

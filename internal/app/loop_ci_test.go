@@ -440,3 +440,22 @@ func TestLoopReleasesWithoutACIToRead(t *testing.T) {
 		t.Errorf("reviews: %+v", f.reviews[7])
 	}
 }
+
+func TestLoopRunsTheRoundOfAFailedHeldCIOnceWhenTheForgeListsItLate(t *testing.T) {
+	a, f, _, m := heldApproval(t)
+	f.checks[0].State = domain.CheckFailure
+	late := &lateForge{fakeForge: f, frozen: append([]domain.ForgeReview(nil), f.reviews[7]...)}
+	for range 3 {
+		l := newLoop(a, f)
+		l.reviewer = late
+		if err := l.pass(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(f.reviews[7]) != 2 {
+		t.Errorf("the round ran %d times", len(f.reviews[7])-1)
+	}
+	if _, err := os.Stat(filepath.Join(a.RunsBase, m.Run, "final", releasedFile)); err != nil {
+		t.Errorf("the held run does not say its round ran: %v", err)
+	}
+}

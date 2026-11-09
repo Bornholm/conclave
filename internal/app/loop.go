@@ -165,6 +165,11 @@ type loopDecision struct {
 	// a CI that had not finished: the loop gives it once the CI has passed,
 	// rather than run Round again on a head it reviewed.
 	Release bool
+	// Releases is the run that held the verdict this review gives, by a
+	// release or a round run in its place: told once it is submitted, so
+	// that a forge slow to list the review back does not have it given
+	// again.
+	Releases string
 }
 
 // decideLoop tells whether a pull request needs a review from the loop. A
@@ -544,8 +549,9 @@ func (l *loop) retrySubmission(ctx context.Context, pr domain.PullRequest, revie
 	}
 	for _, rv := range reviews {
 		// A review given once the CI passed is of the round it was held
-		// on: that round's review is not this one.
-		if m, ok := parseLoopMark(rv.Body); ok && strings.EqualFold(rv.Author, l.me) && (m.Round > u.mark.Round || m.Run == u.mark.Run) {
+		// on: that round's review is not this one. Any other review of
+		// the round, from another loop for one, is.
+		if m, ok := parseLoopMark(rv.Body); ok && strings.EqualFold(rv.Author, l.me) && (m.Round > u.mark.Round || m.Run == u.mark.Run || u.releases == "" && m.Round == u.mark.Round) {
 			return false, false
 		}
 	}
@@ -627,11 +633,11 @@ func (l *loop) release(ctx context.Context, pr domain.PullRequest, d loopDecisio
 		// would outrank on the next pass.
 		round := max(d.Round, min(d.Round+1, cfg.Loop.MaxRounds))
 		log.Warn("previous round not usable, the agents give the verdict the CI held", "number", pr.Number, "run", d.Previous.Run, "round", round, "error", err)
-		return true, l.review(ctx, pr, loopDecision{Round: round, Followed: true}, ci)
+		return true, l.review(ctx, pr, loopDecision{Round: round, Followed: true, Releases: d.Previous.Run}, ci)
 	}
 	if state == domain.CheckFailure && d.Round < cfg.Loop.MaxRounds {
 		log.Info("CI failed on a head whose approval was held, a new round looks for the cause", "number", pr.Number, "checks", checkNames(ci.Blocking(domain.CheckFailure)))
-		return true, l.review(ctx, pr, loopDecision{Round: d.Round + 1, Previous: d.Previous, PreviousAt: d.PreviousAt, Followed: true}, ci)
+		return true, l.review(ctx, pr, loopDecision{Round: d.Round + 1, Previous: d.Previous, PreviousAt: d.PreviousAt, Followed: true, Releases: d.Previous.Run}, ci)
 	}
 	// A failure to write the release is this clone's, not the previous
 	// round's: it is tried again on every pass, costing no agent, rather
@@ -666,9 +672,10 @@ func (l *loop) heldReview(pr domain.PullRequest, previous string) (*domain.Conso
 }
 
 // released writes, in a run of its own, the review a previous run held
-// with the verdict the CI held and the CI read since. The previous run is
-// left as it was: it is what the agents said, and what was published then.
-// A run that could not be written whole is removed.
+// with the verdict the CI held and the CI read since. The previous run's
+// review is copied, not changed: it is what the agents said, and what was
+// published then. Only its final/ directory gets releasedFile, once the
+// release is submitted. A run that could not be written whole is removed.
 func (l *loop) released(pr domain.PullRequest, previous string, review *domain.ConsolidatedReview, ci *domain.CIStatus) (_ *ReviewResult, err error) {
 	cfg := l.app.Config
 	started := l.now()
@@ -733,8 +740,11 @@ func (l *loop) publish(ctx context.Context, pr domain.PullRequest, d loopDecisio
 		// The whole review is the longest body the loop submits: capped like
 		// the writer's, or the forge refuses it.
 		notice := roundNotice(d.Round, cfg.Loop.MaxRounds, review.Verdict)
-		if d.Release {
-			notice = "The CI has finished since the previous comment, which published this review without the verdict it held back. " + notice
+		switch {
+		case d.Release && review.Verdict == domain.VerdictApprove:
+			notice = "The CI has passed since the previous comment, which published this review without the approval the CI held back. " + notice
+		case d.Release:
+			notice = "The CI has finished since the previous comment, which published this review while it ran, and it failed: changes are requested. " + notice
 		}
 		body = agent.TruncateField(notice+"\n\n"+md.String(), commentBytes(cfg))
 	} else {
@@ -758,6 +768,9 @@ func (l *loop) publish(ctx context.Context, pr domain.PullRequest, d loopDecisio
 	u := loopSubmission{mark: mark, body: body, attempts: 1}
 	if d.Release {
 		u.releases = d.Previous.Run
+	}
+	if d.Releases != "" {
+		u.releases = d.Releases
 	}
 	if err := l.submit(ctx, pr.Number, u); err != nil {
 		// The review is done: only the submission is tried again.

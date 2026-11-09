@@ -138,7 +138,7 @@ func Validate(cfg *Config) error {
 	}
 
 	if cfg.CI.MaxWait != nil && *cfg.CI.MaxWait < 0 {
-		add("ci.max_wait: must be positive")
+		add("ci.max_wait: must be 0 or more")
 	}
 	for _, list := range []struct {
 		name     string

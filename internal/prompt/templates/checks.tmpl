@@ -10,11 +10,11 @@ cannot have caused (the CI infrastructure, a missing secret, a job that
 fails on the base branch too) is said in the summary, not reported as a
 finding. A check that passed is no proof the code is right: a test that
 does not exist cannot fail.
-{{range .Checks}}- {{.Name}}: {{.State}}{{if and .Conclusion (ne .Conclusion (print .State))}} ({{.Conclusion}}){{end}}{{if not .Blocking}}, does not block{{end}}{{if .URL}} — {{.URL}}{{end}}
-{{if and (ne (print .State) "success") (or .Summary .Annotations)}}--- BEGIN UNTRUSTED OUTPUT OF CHECK {{.Name}} ---
+{{range .Checks}}- Check {{.Name}}: {{.State}}{{if and .Conclusion (ne .Conclusion (print .State))}} ({{.Conclusion}}){{end}}{{if not .Blocking}}, does not block{{end}}{{if .URL}} — {{.URL}}{{end}}
+{{if and (ne (print .State) "success") (or .Summary .Annotations)}}--- BEGIN UNTRUSTED CHECK OUTPUT ---
 {{if .Summary}}{{.Summary}}
 {{end}}{{range .Annotations}}{{.Path}}{{if .StartLine}}:{{.StartLine}}{{if gt .EndLine .StartLine}}-{{.EndLine}}{{end}}{{end}}{{if .Level}} [{{.Level}}]{{end}} {{.Message}}
-{{end}}--- END UNTRUSTED OUTPUT OF CHECK {{.Name}} ---
+{{end}}--- END UNTRUSTED CHECK OUTPUT ---
 {{end}}{{else}}- no check reported on this head
 {{end}}{{end}}
 {{end}}{{end}}

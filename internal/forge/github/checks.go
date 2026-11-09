@@ -73,9 +73,13 @@ func (c *Client) ListChecks(ctx context.Context, repo domain.Repository, sha str
 			ch := mapCheckRun(run)
 			if ch.State == domain.CheckFailure && run.Output.AnnotationsCount > 0 && annotated < forge.MaxAnnotatedChecks {
 				annotated++
-				if ch.Annotations, err = c.annotations(ctx, base, run.ID); err != nil {
-					return nil, err
+				// The annotations add to a check the list already reports:
+				// failing to read them must not make the whole CI unknown.
+				anns, aerr := c.annotations(ctx, base, run.ID)
+				if aerr != nil {
+					ch.Summary = strings.TrimSpace(ch.Summary + "\n[annotations not read: " + forge.CutText(aerr.Error(), 200) + "]")
 				}
+				ch.Annotations = anns
 			}
 			out = append(out, ch)
 		}

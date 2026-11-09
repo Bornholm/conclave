@@ -92,3 +92,29 @@ func TestListChecksError(t *testing.T) {
 		t.Errorf("error: %v", err)
 	}
 }
+
+func TestListChecksAnnotationsError(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/repos/acme/proj/commits/abc/check-runs", func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `{"check_runs":[{"id":2,"name":"test","status":"completed","conclusion":"failure","output":{"title":"Tests","annotations_count":1}}]}`)
+	})
+	mux.HandleFunc("/repos/acme/proj/check-runs/2/annotations", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadGateway)
+	})
+	mux.HandleFunc("/repos/acme/proj/commits/abc/status", func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `{"statuses":[]}`)
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+	c, err := New(srv.URL, "tok", srv.Client())
+	if err != nil {
+		t.Fatal(err)
+	}
+	checks, err := c.ListChecks(context.Background(), domain.Repository{Owner: "acme", Name: "proj"}, "abc")
+	if err != nil {
+		t.Fatalf("an annotation read failing fails the CI: %v", err)
+	}
+	if len(checks) != 1 || checks[0].State != domain.CheckFailure || checks[0].Annotations != nil || !strings.Contains(checks[0].Summary, "Tests\n[annotations not read: ") {
+		t.Errorf("checks: %+v", checks)
+	}
+}

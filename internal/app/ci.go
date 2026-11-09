@@ -58,7 +58,7 @@ const maxCheckFieldBytes = 500
 func sanitizeChecks(checks []domain.Check) []domain.Check {
 	out := make([]domain.Check, len(checks))
 	for i, c := range checks {
-		c.Name = oneLine(c.Name, maxCheckNameBytes)
+		c.Name = noDashes(oneLine(c.Name, maxCheckNameBytes))
 		c.Conclusion = oneLine(c.Conclusion, 64)
 		c.URL = oneLine(c.URL, maxCheckFieldBytes)
 		c.Summary = defuseFences(c.Summary)
@@ -83,9 +83,19 @@ func oneLine(s string, max int) string {
 	return forge.CutText(s, max)
 }
 
+// noDashes shortens every run of three dashes or more to two, so that a
+// check name, quoted on the line before its output, cannot look like the
+// marker of a block of untrusted data.
+func noDashes(s string) string {
+	for strings.Contains(s, "---") {
+		s = strings.ReplaceAll(s, "---", "--")
+	}
+	return s
+}
+
 // lineBreaks turns every Unicode line break into "\n": a renderer, or a
 // model, reads CR, NEL and the line and paragraph separators as one.
-var lineBreaks = strings.NewReplacer("\r\n", "\n", "\r", "\n", "\u0085", "\n", "\u2028", "\n", "\u2029", "\n")
+var lineBreaks = strings.NewReplacer("\r\n", "\n", "\r", "\n", "\v", "\n", "\f", "\n", "\u0085", "\n", "\u2028", "\n", "\u2029", "\n")
 
 // dropFormat removes the invisible format characters (zero-width spaces and
 // joiners, bidi controls, the byte order mark), which can hide a marker.

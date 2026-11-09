@@ -75,7 +75,7 @@ func TestDecodeRejects(t *testing.T) {
 		"tiny comment cap":    {strings.Replace(validYAML, "review:", "loop:\n  max_comment_bytes: 100\nreview:", 1), "loop.max_comment_bytes: must be at least 1024"},
 		"info threshold":      {strings.Replace(validYAML, "review:", "loop:\n  request_changes_from: info\nreview:", 1), `loop.request_changes_from: "info" is not one of critical, high, medium, low`},
 		"negative rounds":     {strings.Replace(validYAML, "review:", "loop:\n  max_rounds: -1\nreview:", 1), "loop.max_rounds"},
-		"negative CI wait":    {strings.Replace(validYAML, "review:", "ci:\n  max_wait: -1m\nreview:", 1), "ci.max_wait: must be positive"},
+		"negative CI wait":    {strings.Replace(validYAML, "review:", "ci:\n  max_wait: -1m\nreview:", 1), "ci.max_wait: must be 0 or more"},
 		"empty CI pattern":    {strings.Replace(validYAML, "review:", "ci:\n  ignore: [lint, \"\"]\nreview:", 1), "ci.ignore[1]: empty pattern"},
 		"empty":               {"", "empty document"},
 	}

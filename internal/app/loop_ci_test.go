@@ -20,6 +20,8 @@ func TestDecideLoopHeldApproval(t *testing.T) {
 	}
 	released := domain.ForgeReview{Author: "me", SubmittedAt: "2026-01-01T00:10:00Z",
 		Body: loopMark{Round: 1, Head: "h2", Run: "run2", Verdict: domain.VerdictApprove}.String()}
+	at := func(rv domain.ForgeReview, when string) domain.ForgeReview { rv.SubmittedAt = when; return rv }
+	untimed := func(rv domain.ForgeReview) domain.ForgeReview { return at(rv, "") }
 	for _, c := range []struct {
 		name      string
 		reviews   []domain.ForgeReview
@@ -34,6 +36,8 @@ func TestDecideLoopHeldApproval(t *testing.T) {
 		{name: "held on an older head, rounds done", reviews: []domain.ForgeReview{held(2, "h1")}, maxRounds: 2, skip: "2 rounds done"},
 		{name: "released", reviews: []domain.ForgeReview{held(1, "h2"), released}, skip: "approved"},
 		{name: "released, listed newest first", reviews: []domain.ForgeReview{released, held(1, "h2")}, skip: "approved"},
+		{name: "released, no times, listed newest first", reviews: []domain.ForgeReview{untimed(released), untimed(held(1, "h2"))}, skip: "approved"},
+		{name: "released, same time", reviews: []domain.ForgeReview{released, at(held(1, "h2"), released.SubmittedAt)}, skip: "approved"},
 	} {
 		maxRounds := c.maxRounds
 		if maxRounds == 0 {
@@ -297,5 +301,51 @@ func TestLoopRunsARoundWhenTheHeldReviewIsUnusable(t *testing.T) {
 		if d := decideLoop(*f.pr, loopUser, f.reviews[7], a.Config.Loop.MaxRounds, false); d.Skip != "approved" {
 			t.Errorf("%s: the next pass: %+v", c.name, d)
 		}
+	}
+}
+
+func TestLoopRunsAFullRoundWhenTheHeldReviewIsUnusableAndTheCIFailed(t *testing.T) {
+	a, f, _, m := heldApproval(t)
+	if err := os.WriteFile(filepath.Join(a.RunsBase, m.Run, "final", "review.json"), []byte("{"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	f.checks[0].State = domain.CheckFailure
+	if err := a.Loop(context.Background(), LoopRequest{Once: true}); err != nil {
+		t.Fatal(err)
+	}
+	if len(f.reviews[7]) != 2 || f.reviews[7][1].State != string(domain.VerdictRequestChanges) {
+		t.Fatalf("reviews: %+v", f.reviews[7])
+	}
+	if m2, _ := parseLoopMark(f.reviews[7][1].Body); m2.Round != m.Round+1 {
+		t.Errorf("mark: %+v", m2)
+	}
+}
+
+func TestLoopRetriesAReleaseItCouldNotWrite(t *testing.T) {
+	a, f, _, m := heldApproval(t)
+	f.checks[0].State = domain.CheckSuccess
+	l := newLoop(a, f)
+	// The runs directory cannot take a new run: the release is this
+	// clone's failure, retried, not a round of the agents.
+	if err := os.Chmod(a.RunsBase, 0o555); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(a.RunsBase, 0o755) })
+	before := runs(t, a)
+	if err := l.pass(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(f.reviews[7]) != 1 || runs(t, a) != before || l.failures[7].count != 1 {
+		t.Fatalf("reviews %+v, runs %d then %d, failures %+v", f.reviews[7], before, runs(t, a), l.failures[7])
+	}
+	_ = os.Chmod(a.RunsBase, 0o755)
+	if err := l.pass(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(f.reviews[7]) != 2 || f.reviews[7][1].State != string(domain.VerdictApprove) {
+		t.Errorf("not released once writable: %+v", f.reviews[7])
+	}
+	if m2, _ := parseLoopMark(f.reviews[7][1].Body); m2.Round != m.Round {
+		t.Errorf("mark: %+v", m2)
 	}
 }

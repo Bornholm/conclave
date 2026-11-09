@@ -183,9 +183,8 @@ func decideLoop(pr domain.PullRequest, me string, reviews []domain.ForgeReview, 
 			continue
 		}
 		// The highest round is the last one, whatever order the forge
-		// lists the reviews in, and of two reviews of the same round, an
-		// approval the CI held and the one given once it passed, the later.
-		if m, ok := parseLoopMark(rv.Body); ok && (last == nil || m.Round > last.Round || m.Round == last.Round && !submittedBefore(rv.SubmittedAt, lastAt)) {
+		// lists the reviews in.
+		if m, ok := parseLoopMark(rv.Body); ok && (last == nil || m.Round > last.Round || m.Round == last.Round && sameRoundLater(m, rv.SubmittedAt, *last, lastAt)) {
 			last, lastAt = &m, rv.SubmittedAt
 		}
 	}
@@ -210,13 +209,23 @@ func decideLoop(pr domain.PullRequest, me string, reviews []domain.ForgeReview, 
 	return loopDecision{Round: last.Round + 1, Previous: last, PreviousAt: lastAt, Followed: true}
 }
 
-// submittedBefore reports whether a review was submitted before another,
-// by their submission times. A time that does not parse says nothing, and
-// the forge's order, oldest first, decides.
-func submittedBefore(at, other string) bool {
+// sameRoundLater reports whether a mark comes after another of the same
+// round: the approval given once the CI passed after the review that held
+// it. The submission times decide; when they cannot, because they are
+// equal or do not parse, the mark that holds nothing is the later, since a
+// release never holds, and the forge's order decides between the others.
+// A held mark taken for the last would have the loop give its approval on
+// every pass.
+func sameRoundLater(m loopMark, at string, last loopMark, lastAt string) bool {
 	t, err := time.Parse(time.RFC3339, at)
-	o, otherErr := time.Parse(time.RFC3339, other)
-	return err == nil && otherErr == nil && t.Before(o)
+	o, lastErr := time.Parse(time.RFC3339, lastAt)
+	if err == nil && lastErr == nil && !t.Equal(o) {
+		return t.After(o)
+	}
+	if (m.Held == "") != (last.Held == "") {
+		return m.Held == ""
+	}
+	return true
 }
 
 type loopFailure struct {
@@ -588,11 +597,7 @@ func (l *loop) release(ctx context.Context, pr domain.PullRequest, d loopDecisio
 		log.Debug("pull request skipped", "number", pr.Number, "reason", "approval held until the CI passes")
 		return false, nil
 	}
-	if state == domain.CheckFailure && d.Round < cfg.Loop.MaxRounds {
-		log.Info("CI failed on a head whose approval was held, a new round looks for the cause", "number", pr.Number, "checks", checkNames(ci.Blocking(domain.CheckFailure)))
-		return true, l.review(ctx, pr, loopDecision{Round: d.Round + 1, Previous: d.Previous, PreviousAt: d.PreviousAt, Followed: true}, ci)
-	}
-	res, err := l.released(pr, d.Previous.Run, ci)
+	held, err := l.heldReview(pr, d.Previous.Run)
 	if err != nil {
 		// Without the round's review, missing from this clone or unusable,
 		// the agents give the verdict again, in a full review: in a new
@@ -603,14 +608,24 @@ func (l *loop) release(ctx context.Context, pr domain.PullRequest, d loopDecisio
 		log.Warn("previous round not usable, the agents give the verdict the CI held", "number", pr.Number, "run", d.Previous.Run, "round", round, "error", err)
 		return true, l.review(ctx, pr, loopDecision{Round: round, Followed: true}, ci)
 	}
+	if state == domain.CheckFailure && d.Round < cfg.Loop.MaxRounds {
+		log.Info("CI failed on a head whose approval was held, a new round looks for the cause", "number", pr.Number, "checks", checkNames(ci.Blocking(domain.CheckFailure)))
+		return true, l.review(ctx, pr, loopDecision{Round: d.Round + 1, Previous: d.Previous, PreviousAt: d.PreviousAt, Followed: true}, ci)
+	}
+	// A failure to write the release is this clone's, not the previous
+	// round's: it is tried again on the next pass, not paid for with the
+	// agents.
+	res, err := l.released(pr, d.Previous.Run, held, ci)
+	if err != nil {
+		return true, fmt.Errorf("release the review of %s: %w", d.Previous.Run, err)
+	}
 	log.Info("loop review released", "number", pr.Number, "round", d.Round, "run", d.Previous.Run, "verdict", res.Review.Verdict)
 	return true, l.publish(ctx, pr, d, res)
 }
 
-// released writes, in a run of its own, the review of a previous run with
-// the verdict the CI held and the CI read since. The previous run is left
-// as it was: it is what the agents said, and what was published then.
-func (l *loop) released(pr domain.PullRequest, previous string, ci *domain.CIStatus) (*ReviewResult, error) {
+// heldReview reads the review of the round that held an approval back: in
+// this clone, of this pull request at its head, with a verdict held.
+func (l *loop) heldReview(pr domain.PullRequest, previous string) (*domain.ConsolidatedReview, error) {
 	if !l.hasRun(previous) {
 		return nil, fmt.Errorf("previous round %q not found in this clone", previous)
 	}
@@ -625,6 +640,14 @@ func (l *loop) released(pr domain.PullRequest, previous string, ci *domain.CISta
 	if review.Meta.PRNumber != pr.Number || review.Meta.HeadSHA != pr.Head.SHA || review.HeldByCI == "" {
 		return nil, fmt.Errorf("previous round %s is not a review of #%d at %s with a verdict held by the CI", previous, pr.Number, pr.Head.SHA)
 	}
+	return &review, nil
+}
+
+// released writes, in a run of its own, the review a previous run held
+// with the verdict the CI held and the CI read since. The previous run is
+// left as it was: it is what the agents said, and what was published then.
+// A run that could not be written whole is removed.
+func (l *loop) released(pr domain.PullRequest, previous string, review *domain.ConsolidatedReview, ci *domain.CIStatus) (_ *ReviewResult, err error) {
 	cfg := l.app.Config
 	started := l.now()
 	id := artifact.NewRunID(started, pr.Number)
@@ -632,6 +655,11 @@ func (l *loop) released(pr domain.PullRequest, previous string, ci *domain.CISta
 	if err != nil {
 		return nil, err
 	}
+	defer func() {
+		if err != nil {
+			_ = os.RemoveAll(store.Root)
+		}
+	}()
 	// The run's agents are the previous run's: none ran in this one. What
 	// ties it to the pull request is set whatever the previous manifest
 	// says, or when it cannot be read: `--since last` finds the run by it.
@@ -641,19 +669,22 @@ func (l *loop) released(pr domain.PullRequest, previous string, ci *domain.CISta
 	ended := l.now()
 	manifest.EndedAt = &ended
 	review.Meta.RunID = id
-	releaseHeld(&review, ci)
+	releaseHeld(review, ci)
 	if ci != nil {
 		_ = store.WriteJSON("context", "checks.json", ci)
 	}
-	_ = store.WriteJSON("final", "review.json", &review)
+	// The next round is measured against it.
+	if err := store.WriteJSON("final", "review.json", review); err != nil {
+		return nil, err
+	}
 	var md bytes.Buffer
-	if err := output.Markdown(&md, &review, output.Options{ShowAttribution: cfg.ShowAttribution(), ShowFailedAgents: cfg.ShowFailedAgents()}); err == nil {
+	if err := output.Markdown(&md, review, output.Options{ShowAttribution: cfg.ShowAttribution(), ShowFailedAgents: cfg.ShowFailedAgents()}); err == nil {
 		_ = store.Write("final", "review.md", md.Bytes())
 	}
 	if err := store.WriteManifest(&manifest); err != nil {
 		return nil, err
 	}
-	return &ReviewResult{Review: &review, RunDir: store.Root, Manifest: &manifest}, nil
+	return &ReviewResult{Review: review, RunDir: store.Root, Manifest: &manifest}, nil
 }
 
 // publish has the writer turn a review into a comment and submits it, with

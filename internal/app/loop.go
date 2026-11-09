@@ -49,6 +49,10 @@ type loopMark struct {
 	Head    string         `json:"head"`
 	Run     string         `json:"run"`
 	Verdict domain.Verdict `json:"verdict"`
+	// Held is the verdict the CI kept back on that head, an approval given
+	// as comment while the CI had not finished: the loop gives it once the
+	// CI has passed, without a new push.
+	Held domain.Verdict `json:"held,omitempty"`
 }
 
 var loopMarkRe = regexp.MustCompile(`<!-- conclave-loop (\{[^\n]*?\}) -->`)
@@ -153,6 +157,10 @@ type loopDecision struct {
 	// Followed says the loop has a review of its own on the pull request,
 	// and needs no --include to take it up any more.
 	Followed bool
+	// Release says the last round held an approval back on the head, for
+	// a CI that had not finished: the loop gives it once the CI has passed,
+	// rather than run Round again on a head it reviewed.
+	Release bool
 }
 
 // decideLoop tells whether a pull request needs a review from the loop. A
@@ -175,8 +183,9 @@ func decideLoop(pr domain.PullRequest, me string, reviews []domain.ForgeReview, 
 			continue
 		}
 		// The highest round is the last one, whatever order the forge
-		// lists the reviews in.
-		if m, ok := parseLoopMark(rv.Body); ok && (last == nil || m.Round >= last.Round) {
+		// lists the reviews in, and of two reviews of the same round, an
+		// approval the CI held and the one given once it passed, the later.
+		if m, ok := parseLoopMark(rv.Body); ok && (last == nil || m.Round > last.Round || m.Round == last.Round && !submittedBefore(rv.SubmittedAt, lastAt)) {
 			last, lastAt = &m, rv.SubmittedAt
 		}
 	}
@@ -189,12 +198,25 @@ func decideLoop(pr domain.PullRequest, me string, reviews []domain.ForgeReview, 
 	switch {
 	case last.Verdict == domain.VerdictApprove:
 		return loopDecision{Skip: "approved", Followed: true}
+	case last.Held != "" && last.Head == pr.Head.SHA:
+		// Giving what the round decided is not a round of its own: the
+		// last round's approval is given too.
+		return loopDecision{Round: last.Round, Previous: last, PreviousAt: lastAt, Followed: true, Release: true}
 	case last.Round >= maxRounds:
 		return loopDecision{Skip: fmt.Sprintf("%d rounds done", last.Round), Followed: true}
 	case last.Head == pr.Head.SHA:
 		return loopDecision{Skip: "no change since the last round", Followed: true}
 	}
 	return loopDecision{Round: last.Round + 1, Previous: last, PreviousAt: lastAt, Followed: true}
+}
+
+// submittedBefore reports whether a review was submitted before another,
+// by their submission times. A time that does not parse says nothing, and
+// the forge's order, oldest first, decides.
+func submittedBefore(at, other string) bool {
+	t, err := time.Parse(time.RFC3339, at)
+	o, otherErr := time.Parse(time.RFC3339, other)
+	return err == nil && otherErr == nil && t.Before(o)
 }
 
 type loopFailure struct {
@@ -381,12 +403,21 @@ func (l *loop) pass(ctx context.Context) error {
 			log.Debug("pull request skipped", "number", pr.Number, "reason", "failed on this head already", "head", pr.Head.SHA)
 			continue
 		}
-		wait, ci := l.waitForCI(ctx, pr)
-		if wait {
-			continue
+		if d.Release {
+			var done bool
+			done, err = l.release(ctx, pr, d)
+			if !done {
+				continue
+			}
+		} else {
+			wait, ci := l.waitForCI(ctx, pr)
+			if wait {
+				continue
+			}
+			err = l.review(ctx, pr, d, ci)
 		}
 		reviewed++
-		if err := l.review(ctx, pr, d, ci); err != nil {
+		if err != nil {
 			if ctx.Err() != nil {
 				return err
 			}
@@ -492,7 +523,9 @@ func (l *loop) retrySubmission(ctx context.Context, pr domain.PullRequest, revie
 		return true, false
 	}
 	for _, rv := range reviews {
-		if m, ok := parseLoopMark(rv.Body); ok && strings.EqualFold(rv.Author, l.me) && m.Round >= u.mark.Round {
+		// A review given once the CI passed is of the round it was held
+		// on: that round's review is not this one.
+		if m, ok := parseLoopMark(rv.Body); ok && strings.EqualFold(rv.Author, l.me) && (m.Round > u.mark.Round || m.Run == u.mark.Run) {
 			return false, false
 		}
 	}
@@ -530,9 +563,103 @@ func (l *loop) review(ctx context.Context, pr domain.PullRequest, d loopDecision
 	if err != nil {
 		return err
 	}
+	return l.publish(ctx, pr, d, res)
+}
+
+// release takes up a pull request whose last round held an approval back
+// for a CI that had not finished on its head, and reports whether it did
+// anything. While the CI runs, the pull request is left alone; once it has
+// passed, the round's review is published again with its approval, without
+// running the agents on a head they reviewed. A failed CI gets a new round
+// while there is one left, for the agents to look for the cause in the
+// code; the round's review requests changes otherwise.
+func (l *loop) release(ctx context.Context, pr domain.PullRequest, d loopDecision) (bool, error) {
+	a := l.app
+	cfg := a.Config
+	log := a.logger()
+	// Not waiting any more: the round ran.
+	if _, ok := l.waiting[pr.Number]; ok {
+		delete(l.waiting, pr.Number)
+		l.waitsChanged = true
+	}
+	ci := a.loadCI(ctx, l.forge, l.repo, pr.Head.SHA)
+	state := ci.State()
+	if state == domain.CheckPending {
+		log.Debug("pull request skipped", "number", pr.Number, "reason", "approval held until the CI passes")
+		return false, nil
+	}
+	if state == domain.CheckFailure && d.Round < cfg.Loop.MaxRounds {
+		log.Info("CI failed on a head whose approval was held, a new round looks for the cause", "number", pr.Number, "checks", checkNames(ci.Blocking(domain.CheckFailure)))
+		return true, l.review(ctx, pr, loopDecision{Round: d.Round + 1, Previous: d.Previous, PreviousAt: d.PreviousAt, Followed: true}, ci)
+	}
+	if !l.hasRun(d.Previous.Run) {
+		if d.Round < cfg.Loop.MaxRounds {
+			log.Warn("previous round not found in this clone, a new round gives the verdict the CI held", "number", pr.Number, "run", d.Previous.Run)
+			return true, l.review(ctx, pr, loopDecision{Round: d.Round + 1, Previous: d.Previous, PreviousAt: d.PreviousAt, Followed: true}, ci)
+		}
+		return true, fmt.Errorf("previous round %s not found in this clone, and no round is left to give the verdict the CI held", d.Previous.Run)
+	}
+	res, err := l.released(pr, d.Previous.Run, ci)
+	if err != nil {
+		return true, err
+	}
+	log.Info("loop review released", "number", pr.Number, "round", d.Round, "run", d.Previous.Run, "verdict", res.Review.Verdict)
+	return true, l.publish(ctx, pr, d, res)
+}
+
+// released writes, in a run of its own, the review of a previous run with
+// the verdict the CI held and the CI read since. The previous run is left
+// as it was: it is what the agents said, and what was published then.
+func (l *loop) released(pr domain.PullRequest, previous string, ci *domain.CIStatus) (*ReviewResult, error) {
+	data, err := os.ReadFile(filepath.Join(l.runsBase, previous, "final", "review.json"))
+	if err != nil {
+		return nil, fmt.Errorf("previous round: %w", err)
+	}
+	var review domain.ConsolidatedReview
+	if err := json.Unmarshal(data, &review); err != nil {
+		return nil, fmt.Errorf("previous round %s: %w", previous, err)
+	}
+	if review.Meta.PRNumber != pr.Number || review.Meta.HeadSHA != pr.Head.SHA || review.HeldByCI == "" {
+		return nil, fmt.Errorf("previous round %s is not a review of #%d at %s with a verdict held by the CI", previous, pr.Number, pr.Head.SHA)
+	}
+	cfg := l.app.Config
+	started := l.now()
+	id := artifact.NewRunID(started, pr.Number)
+	store, err := artifact.Open(l.runsBase, id)
+	if err != nil {
+		return nil, err
+	}
+	manifest, _ := runManifest(filepath.Join(l.runsBase, previous))
+	// The run's agents are the previous run's: none ran in this one.
+	manifest.ID, manifest.StartedAt, manifest.Status, manifest.Error, manifest.Agents = id, started, domain.RunSucceeded, "", nil
+	ended := l.now()
+	manifest.EndedAt = &ended
+	review.Meta.RunID = id
+	releaseHeld(&review, ci)
+	if ci != nil {
+		_ = store.WriteJSON("context", "checks.json", ci)
+	}
+	_ = store.WriteJSON("final", "review.json", &review)
+	var md bytes.Buffer
+	if err := output.Markdown(&md, &review, output.Options{ShowAttribution: cfg.ShowAttribution(), ShowFailedAgents: cfg.ShowFailedAgents()}); err == nil {
+		_ = store.Write("final", "review.md", md.Bytes())
+	}
+	if err := store.WriteManifest(&manifest); err != nil {
+		return nil, err
+	}
+	return &ReviewResult{Review: &review, RunDir: store.Root, Manifest: &manifest}, nil
+}
+
+// publish has the writer turn a review into a comment and submits it, with
+// the loop's mark.
+func (l *loop) publish(ctx context.Context, pr domain.PullRequest, d loopDecision, res *ReviewResult) error {
+	a := l.app
+	cfg := a.Config
+	log := a.logger()
+	from := domain.Severity(cfg.Loop.RequestChangesFrom)
 	review := res.Review
 	body := ""
-	comment, err := a.WriteComment(ctx, CommentRequest{Result: res, PR: &pr, Round: d.Round, MaxRounds: cfg.Loop.MaxRounds, RequestChangesFrom: req.RequestChangesFrom})
+	comment, err := a.WriteComment(ctx, CommentRequest{Result: res, PR: &pr, Round: d.Round, MaxRounds: cfg.Loop.MaxRounds, RequestChangesFrom: from, Released: d.Release})
 	if err != nil {
 		if ctx.Err() != nil {
 			return err
@@ -546,14 +673,18 @@ func (l *loop) review(ctx context.Context, pr domain.PullRequest, d loopDecision
 		}
 		// The whole review is the longest body the loop submits: capped like
 		// the writer's, or the forge refuses it.
-		body = agent.TruncateField(roundNotice(d.Round, cfg.Loop.MaxRounds, review.Verdict)+"\n\n"+md.String(), commentBytes(cfg))
+		notice := roundNotice(d.Round, cfg.Loop.MaxRounds, review.Verdict)
+		if d.Release {
+			notice = "The CI has finished since the previous comment, which published this review without the verdict it held back. " + notice
+		}
+		body = agent.TruncateField(notice+"\n\n"+md.String(), commentBytes(cfg))
 	} else {
 		for _, w := range comment.Warnings {
 			log.Warn("writer", "number", pr.Number, "warning", w)
 		}
 		body = comment.Body
 	}
-	mark := loopMark{Round: d.Round, Head: review.Meta.HeadSHA, Run: review.Meta.RunID, Verdict: review.Verdict}
+	mark := loopMark{Round: d.Round, Head: review.Meta.HeadSHA, Run: review.Meta.RunID, Verdict: review.Verdict, Held: review.HeldByCI}
 	// The comment was cut to leave the mark its room: the body the forge
 	// receives is the one that was checked.
 	body += "\n\n" + mark.String() + "\n"

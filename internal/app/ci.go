@@ -203,13 +203,40 @@ func applyCI(review *domain.ConsolidatedReview, status *domain.CIStatus) []strin
 		if review.Verdict != domain.VerdictApprove {
 			return nil
 		}
-		review.Verdict = domain.VerdictComment
+		review.Verdict, review.HeldByCI = domain.VerdictComment, domain.VerdictApprove
 		if status.Error != "" {
-			return []string{fmt.Sprintf("the CI checks could not be read (%s): a review that cannot tell the CI passed is reported as comment, set ci.enabled to false to review without them", status.Error)}
+			return []string{fmt.Sprintf(ciUnreadWarning+" (%s): a review that cannot tell the CI passed is reported as comment, set ci.enabled to false to review without them", status.Error)}
 		}
-		return []string{fmt.Sprintf("CI still running on the head reviewed (%s): the reports approved, but a review before the CI has passed is reported as comment", checkNames(status.Blocking(domain.CheckPending)))}
+		return []string{fmt.Sprintf(ciRunningWarning+" (%s): the reports approved, but a review before the CI has passed is reported as comment", checkNames(status.Blocking(domain.CheckPending)))}
 	}
 	return nil
+}
+
+// The openings of the warnings applyCI gives when it holds an approval
+// back, which releaseHeld takes off once the CI has passed.
+const (
+	ciUnreadWarning  = "the CI checks could not be read"
+	ciRunningWarning = "CI still running on the head reviewed"
+)
+
+// releaseHeld gives a review the verdict the CI kept back, and applies the
+// CI read since: the approval is given when the CI has passed, and changes
+// are requested when it failed. The warnings about the CI it was held on
+// are taken off, they no longer hold.
+func releaseHeld(review *domain.ConsolidatedReview, status *domain.CIStatus) []string {
+	if review.HeldByCI != "" {
+		review.Verdict, review.HeldByCI = review.HeldByCI, ""
+	}
+	warnings := review.Warnings[:0:0]
+	for _, w := range review.Warnings {
+		if !strings.HasPrefix(w, ciUnreadWarning) && !strings.HasPrefix(w, ciRunningWarning) {
+			warnings = append(warnings, w)
+		}
+	}
+	review.CI = status
+	added := applyCI(review, status)
+	review.Warnings = append(warnings, added...)
+	return added
 }
 
 func checkNames(checks []domain.Check) string {

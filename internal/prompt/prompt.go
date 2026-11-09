@@ -458,7 +458,11 @@ type CommentInput struct {
 	Round, MaxRounds int
 	// Incremental says the review followed up on a previous one.
 	Incremental bool
-	MaxBytes    int
+	// Released says the review is the one the previous comment published
+	// while the CI had not finished, given again now that it has, with the
+	// verdict the CI held back.
+	Released bool
+	MaxBytes int
 	// KeepFrom is the lowest severity of a finding the comment must keep,
 	// each with its file: medium, or lower when the loop requests changes
 	// from lower.

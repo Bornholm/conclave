@@ -214,6 +214,10 @@ type ConsolidatedReview struct {
 	// CI is the state of the checks on the head reviewed, which the verdict
 	// follows. Filled by the orchestrator, never by the lead.
 	CI *CIStatus `json:"ci,omitempty"`
+	// HeldByCI is the verdict the reports reached and the CI kept back: an
+	// approval given as comment because the CI had not finished, or could
+	// not be read. The loop gives it once the CI has passed.
+	HeldByCI Verdict `json:"held_by_ci,omitempty"`
 	// Meta is filled by the orchestrator, never by the lead.
 	Meta ReviewMeta `json:"meta"`
 }

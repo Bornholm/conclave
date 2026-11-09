@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -371,7 +372,11 @@ func TestLoopRetriesAReleaseItCouldNotWrite(t *testing.T) {
 	f.checks[0].State = domain.CheckSuccess
 	l := newLoop(a, f)
 	// The runs directory cannot take a new run: the release is this
-	// clone's failure, retried, not a round of the agents.
+	// clone's failure, retried, not a round of the agents. Mode bits are
+	// what makes the write fail, and they stop neither root nor Windows.
+	if runtime.GOOS == "windows" || os.Geteuid() == 0 {
+		t.Skip("a read-only directory does not stop this user from writing")
+	}
 	if err := os.Chmod(a.RunsBase, 0o555); err != nil {
 		t.Fatal(err)
 	}

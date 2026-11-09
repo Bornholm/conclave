@@ -55,6 +55,12 @@ type fakeForge struct {
 	reviews map[int64][]domain.ForgeReview
 	// submitErrs fail that many submissions before one goes through.
 	submitErrs int
+
+	// checks are the CI checks of the head, checksErr makes reading them
+	// fail, and checkCalls counts the reads.
+	checks     []domain.Check
+	checksErr  error
+	checkCalls int
 }
 
 func (f *fakeForge) ParentRepository(context.Context, domain.Repository) (domain.Repository, error) {

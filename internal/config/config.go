@@ -50,6 +50,7 @@ type Config struct {
 	Plan    PlanConfig    `yaml:"plan"`
 	Ask     AskConfig     `yaml:"ask"`
 	Loop    LoopConfig    `yaml:"loop"`
+	CI      CIConfig      `yaml:"ci"`
 	Output  OutputConfig  `yaml:"output"`
 	Agents  []AgentConfig `yaml:"agents"`
 
@@ -133,6 +134,26 @@ type LoopConfig struct {
 	// comment does not block the merge, and the loop only comes back on a
 	// new head.
 	RequestChangesFrom string `yaml:"request_changes_from"`
+}
+
+// CIConfig says how the CI of a pull request weighs on its review: a failed
+// check requests changes, and a check still running keeps the review from
+// approving.
+type CIConfig struct {
+	// Enabled reads the checks of the pull request head. Nil means true.
+	Enabled *bool `yaml:"enabled"`
+	// Required, when set, restricts the checks that decide the verdict to
+	// the ones whose name matches one of these patterns, and waits for each
+	// of them to report. Empty means every check reported on the head.
+	Required []string `yaml:"required"`
+	// Ignore lists the patterns of the check names that never decide the
+	// verdict, typically an optional or flaky job. The agents still see
+	// them. It wins over Required.
+	Ignore []string `yaml:"ignore"`
+	// MaxWait is how long `conclave loop` waits for the checks of a head to
+	// finish before reviewing it anyway, then without approving. Nil means
+	// DefaultCIMaxWait; 0 reviews at once.
+	MaxWait *time.Duration `yaml:"max_wait"`
 }
 
 // AskLimits bound an ask run.
@@ -497,6 +518,17 @@ func (c *Config) ReviewAPIRetryDelay() time.Duration {
 		return DefaultAPIRetryDelay
 	}
 	return *c.Review.APIRetryDelay
+}
+
+// CIEnabled reports whether the checks of the pull request are read.
+func (c *Config) CIEnabled() bool { return boolValue(c.CI.Enabled, true) }
+
+// CIMaxWait returns how long the loop waits for the checks of a head.
+func (c *Config) CIMaxWait() time.Duration {
+	if c.CI.MaxWait == nil {
+		return DefaultCIMaxWait
+	}
+	return *c.CI.MaxWait
 }
 
 // ShowAttribution reports whether reviewer attribution is rendered.

@@ -153,6 +153,14 @@ An ask run reads no forge, so a configuration used only for questions never need
 
 `loop.writer` names the agent that turns a review into the comment published, any configured agent, the lead by default. A cheaper model does the job: the writing is a translation and a cut, not a review. `loop.max_comment_bytes` caps the review body at 60 KiB, the loop's mark included, under GitHub's limit on a review body. It cannot go under 1 KiB. `loop.request_changes_from` is the lowest severity of an in-scope finding that makes the loop request changes, whatever the lead's verdict: `critical`, `high`, `medium` or `low`, the default. See [Loop](loop.md).
 
+## CI
+
+The checks of the pull request head are read when the review starts, on GitHub (check runs and commit statuses) and on Gitea or Forgejo (commit statuses, their Actions included). Each agent gets them, with the summary and the annotations of the ones that did not pass, and the run keeps them in `context/checks.json`. The verdict follows them whatever the lead says: a failed check requests changes, and a check still running, or checks that could not be read, keep the review from approving. A cancelled or timed out job counts as failed.
+
+Every check reported on the head decides by default. `ci.ignore` lists the names of the checks that never do, an optional or flaky job; the agents still see them. `ci.required`, when set, restricts the checks that decide to the ones it names, and each of them is waited for even before it reports: without it, a head whose CI has not started yet looks like a head without CI. `ignore` wins over `required`. In both lists, `*` matches anything, slashes included, and `?` one character: `CI / test (*)`.
+
+A GitHub token needs read access to checks and commit statuses. One that lacks it makes every review a comment at best, and the warning says so: `ci.enabled: false` turns the whole thing off. `ci.max_wait` is for `conclave loop`, see [Loop](loop.md).
+
 ## Agent contract
 
 The agent runs with the worktree as working directory, receives the prompt, and prints one JSON object that matches the schema embedded in the prompt. The required fields are `schema_version`, `reviewer.id`, `summary`, `findings` and `verdict`. Conclave also finds the object inside the Claude Code `--output-format json` envelope, inside an NDJSON stream and inside a ```json fenced block, so an agent that adds a sentence before its JSON still counts.

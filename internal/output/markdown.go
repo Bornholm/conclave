@@ -72,9 +72,13 @@ func Markdown(w io.Writer, review *domain.ConsolidatedReview, opts Options) erro
 		}
 		fmt.Fprintf(&b, "**Models:** %s  \n", strings.Join(parts, ", "))
 	}
+	if ci := review.CI; ci != nil {
+		fmt.Fprintf(&b, "**CI:** %s  \n", ciLabel(ci))
+	}
 	if s := strings.TrimSpace(review.Summary); s != "" {
 		b.WriteString("\n" + s + "\n")
 	}
+	writeCI(&b, review.CI)
 	if m.Since != nil {
 		writeSince(&b, review, opts)
 	}
@@ -301,4 +305,65 @@ func writePrevious(b *strings.Builder, id string, f domain.ConsolidatedFinding) 
 		loc = fmt.Sprintf("%s:%d", f.File, f.StartLine)
 	}
 	fmt.Fprintf(b, "- %s **%s** (`%s`)", id, escape(f.Title), loc)
+}
+
+// ciLabel says in a few words how the CI of the head went.
+func ciLabel(ci *domain.CIStatus) string {
+	if ci.Error != "" {
+		return "unknown, the checks could not be read"
+	}
+	blocking := 0
+	for _, c := range ci.Checks {
+		if c.Blocking {
+			blocking++
+		}
+	}
+	switch ci.State() {
+	case domain.CheckFailure:
+		return fmt.Sprintf("failed (%d of %d checks)", len(ci.Blocking(domain.CheckFailure)), blocking)
+	case domain.CheckPending:
+		return fmt.Sprintf("still running (%d of %d checks)", len(ci.Blocking(domain.CheckPending)), blocking)
+	}
+	if blocking == 0 {
+		return "no check"
+	}
+	return fmt.Sprintf("passed (%d checks)", blocking)
+}
+
+// writeCI lists the checks that keep the pull request from being approved.
+func writeCI(b *strings.Builder, ci *domain.CIStatus) {
+	failed, pending := ci.Blocking(domain.CheckFailure), ci.Blocking(domain.CheckPending)
+	if len(failed)+len(pending) == 0 {
+		return
+	}
+	b.WriteString("\n### CI\n\n")
+	for _, c := range failed {
+		fmt.Fprintf(b, "- `%s` failed", c.Name)
+		if c.Conclusion != "" && c.Conclusion != string(c.State) {
+			fmt.Fprintf(b, " (%s)", c.Conclusion)
+		}
+		if c.URL != "" {
+			fmt.Fprintf(b, ": <%s>", strings.NewReplacer("<", "%3C", ">", "%3E", " ", "%20").Replace(escape(c.URL)))
+		}
+		b.WriteString("\n")
+		for _, a := range c.Annotations {
+			loc := a.Path
+			if a.StartLine > 0 {
+				loc = fmt.Sprintf("%s:%d", a.Path, a.StartLine)
+			}
+			fmt.Fprintf(b, "  - `%s`: %s\n", loc, escape(firstLine(a.Message)))
+		}
+	}
+	for _, c := range pending {
+		fmt.Fprintf(b, "- `%s` has not finished\n", c.Name)
+	}
+}
+
+// firstLine is the first line of s, for a message quoted in a list.
+func firstLine(s string) string {
+	s = strings.TrimSpace(s)
+	if i := strings.IndexByte(s, '\n'); i >= 0 {
+		return strings.TrimSpace(s[:i]) + " …"
+	}
+	return s
 }

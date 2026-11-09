@@ -4,14 +4,15 @@
 
 1. Load `.conclave.yaml`. An unknown field is an error, so a typo in `max_paralel` fails immediately instead of silently using the default.
 2. Resolve the configured Git remote and check it belongs to the forge in the configuration.
-3. Fetch the pull request, its changed files, its discussion and every issue referenced as `#N` in the description or the discussion. The discussion is comments, review summaries and inline review comments, oldest first.
+3. Fetch the pull request, its changed files, its discussion and every issue referenced as `#N` in the description or the discussion. The discussion is comments, review summaries and inline review comments, oldest first. Read the CI checks of the head, see [configuration](configuration.md#ci).
 4. Make the base and head commits available locally. The head comes from `refs/pull/N/head` on the configured remote, so a pull request from a fork needs no extra credentials.
 5. Compute the merge base and the diff.
 6. Create one detached worktree per agent at the head commit, under the system temporary directory.
 7. Run the reviewers, at most `review.max_parallel` at a time. Each gets the prompt on `stdin`, or as an argument or a file, see `input` in [configuration](configuration.md).
 8. Validate every report. Schema version, reviewer id, severities, paths inside the repository, line numbers and field sizes are checked. A finding that fails a check, or one of whose fields has the wrong type, is dropped with a warning; the rest of the report is kept, the lead's included. A finding in a file the pull request does not touch is kept but flagged `out_of_scope`. It gets its own section in the output and never changes the verdict.
 9. Group similar findings (same file, overlapping lines, similar title or description, whatever category each reviewer chose), then run the lead with every report and the groups. The lead may only attribute a finding to a reviewer that actually succeeded. If the lead fails or prints garbage, a deterministic fallback builds the review from the groups.
-10. Render Markdown or JSON, remove the worktrees, keep the artifacts.
+10. Apply the CI to the verdict: a failed check requests changes, one still running keeps the review from approving.
+11. Render Markdown or JSON, remove the worktrees, keep the artifacts.
 
 With `--since`, the agents also get the previous review's findings and the diff since its head, and give each finding a status. See [incremental review](incremental-review.md).
 
@@ -21,7 +22,7 @@ Every run lands in `.git/conclave/runs/<run-id>/`.
 
 ```
 manifest.json          timings, exit codes, model per agent, warnings
-context/               pull-request.json, changed-files.json, associated-issues.json, discussion.json, diff.patch,
+context/               pull-request.json, changed-files.json, associated-issues.json, discussion.json, checks.json, diff.patch,
                        and with --since previous-review.json and since.patch
 prompts/               the exact prompt each agent received
 raw/                   stdout and stderr per agent, plus <id>.trace.jsonl for pi-json agents

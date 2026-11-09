@@ -408,17 +408,17 @@ func (l *loop) pass(ctx context.Context) error {
 			log.Log(ctx, level, "pull request skipped", "number", pr.Number, "reason", d.Skip)
 			continue
 		}
-		fl := l.failures[pr.Number]
-		failed := fl.head == pr.Head.SHA && fl.count >= loopMaxFailures
-		// A release runs no agent: only the rounds it falls back to are
-		// bounded by the failures on the head.
-		if failed && !d.Release {
+		// A round that succeeds clears the failures on its head: on a
+		// release, they are submissions the forge kept refusing or rounds
+		// it fell back to, and trying again would end the same way. A
+		// release this clone could not write is not counted.
+		if fl := l.failures[pr.Number]; fl.head == pr.Head.SHA && fl.count >= loopMaxFailures {
 			log.Debug("pull request skipped", "number", pr.Number, "reason", "failed on this head already", "head", pr.Head.SHA)
 			continue
 		}
 		if d.Release {
 			var done bool
-			done, err = l.release(ctx, pr, d, failed)
+			done, err = l.release(ctx, pr, d)
 			if !done {
 				continue
 			}
@@ -586,10 +586,7 @@ func (l *loop) review(ctx context.Context, pr domain.PullRequest, d loopDecision
 // running the agents on a head they reviewed. A failed CI gets a new round
 // while there is one left, for the agents to look for the cause in the
 // code; the round's review requests changes otherwise.
-//
-// failed says the rounds on this head failed loopMaxFailures times: the
-// release is still tried, it runs no agent, but not a round in its place.
-func (l *loop) release(ctx context.Context, pr domain.PullRequest, d loopDecision, failed bool) (bool, error) {
+func (l *loop) release(ctx context.Context, pr domain.PullRequest, d loopDecision) (bool, error) {
 	a := l.app
 	cfg := a.Config
 	log := a.logger()
@@ -605,10 +602,6 @@ func (l *loop) release(ctx context.Context, pr domain.PullRequest, d loopDecisio
 		return false, nil
 	}
 	held, err := l.heldReview(pr, d.Previous.Run)
-	if (err != nil || state == domain.CheckFailure && d.Round < cfg.Loop.MaxRounds) && failed {
-		log.Debug("pull request skipped", "number", pr.Number, "reason", "failed on this head already", "head", pr.Head.SHA)
-		return false, nil
-	}
 	if err != nil {
 		// Without the round's review, missing from this clone or unusable,
 		// the agents give the verdict again, in a full review: in a new

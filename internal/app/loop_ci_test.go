@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -272,6 +273,47 @@ func TestLoopRetriesAReleaseTheForgeRefused(t *testing.T) {
 	}
 }
 
+func TestLoopGivesUpAReleaseTheForgeKeepsRefusing(t *testing.T) {
+	a, f, _, _ := heldApproval(t)
+	f.checks[0].State = domain.CheckSuccess
+	f.submitErrs = 100
+	l := newLoop(a, f)
+	ctx := context.Background()
+	before := runs(t, a)
+	for range 2*loopMaxFailures + 2 {
+		if err := l.pass(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// One release written, submitted loopMaxFailures times, then left
+	// until a new head: not a new run on every pass.
+	if len(f.reviews[7]) != 1 || runs(t, a) != before+1 || len(l.unsent) != 0 {
+		t.Errorf("reviews %d, runs %d then %d, unsent %+v", len(f.reviews[7]), before, runs(t, a), l.unsent)
+	}
+}
+
+func TestLoopHoldsTheApprovalWhileTheCIIsUnread(t *testing.T) {
+	a, f, _, _ := heldApproval(t)
+	f.checksErr = errors.New("403 Forbidden")
+	before := runs(t, a)
+	for range 3 {
+		if err := a.Loop(context.Background(), LoopRequest{Once: true}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(f.reviews[7]) != 1 || runs(t, a) != before {
+		t.Errorf("released on a CI it could not read: reviews %d, runs %d then %d", len(f.reviews[7]), before, runs(t, a))
+	}
+	f.checksErr = nil
+	f.checks[0].State = domain.CheckSuccess
+	if err := a.Loop(context.Background(), LoopRequest{Once: true}); err != nil {
+		t.Fatal(err)
+	}
+	if len(f.reviews[7]) != 2 || f.reviews[7][1].State != string(domain.VerdictApprove) {
+		t.Errorf("not released once readable: %+v", f.reviews[7])
+	}
+}
+
 func TestLoopRunsARoundWhenTheHeldReviewIsUnusable(t *testing.T) {
 	for _, c := range []struct {
 		name      string
@@ -340,8 +382,7 @@ func TestLoopRetriesAReleaseItCouldNotWrite(t *testing.T) {
 	if len(f.reviews[7]) != 1 || runs(t, a) != before || l.failures[7].count != 0 {
 		t.Fatalf("reviews %+v, runs %d then %d, failures %+v", f.reviews[7], before, runs(t, a), l.failures[7])
 	}
-	// Rounds that failed on the head do not stop the release either.
-	l.failures[7] = loopFailure{head: f.pr.Head.SHA, count: loopMaxFailures}
+
 	_ = os.Chmod(a.RunsBase, 0o755)
 	if err := l.pass(context.Background()); err != nil {
 		t.Fatal(err)

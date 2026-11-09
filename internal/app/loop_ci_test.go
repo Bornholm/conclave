@@ -267,3 +267,35 @@ func TestLoopRetriesAReleaseTheForgeRefused(t *testing.T) {
 		t.Errorf("not submitted again: %+v", f.reviews[7])
 	}
 }
+
+func TestLoopRunsARoundWhenTheHeldReviewIsUnusable(t *testing.T) {
+	for _, c := range []struct {
+		name      string
+		maxRounds func(held int) int
+	}{
+		{"rounds left", func(held int) int { return held + 1 }},
+		// loop.max_rounds lowered under the held round since: the round is
+		// run again under its own number, not under a lower one that the
+		// held mark would outrank on every pass.
+		{"max_rounds lowered", func(held int) int { return held - 1 }},
+	} {
+		a, f, _, m := heldApproval(t)
+		a.Config.Loop.MaxRounds = c.maxRounds(m.Round)
+		if err := os.WriteFile(filepath.Join(a.RunsBase, m.Run, "final", "review.json"), []byte("{"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		f.checks[0].State = domain.CheckSuccess
+		if err := a.Loop(context.Background(), LoopRequest{Once: true}); err != nil {
+			t.Fatal(err)
+		}
+		if len(f.reviews[7]) != 2 || f.reviews[7][1].State != string(domain.VerdictApprove) {
+			t.Fatalf("%s: reviews: %+v", c.name, f.reviews[7])
+		}
+		if m2, _ := parseLoopMark(f.reviews[7][1].Body); m2.Round < m.Round {
+			t.Errorf("%s: mark %+v under the held round %d", c.name, m2, m.Round)
+		}
+		if d := decideLoop(*f.pr, loopUser, f.reviews[7], a.Config.Loop.MaxRounds, false); d.Skip != "approved" {
+			t.Errorf("%s: the next pass: %+v", c.name, d)
+		}
+	}
+}

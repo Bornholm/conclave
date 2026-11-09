@@ -592,17 +592,16 @@ func (l *loop) release(ctx context.Context, pr domain.PullRequest, d loopDecisio
 		log.Info("CI failed on a head whose approval was held, a new round looks for the cause", "number", pr.Number, "checks", checkNames(ci.Blocking(domain.CheckFailure)))
 		return true, l.review(ctx, pr, loopDecision{Round: d.Round + 1, Previous: d.Previous, PreviousAt: d.PreviousAt, Followed: true}, ci)
 	}
-	if !l.hasRun(d.Previous.Run) {
-		// Without the round's review, the agents give the verdict again: in
-		// a new round while one is left, in the last one run again under
-		// its own number otherwise, rather than leave the approval held.
-		round := min(d.Round+1, cfg.Loop.MaxRounds)
-		log.Warn("previous round not found in this clone, the agents give the verdict the CI held", "number", pr.Number, "run", d.Previous.Run, "round", round)
-		return true, l.review(ctx, pr, loopDecision{Round: round, Previous: d.Previous, PreviousAt: d.PreviousAt, Followed: true}, ci)
-	}
 	res, err := l.released(pr, d.Previous.Run, ci)
 	if err != nil {
-		return true, err
+		// Without the round's review, missing from this clone or unusable,
+		// the agents give the verdict again, in a full review: in a new
+		// round while one is left, in the held one run again under its own
+		// number otherwise, never under a lower one, which the held mark
+		// would outrank on the next pass.
+		round := max(d.Round, min(d.Round+1, cfg.Loop.MaxRounds))
+		log.Warn("previous round not usable, the agents give the verdict the CI held", "number", pr.Number, "run", d.Previous.Run, "round", round, "error", err)
+		return true, l.review(ctx, pr, loopDecision{Round: round, Followed: true}, ci)
 	}
 	log.Info("loop review released", "number", pr.Number, "round", d.Round, "run", d.Previous.Run, "verdict", res.Review.Verdict)
 	return true, l.publish(ctx, pr, d, res)
@@ -612,6 +611,9 @@ func (l *loop) release(ctx context.Context, pr domain.PullRequest, d loopDecisio
 // the verdict the CI held and the CI read since. The previous run is left
 // as it was: it is what the agents said, and what was published then.
 func (l *loop) released(pr domain.PullRequest, previous string, ci *domain.CIStatus) (*ReviewResult, error) {
+	if !l.hasRun(previous) {
+		return nil, fmt.Errorf("previous round %q not found in this clone", previous)
+	}
 	data, err := os.ReadFile(filepath.Join(l.runsBase, previous, "final", "review.json"))
 	if err != nil {
 		return nil, fmt.Errorf("previous round: %w", err)

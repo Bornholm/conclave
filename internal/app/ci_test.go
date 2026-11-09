@@ -322,3 +322,35 @@ func TestSanitizeChecks(t *testing.T) {
 		t.Errorf("a long name is not cut: %d bytes", len(long))
 	}
 }
+
+func TestLoopCIWaitPersists(t *testing.T) {
+	a, f, _ := newLoopApp(t, agentCfg(t, "r1", config.RoleReviewer, "approving"), agentCfg(t, "lead", config.RoleLead, "approving"))
+	f.checks = []domain.Check{{Name: "test", State: domain.CheckPending}}
+	ctx := context.Background()
+	file := filepath.Join(t.TempDir(), "conclave", ciWaitFile)
+	now := time.Now()
+	clock := func() time.Time { return now }
+	first := &loop{app: a, forge: f, waiting: loadWaits(file), waitFile: file, now: clock}
+	if wait, _ := first.waitForCI(ctx, *f.pr); !wait {
+		t.Fatal("not waiting")
+	}
+	first.saveWaits()
+
+	// A new process, as with --once from cron: the wait goes on.
+	now = now.Add(a.Config.CIMaxWait())
+	second := &loop{app: a, forge: f, waiting: loadWaits(file), waitFile: file, now: clock}
+	if w := second.waiting[f.pr.Number]; w.Head != f.pr.Head.SHA {
+		t.Fatalf("the wait is not kept: %+v", second.waiting)
+	}
+	if wait, _ := second.waitForCI(ctx, *f.pr); wait {
+		t.Error("a new loop waits ci.max_wait again")
+	}
+
+	// The CI finished: the wait is forgotten, on disk too.
+	f.checks[0].State = domain.CheckSuccess
+	second.waitForCI(ctx, *f.pr)
+	second.saveWaits()
+	if w := loadWaits(file); len(w) != 0 {
+		t.Errorf("a finished wait is kept: %+v", w)
+	}
+}

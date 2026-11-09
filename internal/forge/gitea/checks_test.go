@@ -62,3 +62,32 @@ func TestListChecks(t *testing.T) {
 		t.Errorf("states: %+v", checks)
 	}
 }
+
+func TestListChecksPagingIgnored(t *testing.T) {
+	calls := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		var b strings.Builder
+		b.WriteString(`{"statuses":[`)
+		for i := 0; i < checkPageSize; i++ {
+			if i > 0 {
+				b.WriteString(",")
+			}
+			fmt.Fprintf(&b, `{"context":"job %d","status":"success"}`, i)
+		}
+		b.WriteString("]}")
+		fmt.Fprint(w, b.String())
+	}))
+	defer srv.Close()
+	c, err := New(srv.URL, "tok", srv.Client())
+	if err != nil {
+		t.Fatal(err)
+	}
+	checks, err := c.ListChecks(context.Background(), domain.Repository{Owner: "acme", Name: "proj"}, "abc")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(checks) != checkPageSize || calls != 2 {
+		t.Errorf("%d checks in %d calls from a server that ignores paging", len(checks), calls)
+	}
+}

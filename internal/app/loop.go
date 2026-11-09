@@ -12,6 +12,7 @@ import (
 	"regexp"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -85,8 +86,58 @@ const loopSkipCI = "CI still running"
 
 // ciWait is when the loop first found the CI of a head still running.
 type ciWait struct {
-	head  string
-	since time.Time
+	Head  string    `json:"head"`
+	Since time.Time `json:"since"`
+}
+
+// ciWaitFile is where the loop keeps, next to the runs, when it started
+// waiting for the CI of each pull request: `conclave loop --once` run from
+// cron is a new process on each pass, and an in-memory wait would never
+// reach ci.max_wait.
+const ciWaitFile = "loop-ci-wait.json"
+
+// loadWaits reads the waits a previous loop left. A missing or unreadable
+// file is an empty one: the worst it costs is waiting ci.max_wait again.
+func loadWaits(path string) map[int64]ciWait {
+	waits := map[int64]ciWait{}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return waits
+	}
+	var raw map[string]ciWait
+	if json.Unmarshal(data, &raw) != nil {
+		return waits
+	}
+	for k, w := range raw {
+		if n, err := strconv.ParseInt(k, 10, 64); err == nil && w.Head != "" {
+			waits[n] = w
+		}
+	}
+	return waits
+}
+
+// saveWaits writes the waits for the next loop, when there is a file to
+// write them to.
+func (l *loop) saveWaits() {
+	if l.waitFile == "" || !l.waitsChanged {
+		return
+	}
+	raw := make(map[string]ciWait, len(l.waiting))
+	for n, w := range l.waiting {
+		raw[strconv.FormatInt(n, 10)] = w
+	}
+	data, err := json.MarshalIndent(raw, "", "  ")
+	if err == nil {
+		err = os.MkdirAll(filepath.Dir(l.waitFile), 0o755)
+	}
+	if err == nil {
+		err = os.WriteFile(l.waitFile, data, 0o644)
+	}
+	if err != nil {
+		l.app.logger().Warn("CI waits not saved, a new loop waits ci.max_wait again", "file", l.waitFile, "error", err)
+		return
+	}
+	l.waitsChanged = false
 }
 
 // loopDecision is what the loop does with one pull request.
@@ -204,7 +255,12 @@ func (a *App) Loop(ctx context.Context, req LoopRequest) error {
 	}
 	l := &loop{app: a, forge: f, reviewer: rv, repo: repo, me: me, runsBase: runsBase, req: req,
 		failures: map[int64]loopFailure{}, unsent: map[int64]loopSubmission{}, skipped: map[int64]string{},
-		include: map[int64]bool{}, unheeded: map[int64]string{}, waiting: map[int64]ciWait{}, now: time.Now}
+		include: map[int64]bool{}, unheeded: map[int64]string{}, now: time.Now}
+	// A dry run leaves no trace, the waits included.
+	if !req.DryRun {
+		l.waitFile = filepath.Join(filepath.Dir(runsBase), ciWaitFile)
+	}
+	l.waiting = loadWaits(l.waitFile)
 	for _, n := range req.Include {
 		l.include[n] = true
 	}
@@ -249,9 +305,11 @@ type loop struct {
 	// head and reason, not on every pass.
 	skipped map[int64]string
 	// waiting is when the loop started waiting for the CI of each pull
-	// request's head. It is kept in memory only: a restarted loop waits
-	// ci.max_wait again.
-	waiting map[int64]ciWait
+	// request's head, kept in waitFile across loops; waitsChanged says it
+	// has to be written again.
+	waiting      map[int64]ciWait
+	waitFile     string
+	waitsChanged bool
 	// now is the clock, replaced in tests.
 	now func() time.Time
 }
@@ -346,8 +404,10 @@ func (l *loop) pass(ctx context.Context) error {
 	for number := range l.waiting {
 		if !listed[number] {
 			delete(l.waiting, number)
+			l.waitsChanged = true
 		}
 	}
+	l.saveWaits()
 	// A pull request closed or merged with a review unsubmitted.
 	for number, u := range l.unsent {
 		if !listed[number] {
@@ -372,17 +432,21 @@ func (l *loop) waitForCI(ctx context.Context, pr domain.PullRequest) (bool, *dom
 	}
 	ci := l.app.loadCI(ctx, l.forge, l.repo, pr.Head.SHA)
 	if ci == nil || ci.Error != "" || ci.State() != domain.CheckPending {
-		delete(l.waiting, pr.Number)
+		if _, ok := l.waiting[pr.Number]; ok {
+			delete(l.waiting, pr.Number)
+			l.waitsChanged = true
+		}
 		return false, ci
 	}
 	log := l.app.logger()
 	w, ok := l.waiting[pr.Number]
-	if !ok || w.head != pr.Head.SHA {
-		w = ciWait{head: pr.Head.SHA, since: l.now()}
+	if !ok || w.Head != pr.Head.SHA {
+		w = ciWait{Head: pr.Head.SHA, Since: l.now()}
 		l.waiting[pr.Number] = w
+		l.waitsChanged = true
 		log.Info("pull request skipped", "number", pr.Number, "reason", loopSkipCI, "checks", checkNames(ci.Blocking(domain.CheckPending)), "max_wait", maxWait)
 	}
-	if waited := l.now().Sub(w.since); waited < maxWait {
+	if waited := l.now().Sub(w.Since); waited < maxWait {
 		log.Debug("pull request skipped", "number", pr.Number, "reason", loopSkipCI, "waited", waited.Round(time.Second))
 		return true, nil
 	}

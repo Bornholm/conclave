@@ -52,6 +52,12 @@ review:
   # How many times a reviewer that exited normally without a usable report is
   # asked again for the report alone, with the end of what it wrote. 0 disables.
   report_retries: 1
+  # How many times a reviewer whose model could not be reached (a connection
+  # timeout, an overloaded provider) is run again from the start, after
+  # api_retry_delay, within its own timeout. A refusal (quota, budget, rate
+  # limit) is never retried. 0 disables.
+  api_retries: 1
+  api_retry_delay: 30s
   # Time past its own timeout a reviewer that ran out of time gets to turn what
   # it wrote into a report, on a run of its own. A report already written when
   # the agent stopped is read without waiting for it. 0 disables.

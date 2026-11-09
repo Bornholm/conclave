@@ -99,6 +99,18 @@ func main() {
 		} else {
 			fmt.Print("Let")
 		}
+	case "pi-api-unreachable":
+		// A Pi stream whose provider could not be reached: its first run
+		// times out on every call, the next one answers. The marker file,
+		// under CONCLAVE_TESTAGENT_STATE, is what tells the runs apart.
+		marker := os.Getenv("CONCLAVE_TESTAGENT_STATE") + "/" + id + ".unreachable"
+		if _, err := os.Stat(marker); err == nil && os.Getenv("CONCLAVE_TESTAGENT_STATE") != "" {
+			fmt.Print(`{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":` + strconv.Quote(validReport(id)) + `}]}}` + "\n")
+			break
+		}
+		_ = os.WriteFile(marker, nil, 0o600)
+		fmt.Print(`{"type":"message_end","message":{"role":"assistant","content":[],"provider":"p","model":"m","stopReason":"error","errorMessage":"Request timed out."}}` + "\n" +
+			`{"type":"auto_retry_end","success":false,"attempt":3,"finalError":"Request timed out."}` + "\n")
 	case "pi-api-error":
 		// A Pi stream whose provider refused every call: Pi still exits 0,
 		// and would return a report if asked again.

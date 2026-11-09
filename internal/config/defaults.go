@@ -21,6 +21,10 @@ const (
 	DefaultMaxComments        = 200
 	DefaultMaxCommentBytes    = 8 << 10
 	DefaultReportRetries      = 1
+	// DefaultAPIRetries reruns once a reviewer whose model could not be
+	// reached, after DefaultAPIRetryDelay.
+	DefaultAPIRetries    = 1
+	DefaultAPIRetryDelay = 30 * time.Second
 	// DefaultReportGrace is the extra time a reviewer gets to convert what it
 	// wrote into a report once its own timeout has passed.
 	DefaultReportGrace = 2 * time.Minute

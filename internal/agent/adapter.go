@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
 	"sort"
+	"strings"
 	"unicode/utf8"
 
 	"github.com/bornholm/conclave/internal/config"
@@ -15,6 +17,56 @@ import (
 // limit, provider outage) so that it produced no answer. The agent may still
 // exit 0: asking it again for its report would hit the same failure.
 var ErrModelAPI = errors.New("model API error")
+
+// apiError is a model API error that keeps the provider's whole message,
+// which classifying it needs, while its text keeps only maxAPIErrorBytes of
+// it: a gateway that answers with a long JSON or HTML body may put the status
+// past the cut.
+type apiError struct {
+	format  string
+	message string
+}
+
+func (e *apiError) Error() string {
+	return e.format + ": " + ErrModelAPI.Error() + ": " + truncate(e.message, maxAPIErrorBytes)
+}
+
+func (e *apiError) Unwrap() error { return ErrModelAPI }
+
+// transientAPIErrors are the provider messages of a failure that may not
+// happen again a little later: the model was unreachable, too slow to
+// connect, or overloaded. A refusal (quota, budget, rate limit, credentials)
+// is left out on purpose: it would only be refused again.
+var transientAPIErrors = []string{
+	"timed out", "timeout", "connection error", "connection refused", "connection reset",
+	"econnreset", "econnrefused", "etimedout", "enotfound", "eai_again", "socket hang up",
+	"fetch failed", "network error", "bad gateway", "service unavailable", "gateway timeout",
+	"overloaded",
+}
+
+// transientAPIStatus matches the HTTP status of a gateway or a provider that
+// could not answer, only where a status stands: opening the message, as
+// providers write "503 Service Unavailable", or after "status", "http" or
+// "code". A bare number elsewhere, such as the token count of a context
+// length refusal, is not one.
+var transientAPIStatus = regexp.MustCompile(`^\s*(502|503|504|529)\b|\b(status|http|code)[\s:=_]*(502|503|504|529)\b`)
+
+// IsTransientAPIError reports whether err is a model API error that a new
+// run, after a pause, may not hit again: a provider that could not be reached
+// or was overloaded, as opposed to one that refused the call.
+func IsTransientAPIError(err error) bool {
+	var api *apiError
+	if !errors.As(err, &api) {
+		return false
+	}
+	msg := strings.ToLower(api.message)
+	for _, s := range transientAPIErrors {
+		if strings.Contains(msg, s) {
+			return true
+		}
+	}
+	return transientAPIStatus.MatchString(msg)
+}
 
 // maxAPIErrorBytes bounds the provider message kept in the error.
 const maxAPIErrorBytes = 300
@@ -259,7 +311,7 @@ func adaptPiJSON(stdout []byte) (*Adapted, error) {
 	ad.Transcript = tail(transcript.Bytes(), MaxTranscriptBytes)
 	if lastText == "" {
 		if apiErr != "" {
-			return ad, fmt.Errorf("pi-json: %w: %s", ErrModelAPI, truncate(apiErr, maxAPIErrorBytes))
+			return ad, &apiError{format: "pi-json", message: apiErr}
 		}
 		return ad, errors.New("pi-json: no assistant text message in output")
 	}

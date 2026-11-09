@@ -549,8 +549,10 @@ func (l *loop) retrySubmission(ctx context.Context, pr domain.PullRequest, revie
 	}
 	for _, rv := range reviews {
 		// A review given once the CI passed is of the round it was held
-		// on: that round's review is not this one. Any other review of
-		// the round, from another loop for one, is.
+		// on: that round's review is not this one. Outside a release, any
+		// other review of the round, from another loop for one, is; a
+		// release only knows its own run, and released.json in the held
+		// run keeps it from being given twice.
 		if m, ok := parseLoopMark(rv.Body); ok && strings.EqualFold(rv.Author, l.me) && (m.Round > u.mark.Round || m.Run == u.mark.Run || u.releases == "" && m.Round == u.mark.Round) {
 			return false, false
 		}
@@ -610,7 +612,7 @@ func (l *loop) release(ctx context.Context, pr domain.PullRequest, d loopDecisio
 	}
 	// A forge slow to list the release back would have it given again:
 	// the held run says it was, across loops, `--once` from cron included.
-	if l.hasRun(d.Previous.Run) {
+	if runIDRe.MatchString(d.Previous.Run) {
 		if _, err := os.Stat(filepath.Join(l.runsBase, d.Previous.Run, "final", releasedFile)); err == nil {
 			log.Debug("pull request skipped", "number", pr.Number, "reason", "held approval given already")
 			return false, nil
@@ -741,6 +743,8 @@ func (l *loop) publish(ctx context.Context, pr domain.PullRequest, d loopDecisio
 		// the writer's, or the forge refuses it.
 		notice := roundNotice(d.Round, cfg.Loop.MaxRounds, review.Verdict)
 		switch {
+		case d.Release && review.Verdict == domain.VerdictApprove && review.CI == nil:
+			notice = "No CI is read on this head any more: the approval the previous comment held back is given. " + notice
 		case d.Release && review.Verdict == domain.VerdictApprove:
 			notice = "The CI has passed since the previous comment, which published this review without the approval the CI held back. " + notice
 		case d.Release:
@@ -791,9 +795,16 @@ func (l *loop) submit(ctx context.Context, number int64, u loopSubmission) error
 	if store, err := artifact.Open(l.runsBase, u.mark.Run); err == nil {
 		_ = store.Write("final", "comment.md", []byte(u.body))
 	}
-	if u.releases != "" && l.hasRun(u.releases) {
+	// Written where the held run is, or would be when it is not in this
+	// clone: the release looks for it there.
+	if u.releases != "" && runIDRe.MatchString(u.releases) {
+		dir := filepath.Join(l.runsBase, u.releases, "final")
 		data, _ := json.Marshal(map[string]string{"run": u.mark.Run})
-		if err := os.WriteFile(filepath.Join(l.runsBase, u.releases, "final", releasedFile), data, 0o644); err != nil {
+		err := os.MkdirAll(dir, 0o755)
+		if err == nil {
+			err = os.WriteFile(filepath.Join(dir, releasedFile), data, 0o644)
+		}
+		if err != nil {
 			l.app.logger().Warn("release not recorded, a forge slow to list it may have it given again", "number", number, "run", u.releases, "error", err)
 		}
 	}

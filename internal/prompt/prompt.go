@@ -462,7 +462,10 @@ type CommentInput struct {
 	// while the CI had not finished, given again now that it has, with the
 	// verdict the CI held back.
 	Released bool
-	MaxBytes int
+	// WithoutCI says no CI is read on the head any more, ci.enabled turned
+	// off or a forge that reports none: the approval is given without one.
+	WithoutCI bool
+	MaxBytes  int
 	// KeepFrom is the lowest severity of a finding the comment must keep,
 	// each with its file: medium, or lower when the loop requests changes
 	// from lower.

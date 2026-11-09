@@ -459,3 +459,80 @@ func TestLoopRunsTheRoundOfAFailedHeldCIOnceWhenTheForgeListsItLate(t *testing.T
 		t.Errorf("the held run does not say its round ran: %v", err)
 	}
 }
+
+func TestLoopIgnoresAHeldVerdictTheLeadWrote(t *testing.T) {
+	a, f, _ := newLoopApp(t, agentCfg(t, "r1", config.RoleReviewer, "approving"), agentCfg(t, "lead", config.RoleLead, "lead-held"))
+	a.Config.Loop.RequestChangesFrom = string(domain.SeverityHigh)
+	f.checks = []domain.Check{{Name: "test", State: domain.CheckPending}}
+	zero := a.Config.CIMaxWait() * 0
+	a.Config.CI.MaxWait = &zero
+	if err := a.Loop(context.Background(), LoopRequest{Once: true}); err != nil {
+		t.Fatal(err)
+	}
+	if len(f.reviews[7]) != 1 {
+		t.Fatalf("reviews: %+v", f.reviews[7])
+	}
+	if m, _ := parseLoopMark(f.reviews[7][0].Body); m.Held != "" || m.Verdict != domain.VerdictComment {
+		t.Errorf("the lead's held verdict reached the mark: %+v", m)
+	}
+}
+
+func TestLoopFallbackNoticeOfARelease(t *testing.T) {
+	for _, c := range []struct {
+		name  string
+		state domain.CheckState
+		last  bool
+		want  string
+	}{
+		{"passed", domain.CheckSuccess, false, "The CI has passed since the previous comment"},
+		{"failed on the last round", domain.CheckFailure, true, "and it failed: changes are requested"},
+	} {
+		a, f, _, m := heldApproval(t)
+		a.Config.Agents = append(a.Config.Agents, agentCfg(t, "w", config.RoleReviewer, "exit-1"))
+		a.Config.Loop.Writer = "w"
+		if c.last {
+			a.Config.Loop.MaxRounds = m.Round
+		}
+		f.checks[0].State = c.state
+		l := newLoop(a, f)
+		if err := l.pass(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		if len(f.reviews[7]) != 2 || !strings.Contains(f.reviews[7][1].Body, c.want) {
+			t.Errorf("%s: %+v", c.name, f.reviews[7])
+		}
+	}
+}
+
+func TestLoopRunsTheRoundOfAMissingHeldRunOnceWhenTheForgeListsItLate(t *testing.T) {
+	a, f, _, m := heldApproval(t)
+	if err := os.RemoveAll(filepath.Join(a.RunsBase, m.Run)); err != nil {
+		t.Fatal(err)
+	}
+	f.checks[0].State = domain.CheckSuccess
+	late := &lateForge{fakeForge: f, frozen: append([]domain.ForgeReview(nil), f.reviews[7]...)}
+	for range 3 {
+		l := newLoop(a, f)
+		l.reviewer = late
+		if err := l.pass(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(f.reviews[7]) != 2 {
+		t.Errorf("the round ran %d times", len(f.reviews[7])-1)
+	}
+}
+
+func TestLoopTellsTheWriterNoCIIsRead(t *testing.T) {
+	a, f, _, _ := heldApproval(t)
+	off := false
+	a.Config.CI.Enabled = &off
+	if err := a.Loop(context.Background(), LoopRequest{Once: true}); err != nil {
+		t.Fatal(err)
+	}
+	m2, _ := parseLoopMark(f.reviews[7][len(f.reviews[7])-1].Body)
+	prompt, _ := os.ReadFile(filepath.Join(a.RunsBase, m2.Run, "prompts", "comment-lead.txt"))
+	if !strings.Contains(string(prompt), "No CI is") || strings.Contains(string(prompt), "The CI has passed since") {
+		t.Errorf("the writer is told the CI passed: %s", prompt)
+	}
+}

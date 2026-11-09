@@ -324,7 +324,10 @@ func (a *App) Review(ctx context.Context, req ReviewRequest) (*ReviewResult, err
 	if w := requestChangesFrom(review, req.RequestChangesFrom); w != "" {
 		review.Warnings = append(review.Warnings, w)
 	}
-	review.CI = pr.CI
+	// The orchestrator's, like CI: a lead that wrote one, steered by the
+	// pull request it read, would have the loop give an approval the
+	// reports did not reach.
+	review.CI, review.HeldByCI = pr.CI, ""
 	review.Warnings = append(review.Warnings, applyCI(review, pr.CI)...)
 	_ = store.WriteJSON("final", "review.json", review)
 	var md bytes.Buffer

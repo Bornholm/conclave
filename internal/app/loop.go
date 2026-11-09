@@ -593,11 +593,12 @@ func (l *loop) release(ctx context.Context, pr domain.PullRequest, d loopDecisio
 		return true, l.review(ctx, pr, loopDecision{Round: d.Round + 1, Previous: d.Previous, PreviousAt: d.PreviousAt, Followed: true}, ci)
 	}
 	if !l.hasRun(d.Previous.Run) {
-		if d.Round < cfg.Loop.MaxRounds {
-			log.Warn("previous round not found in this clone, a new round gives the verdict the CI held", "number", pr.Number, "run", d.Previous.Run)
-			return true, l.review(ctx, pr, loopDecision{Round: d.Round + 1, Previous: d.Previous, PreviousAt: d.PreviousAt, Followed: true}, ci)
-		}
-		return true, fmt.Errorf("previous round %s not found in this clone, and no round is left to give the verdict the CI held", d.Previous.Run)
+		// Without the round's review, the agents give the verdict again: in
+		// a new round while one is left, in the last one run again under
+		// its own number otherwise, rather than leave the approval held.
+		round := min(d.Round+1, cfg.Loop.MaxRounds)
+		log.Warn("previous round not found in this clone, the agents give the verdict the CI held", "number", pr.Number, "run", d.Previous.Run, "round", round)
+		return true, l.review(ctx, pr, loopDecision{Round: round, Previous: d.Previous, PreviousAt: d.PreviousAt, Followed: true}, ci)
 	}
 	res, err := l.released(pr, d.Previous.Run, ci)
 	if err != nil {
@@ -629,8 +630,11 @@ func (l *loop) released(pr domain.PullRequest, previous string, ci *domain.CISta
 	if err != nil {
 		return nil, err
 	}
+	// The run's agents are the previous run's: none ran in this one. What
+	// ties it to the pull request is set whatever the previous manifest
+	// says, or when it cannot be read: `--since last` finds the run by it.
 	manifest, _ := runManifest(filepath.Join(l.runsBase, previous))
-	// The run's agents are the previous run's: none ran in this one.
+	manifest.Forge, manifest.Owner, manifest.Repo, manifest.PRNumber, manifest.HeadSHA = l.forge.Name(), l.repo.Owner, l.repo.Name, pr.Number, pr.Head.SHA
 	manifest.ID, manifest.StartedAt, manifest.Status, manifest.Error, manifest.Agents = id, started, domain.RunSucceeded, "", nil
 	ended := l.now()
 	manifest.EndedAt = &ended

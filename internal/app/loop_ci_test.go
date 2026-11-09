@@ -208,6 +208,45 @@ func TestLoopRunsARoundWhenTheHeldRunIsMissing(t *testing.T) {
 	}
 }
 
+func TestLoopRunsTheLastRoundAgainWhenTheHeldRunIsMissing(t *testing.T) {
+	a, f, _, m := heldApproval(t)
+	a.Config.Loop.MaxRounds = m.Round
+	if err := os.RemoveAll(filepath.Join(a.RunsBase, m.Run)); err != nil {
+		t.Fatal(err)
+	}
+	f.checks[0].State = domain.CheckSuccess
+	if err := a.Loop(context.Background(), LoopRequest{Once: true}); err != nil {
+		t.Fatal(err)
+	}
+	if len(f.reviews[7]) != 2 || f.reviews[7][1].State != string(domain.VerdictApprove) {
+		t.Fatalf("reviews: %+v", f.reviews[7])
+	}
+	m2, _ := parseLoopMark(f.reviews[7][1].Body)
+	if m2.Round != m.Round {
+		t.Errorf("a round past loop.max_rounds: %+v", m2)
+	}
+	if reports, _ := os.ReadDir(filepath.Join(a.RunsBase, m2.Run, "reports")); len(reports) == 0 {
+		t.Error("the agents did not give the verdict")
+	}
+}
+
+func TestReleasedRunIsFoundBySinceLast(t *testing.T) {
+	a, f, _, m := heldApproval(t)
+	// A previous manifest that cannot be read leaves the release findable.
+	if err := os.WriteFile(filepath.Join(a.RunsBase, m.Run, "manifest.json"), []byte("{"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	f.checks[0].State = domain.CheckSuccess
+	if err := a.Loop(context.Background(), LoopRequest{Once: true}); err != nil {
+		t.Fatal(err)
+	}
+	m2, _ := parseLoopMark(f.reviews[7][len(f.reviews[7])-1].Body)
+	path, err := lastReview(a.RunsBase, domain.Repository{Owner: "acme", Name: "proj"}, 7, "")
+	if err != nil || filepath.Base(filepath.Dir(filepath.Dir(path))) != m2.Run {
+		t.Errorf("--since last: %s %v, want %s", path, err, m2.Run)
+	}
+}
+
 func TestLoopRetriesAReleaseTheForgeRefused(t *testing.T) {
 	a, f, _, _ := heldApproval(t)
 	f.checks[0].State = domain.CheckSuccess

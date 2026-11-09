@@ -341,6 +341,10 @@ type loop struct {
 	waiting      map[int64]ciWait
 	waitFile     string
 	waitsChanged bool
+	// given is the head and round of each pull request whose held
+	// approval the loop gave: a forge slow to list the release back would
+	// otherwise have it given again on the next pass.
+	given map[int64]string
 	// now is the clock, replaced in tests.
 	now func() time.Time
 }
@@ -453,6 +457,11 @@ func (l *loop) pass(ctx context.Context) error {
 	for number := range l.skipped {
 		if !listed[number] {
 			delete(l.skipped, number)
+		}
+	}
+	for number := range l.given {
+		if !listed[number] {
+			delete(l.given, number)
 		}
 	}
 	for number := range l.waiting {
@@ -595,6 +604,13 @@ func (l *loop) release(ctx context.Context, pr domain.PullRequest, d loopDecisio
 		delete(l.waiting, pr.Number)
 		l.waitsChanged = true
 	}
+	given := fmt.Sprintf("%s %d", pr.Head.SHA, d.Round)
+	if l.given[pr.Number] == given {
+		log.Debug("pull request skipped", "number", pr.Number, "reason", "held approval given already")
+		return false, nil
+	}
+	// No CI to read, ci.enabled turned off or a forge that reports none,
+	// releases the approval: a new round would approve without one too.
 	ci := a.loadCI(ctx, l.forge, l.repo, pr.Head.SHA)
 	state := ci.State()
 	if state == domain.CheckPending {
@@ -625,7 +641,15 @@ func (l *loop) release(ctx context.Context, pr domain.PullRequest, d loopDecisio
 		return false, nil
 	}
 	log.Info("loop review released", "number", pr.Number, "round", d.Round, "run", d.Previous.Run, "verdict", res.Review.Verdict)
-	return true, l.publish(ctx, pr, d, res)
+	if err := l.publish(ctx, pr, d, res); err != nil {
+		return true, err
+	}
+	// Submitted, or kept for retrySubmission: either way, given.
+	if l.given == nil {
+		l.given = map[int64]string{}
+	}
+	l.given[pr.Number] = given
+	return true, nil
 }
 
 // heldReview reads the review of the round that held an approval back: in

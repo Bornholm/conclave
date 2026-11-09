@@ -394,3 +394,45 @@ func TestLoopRetriesAReleaseItCouldNotWrite(t *testing.T) {
 		t.Errorf("mark: %+v", m2)
 	}
 }
+
+// lateForge lists the reviews as they were before the last submission, a
+// forge slow to list a new review.
+type lateForge struct {
+	*fakeForge
+	frozen []domain.ForgeReview
+}
+
+func (f *lateForge) ListReviews(context.Context, domain.Repository, int64) ([]domain.ForgeReview, error) {
+	return f.frozen, nil
+}
+
+func TestLoopGivesAHeldApprovalOnceWhenTheForgeListsItLate(t *testing.T) {
+	a, f, _, _ := heldApproval(t)
+	f.checks[0].State = domain.CheckSuccess
+	late := &lateForge{fakeForge: f, frozen: append([]domain.ForgeReview(nil), f.reviews[7]...)}
+	l := newLoop(a, f)
+	l.reviewer = late
+	before := runs(t, a)
+	for range 3 {
+		if err := l.pass(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(f.reviews[7]) != 2 || runs(t, a) != before+1 {
+		t.Errorf("released %d times, runs %d then %d", len(f.reviews[7])-1, before, runs(t, a))
+	}
+}
+
+func TestLoopReleasesWithoutACIToRead(t *testing.T) {
+	a, f, _, _ := heldApproval(t)
+	// ci.enabled turned off since: a new round would approve without the
+	// CI too.
+	off := false
+	a.Config.CI.Enabled = &off
+	if err := a.Loop(context.Background(), LoopRequest{Once: true}); err != nil {
+		t.Fatal(err)
+	}
+	if len(f.reviews[7]) != 2 || f.reviews[7][1].State != string(domain.VerdictApprove) {
+		t.Errorf("reviews: %+v", f.reviews[7])
+	}
+}

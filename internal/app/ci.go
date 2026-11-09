@@ -59,8 +59,9 @@ func sanitizeChecks(checks []domain.Check) []domain.Check {
 	out := make([]domain.Check, len(checks))
 	for i, c := range checks {
 		c.Name = noDashes(oneLine(c.Name, maxCheckNameBytes))
-		c.Conclusion = noDashes(oneLine(c.Conclusion, 64))
-		c.URL = noDashes(oneLine(c.URL, maxCheckFieldBytes))
+		// Printed mid-line: one line is enough, and a URL keeps its dashes.
+		c.Conclusion = oneLine(c.Conclusion, 64)
+		c.URL = oneLine(c.URL, maxCheckFieldBytes)
 		c.Summary = defuseFences(c.Summary)
 		anns := make([]domain.CheckAnnotation, len(c.Annotations))
 		for j, an := range c.Annotations {

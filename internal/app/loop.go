@@ -408,13 +408,17 @@ func (l *loop) pass(ctx context.Context) error {
 			log.Log(ctx, level, "pull request skipped", "number", pr.Number, "reason", d.Skip)
 			continue
 		}
-		if fl := l.failures[pr.Number]; fl.head == pr.Head.SHA && fl.count >= loopMaxFailures {
+		fl := l.failures[pr.Number]
+		failed := fl.head == pr.Head.SHA && fl.count >= loopMaxFailures
+		// A release runs no agent: only the rounds it falls back to are
+		// bounded by the failures on the head.
+		if failed && !d.Release {
 			log.Debug("pull request skipped", "number", pr.Number, "reason", "failed on this head already", "head", pr.Head.SHA)
 			continue
 		}
 		if d.Release {
 			var done bool
-			done, err = l.release(ctx, pr, d)
+			done, err = l.release(ctx, pr, d, failed)
 			if !done {
 				continue
 			}
@@ -582,7 +586,10 @@ func (l *loop) review(ctx context.Context, pr domain.PullRequest, d loopDecision
 // running the agents on a head they reviewed. A failed CI gets a new round
 // while there is one left, for the agents to look for the cause in the
 // code; the round's review requests changes otherwise.
-func (l *loop) release(ctx context.Context, pr domain.PullRequest, d loopDecision) (bool, error) {
+//
+// failed says the rounds on this head failed loopMaxFailures times: the
+// release is still tried, it runs no agent, but not a round in its place.
+func (l *loop) release(ctx context.Context, pr domain.PullRequest, d loopDecision, failed bool) (bool, error) {
 	a := l.app
 	cfg := a.Config
 	log := a.logger()
@@ -598,6 +605,10 @@ func (l *loop) release(ctx context.Context, pr domain.PullRequest, d loopDecisio
 		return false, nil
 	}
 	held, err := l.heldReview(pr, d.Previous.Run)
+	if (err != nil || state == domain.CheckFailure && d.Round < cfg.Loop.MaxRounds) && failed {
+		log.Debug("pull request skipped", "number", pr.Number, "reason", "failed on this head already", "head", pr.Head.SHA)
+		return false, nil
+	}
 	if err != nil {
 		// Without the round's review, missing from this clone or unusable,
 		// the agents give the verdict again, in a full review: in a new
@@ -613,11 +624,12 @@ func (l *loop) release(ctx context.Context, pr domain.PullRequest, d loopDecisio
 		return true, l.review(ctx, pr, loopDecision{Round: d.Round + 1, Previous: d.Previous, PreviousAt: d.PreviousAt, Followed: true}, ci)
 	}
 	// A failure to write the release is this clone's, not the previous
-	// round's: it is tried again on the next pass, not paid for with the
-	// agents.
+	// round's: it is tried again on every pass, costing no agent, rather
+	// than paid for with the agents or counted as a failure on the head.
 	res, err := l.released(pr, d.Previous.Run, held, ci)
 	if err != nil {
-		return true, fmt.Errorf("release the review of %s: %w", d.Previous.Run, err)
+		log.Warn("review not released, it is tried again on the next pass", "number", pr.Number, "run", d.Previous.Run, "error", err)
+		return false, nil
 	}
 	log.Info("loop review released", "number", pr.Number, "round", d.Round, "run", d.Previous.Run, "verdict", res.Review.Verdict)
 	return true, l.publish(ctx, pr, d, res)

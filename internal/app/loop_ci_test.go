@@ -332,12 +332,16 @@ func TestLoopRetriesAReleaseItCouldNotWrite(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = os.Chmod(a.RunsBase, 0o755) })
 	before := runs(t, a)
-	if err := l.pass(context.Background()); err != nil {
-		t.Fatal(err)
+	for range loopMaxFailures + 1 {
+		if err := l.pass(context.Background()); err != nil {
+			t.Fatal(err)
+		}
 	}
-	if len(f.reviews[7]) != 1 || runs(t, a) != before || l.failures[7].count != 1 {
+	if len(f.reviews[7]) != 1 || runs(t, a) != before || l.failures[7].count != 0 {
 		t.Fatalf("reviews %+v, runs %d then %d, failures %+v", f.reviews[7], before, runs(t, a), l.failures[7])
 	}
+	// Rounds that failed on the head do not stop the release either.
+	l.failures[7] = loopFailure{head: f.pr.Head.SHA, count: loopMaxFailures}
 	_ = os.Chmod(a.RunsBase, 0o755)
 	if err := l.pass(context.Background()); err != nil {
 		t.Fatal(err)

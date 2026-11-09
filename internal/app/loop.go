@@ -79,6 +79,16 @@ const loopSkipReviewed = "already manually reviewed"
 // request is open, and only the log tells why the loop waits on it.
 const loopSkipDraft = "draft"
 
+// loopSkipCI is why the loop leaves alone, for now, a pull request whose
+// CI has not finished on its head.
+const loopSkipCI = "CI still running"
+
+// ciWait is when the loop first found the CI of a head still running.
+type ciWait struct {
+	head  string
+	since time.Time
+}
+
 // loopDecision is what the loop does with one pull request.
 type loopDecision struct {
 	// Skip says why the pull request is left alone, empty when it is
@@ -194,7 +204,7 @@ func (a *App) Loop(ctx context.Context, req LoopRequest) error {
 	}
 	l := &loop{app: a, forge: f, reviewer: rv, repo: repo, me: me, runsBase: runsBase, req: req,
 		failures: map[int64]loopFailure{}, unsent: map[int64]loopSubmission{}, skipped: map[int64]string{},
-		include: map[int64]bool{}, unheeded: map[int64]string{}}
+		include: map[int64]bool{}, unheeded: map[int64]string{}, waiting: map[int64]ciWait{}, now: time.Now}
 	for _, n := range req.Include {
 		l.include[n] = true
 	}
@@ -238,6 +248,12 @@ type loop struct {
 	// reviewed by hand or in draft was last logged: it is logged once per
 	// head and reason, not on every pass.
 	skipped map[int64]string
+	// waiting is when the loop started waiting for the CI of each pull
+	// request's head. It is kept in memory only: a restarted loop waits
+	// ci.max_wait again.
+	waiting map[int64]ciWait
+	// now is the clock, replaced in tests.
+	now func() time.Time
 }
 
 // pass goes once over the open pull requests, oldest first.
@@ -297,6 +313,9 @@ func (l *loop) pass(ctx context.Context) error {
 			log.Debug("pull request skipped", "number", pr.Number, "reason", "failed on this head already", "head", pr.Head.SHA)
 			continue
 		}
+		if l.waitForCI(ctx, pr) {
+			continue
+		}
 		reviewed++
 		if err := l.review(ctx, pr, d); err != nil {
 			if ctx.Err() != nil {
@@ -323,6 +342,11 @@ func (l *loop) pass(ctx context.Context) error {
 			delete(l.skipped, number)
 		}
 	}
+	for number := range l.waiting {
+		if !listed[number] {
+			delete(l.waiting, number)
+		}
+	}
 	// A pull request closed or merged with a review unsubmitted.
 	for number, u := range l.unsent {
 		if !listed[number] {
@@ -332,6 +356,36 @@ func (l *loop) pass(ctx context.Context) error {
 	}
 	log.Info("loop pass done", "open", len(prs), "reviewed", reviewed)
 	return nil
+}
+
+// waitForCI reports whether the review of the pull request waits for its CI
+// to finish on its head: reviewed before, the review could not approve, and
+// the loop would only come back on a new head. The wait ends after
+// ci.max_wait, and the review then runs anyway. A CI that could not be read
+// is not waited for: waiting would not tell more.
+func (l *loop) waitForCI(ctx context.Context, pr domain.PullRequest) bool {
+	maxWait := l.app.Config.CIMaxWait()
+	if maxWait <= 0 {
+		return false
+	}
+	ci := l.app.loadCI(ctx, l.forge, l.repo, pr.Head.SHA)
+	if ci == nil || ci.Error != "" || ci.State() != domain.CheckPending {
+		delete(l.waiting, pr.Number)
+		return false
+	}
+	log := l.app.logger()
+	w, ok := l.waiting[pr.Number]
+	if !ok || w.head != pr.Head.SHA {
+		w = ciWait{head: pr.Head.SHA, since: l.now()}
+		l.waiting[pr.Number] = w
+		log.Info("pull request skipped", "number", pr.Number, "reason", loopSkipCI, "checks", checkNames(ci.Blocking(domain.CheckPending)), "max_wait", maxWait)
+	}
+	if waited := l.now().Sub(w.since); waited < maxWait {
+		log.Debug("pull request skipped", "number", pr.Number, "reason", loopSkipCI, "waited", waited.Round(time.Second))
+		return true
+	}
+	log.Warn("CI still running after ci.max_wait, reviewing without it: the review cannot approve", "number", pr.Number, "checks", checkNames(ci.Blocking(domain.CheckPending)), "max_wait", maxWait)
+	return false
 }
 
 // unheed reports that an included pull request is not taken up, once until

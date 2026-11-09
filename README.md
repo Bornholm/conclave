@@ -38,7 +38,7 @@ conclave review --since last       # after fixes, against the last review of the
 
 The default branch is the one the remote's `HEAD` names, else `main` or `master`. A range is reviewed from the merge base of its two ends, as a pull request would be. Uncommitted changes are not reviewed: Conclave warns when there are some.
 
-Or let Conclave watch the repository. `conclave loop` reviews the open pull requests nobody has reviewed yet, submits the review on the forge in the pull request's language, and runs another round on each push until it approves or the rounds run out.
+Or let Conclave watch the repository. `conclave loop` reviews the open pull requests nobody has reviewed yet, submits the review on the forge in the pull request's language, and runs another round on each push until it approves or the rounds run out. The CI weighs on the verdict: a failed check requests changes, and the loop waits for a running one before reviewing.
 
 ```bash
 conclave loop --dry-run    # one pass, the comments printed instead of submitted

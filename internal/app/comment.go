@@ -110,11 +110,15 @@ func (a *App) WriteComment(ctx context.Context, req CommentRequest) (*Comment, e
 		return nil, fmt.Errorf("writer %s: invalid comment: %w", writer.ID, err)
 	}
 	missing := missingFindings(review, rep.Body, keepFrom(req.RequestChangesFrom))
+	missingChecks := missingChecks(review, rep.Body)
 	warnings = append(ex.Warnings, warnings...)
 	// final/comment.md is what the author reads, which the loop writes once
 	// it knows: this comment, or the review it falls back to.
-	if len(missing) > 0 {
+	if len(missing) > 0 || len(missingChecks) > 0 {
 		_ = store.Write("final", "comment-rejected.md", []byte(rep.Body+"\n"))
+		if len(missing) == 0 {
+			return nil, fmt.Errorf("writer %s: the comment leaves out the failed CI check(s) %s", writer.ID, strings.Join(missingChecks, ", "))
+		}
 		return nil, fmt.Errorf("writer %s: the comment leaves out the finding(s) at %s, rated %s or above", writer.ID, strings.Join(missing, ", "), keepFrom(req.RequestChangesFrom))
 	}
 	_ = store.WriteJSON("final", "comment.json", rep)
@@ -155,6 +159,19 @@ func missingFindings(review *domain.ConsolidatedReview, body string, from domain
 			continue
 		}
 		missing = append(missing, f.File)
+	}
+	return missing
+}
+
+// missingChecks returns the names of the failed blocking checks a comment
+// does not name: they request changes as a finding does, and the author has
+// to know which job to look at.
+func missingChecks(review *domain.ConsolidatedReview, body string) []string {
+	var missing []string
+	for _, c := range review.CI.Blocking(domain.CheckFailure) {
+		if !strings.Contains(body, c.Name) && !slices.Contains(missing, c.Name) {
+			missing = append(missing, c.Name)
+		}
 	}
 	return missing
 }

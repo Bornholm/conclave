@@ -139,6 +139,21 @@ loop:
   # changes, whatever the lead's verdict: critical | high | medium | low.
   request_changes_from: low
 
+# The CI of the pull request head weighs on the verdict: a failed check
+# requests changes, a check still running keeps the review from approving,
+# and the agents get the checks, with what the failed ones said.
+ci:
+  enabled: true
+  # When set, only the checks matching these names decide the verdict, and
+  # each is waited for even before it reports. "*" matches anything,
+  # slashes included: "CI / test (*)".
+  required: []
+  # Checks that never decide the verdict: optional or flaky jobs.
+  ignore: []
+  # How long `conclave loop` waits for the checks of a head to finish
+  # before reviewing it anyway, without approving. 0 reviews at once.
+  max_wait: 30m
+
 output:
   format: markdown          # markdown | json
   show_attribution: true

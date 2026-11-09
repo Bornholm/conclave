@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/bornholm/conclave/internal/domain"
 )
@@ -213,4 +214,69 @@ func Reviewer(f Forge) (PullRequestReviewer, error) {
 		return nil, fmt.Errorf("%w (%s)", ErrReviewsUnsupported, f.Name())
 	}
 	return r, nil
+}
+
+// ErrChecksUnsupported is returned when the forge cannot report the CI
+// checks of a commit.
+var ErrChecksUnsupported = errors.New("CI checks are not supported on this forge")
+
+// Bounds on what a forge returns about the checks: they go into every
+// agent's prompt.
+const (
+	// MaxCheckSummaryBytes caps what a check says about itself.
+	MaxCheckSummaryBytes = 2000
+	// MaxCheckAnnotations caps the annotations kept per failed check.
+	MaxCheckAnnotations = 20
+	// MaxAnnotatedChecks caps how many failed checks have their
+	// annotations fetched, one call each.
+	MaxAnnotatedChecks = 10
+	// MaxAnnotationBytes caps one annotation's message.
+	MaxAnnotationBytes = 500
+)
+
+// CheckReader is implemented by the forges that report the CI checks of a
+// commit. It is optional: a forge without CI does not implement it.
+type CheckReader interface {
+	// ListChecks returns the latest check of each name reported on the
+	// commit, check runs and commit statuses alike, with the annotations
+	// of the failed ones. Blocking is left to the caller.
+	ListChecks(ctx context.Context, repo domain.Repository, sha string) ([]domain.Check, error)
+}
+
+// ListChecks returns the checks of a commit. It returns
+// ErrChecksUnsupported for a forge that does not implement CheckReader.
+func ListChecks(ctx context.Context, f Forge, repo domain.Repository, sha string) ([]domain.Check, error) {
+	r, ok := f.(CheckReader)
+	if !ok {
+		return nil, ErrChecksUnsupported
+	}
+	return r.ListChecks(ctx, repo, sha)
+}
+
+// StatusState maps a commit status state, as GitHub, Gitea and Forgejo
+// name it, to a check state. An unknown state is pending: it is not a
+// success the review can approve on, nor a failure it can blame the author
+// for.
+func StatusState(s string) domain.CheckState {
+	switch strings.ToLower(s) {
+	case "success", "warning", "skipped", "neutral":
+		return domain.CheckSuccess
+	case "failure", "error", "cancelled", "canceled", "timed_out", "timedout":
+		return domain.CheckFailure
+	}
+	return domain.CheckPending
+}
+
+// CutText trims s and shortens it to at most max bytes on a rune boundary,
+// marking the cut.
+func CutText(s string, max int) string {
+	s = strings.TrimSpace(s)
+	if max <= 0 || len(s) <= max {
+		return s
+	}
+	cut := max
+	for cut > 0 && !utf8.RuneStart(s[cut]) {
+		cut--
+	}
+	return s[:cut] + "…"
 }

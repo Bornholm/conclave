@@ -49,6 +49,10 @@ const (
 	// MinLoopCommentBytes leaves a comment room past the loop's mark.
 	MinLoopCommentBytes = 1 << 10
 
+	// DefaultCIMaxWait is how long the loop waits for the checks of a head
+	// before reviewing it without them.
+	DefaultCIMaxWait = 30 * time.Minute
+
 	DefaultPlanMaxParallel = 3
 	DefaultMaxPlanSteps    = 30
 	DefaultMaxPlanComments = 50

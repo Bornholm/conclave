@@ -198,6 +198,7 @@ func (a *App) Review(ctx context.Context, req ReviewRequest) (*ReviewResult, err
 			pr.Issues = issues
 		}
 
+		pr.CI = a.loadCI(ctx, f, repo, pr.Head.SHA)
 		log.Info("ensuring commits", "base", pr.Base.SHA, "head", pr.Head.SHA)
 		if err := git.EnsureCommit(ctx, pr.Base.SHA, "", cfg.Forge.Remote, pr.Base.CloneURL); err != nil {
 			return nil, fmt.Errorf("base commit: %w", err)
@@ -270,6 +271,9 @@ func (a *App) Review(ctx context.Context, req ReviewRequest) (*ReviewResult, err
 	_ = store.WriteJSON("context", "changed-files.json", pr.ChangedFiles)
 	_ = store.WriteJSON("context", "associated-issues.json", pr.Issues)
 	_ = store.WriteJSON("context", "discussion.json", pr.Discussion)
+	if pr.CI != nil {
+		_ = store.WriteJSON("context", "checks.json", pr.CI)
+	}
 	if previous != nil {
 		_ = store.WriteJSON("context", "previous-review.json", previous)
 		if len(r.sinceDiffText) > 0 {
@@ -311,6 +315,8 @@ func (a *App) Review(ctx context.Context, req ReviewRequest) (*ReviewResult, err
 	if w := requestChangesFrom(review, req.RequestChangesFrom); w != "" {
 		review.Warnings = append(review.Warnings, w)
 	}
+	review.CI = pr.CI
+	review.Warnings = append(review.Warnings, applyCI(review, pr.CI)...)
 	_ = store.WriteJSON("final", "review.json", review)
 	var md bytes.Buffer
 	if err := output.Markdown(&md, review, output.Options{ShowAttribution: cfg.ShowAttribution(), ShowFailedAgents: cfg.ShowFailedAgents()}); err == nil {

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"unicode"
 
 	"github.com/bornholm/conclave/internal/config"
 	"github.com/bornholm/conclave/internal/domain"
@@ -30,10 +31,12 @@ func (a *App) loadCI(ctx context.Context, f forge.Forge, repo domain.Repository,
 	status := &domain.CIStatus{HeadSHA: sha}
 	if err != nil {
 		log.Warn("CI checks not read", "head", sha, "error", err)
-		status.Error = err.Error()
+		status.Error = oneLine(err.Error(), maxCheckFieldBytes)
 		return status
 	}
-	status.Checks = classifyChecks(a.Config.CI, sanitizeChecks(checks))
+	// Classified on the names the forge gave, which ci.required and
+	// ci.ignore are written against, then made safe to quote.
+	status.Checks = sanitizeChecks(classifyChecks(a.Config.CI, checks))
 	log.Debug("CI checks read", "head", sha, "checks", len(status.Checks), "state", status.State())
 	return status
 }
@@ -42,15 +45,22 @@ func (a *App) loadCI(ctx context.Context, f forge.Forge, repo domain.Repository,
 // the review.
 const maxCheckNameBytes = 200
 
+// maxCheckFieldBytes caps a check's URL and the error of a CI that could
+// not be read.
+const maxCheckFieldBytes = 500
+
 // sanitizeChecks makes what the forge said about the checks safe to quote.
 // A job name and what a job writes are the author's to choose, on a pull
 // request from a fork as on any other: a name is put on one line without
-// backticks, and a line of output that would close the block of untrusted
-// data it is quoted in is defused.
+// backticks, like every other field quoted outside a block of untrusted
+// data, and a line of output that would close the block it is quoted in is
+// defused.
 func sanitizeChecks(checks []domain.Check) []domain.Check {
 	out := make([]domain.Check, len(checks))
 	for i, c := range checks {
 		c.Name = oneLine(c.Name, maxCheckNameBytes)
+		c.Conclusion = oneLine(c.Conclusion, 64)
+		c.URL = oneLine(c.URL, maxCheckFieldBytes)
 		c.Summary = defuseFences(c.Summary)
 		anns := make([]domain.CheckAnnotation, len(c.Annotations))
 		for j, an := range c.Annotations {
@@ -65,19 +75,37 @@ func sanitizeChecks(checks []domain.Check) []domain.Check {
 	return out
 }
 
-// oneLine puts s on one line, without backticks, in at most max bytes.
+// oneLine puts s on one line, without backticks nor invisible format
+// characters, in at most max bytes. strings.Fields splits on every Unicode
+// space and line break.
 func oneLine(s string, max int) string {
-	s = strings.Join(strings.Fields(strings.ReplaceAll(s, "`", "'")), " ")
+	s = strings.Join(strings.Fields(strings.ReplaceAll(dropFormat(s), "`", "'")), " ")
 	return forge.CutText(s, max)
 }
 
-// defuseFences prefixes every line that looks like the start or the end of
-// a block of untrusted data, so that quoted output cannot close the block
-// it is quoted in.
+// lineBreaks turns every Unicode line break into "\n": a renderer, or a
+// model, reads CR, NEL and the line and paragraph separators as one.
+var lineBreaks = strings.NewReplacer("\r\n", "\n", "\r", "\n", "\u0085", "\n", "\u2028", "\n", "\u2029", "\n")
+
+// dropFormat removes the invisible format characters (zero-width spaces and
+// joiners, bidi controls, the byte order mark), which can hide a marker.
+func dropFormat(s string) string {
+	return strings.Map(func(r rune) rune {
+		if unicode.Is(unicode.Cf, r) {
+			return -1
+		}
+		return r
+	}, s)
+}
+
+// defuseFences prefixes every line that could pass for the start or the
+// end of a block of untrusted data, so that quoted output cannot close the
+// block it is quoted in: a line starting with "---", and any line naming an
+// UNTRUSTED block, wherever it is in the line.
 func defuseFences(s string) string {
-	lines := strings.Split(s, "\n")
+	lines := strings.Split(lineBreaks.Replace(dropFormat(s)), "\n")
 	for i, l := range lines {
-		if strings.HasPrefix(strings.TrimSpace(l), "---") {
+		if strings.HasPrefix(strings.TrimSpace(l), "---") || strings.Contains(strings.ToUpper(l), "UNTRUSTED") {
 			lines[i] = "| " + l
 		}
 	}

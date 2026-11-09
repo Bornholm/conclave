@@ -343,7 +343,7 @@ func writeCI(b *strings.Builder, ci *domain.CIStatus) {
 			fmt.Fprintf(b, " (%s)", c.Conclusion)
 		}
 		if c.URL != "" {
-			fmt.Fprintf(b, ": %s", c.URL)
+			fmt.Fprintf(b, ": <%s>", strings.NewReplacer("<", "%3C", ">", "%3E", " ", "%20").Replace(escape(c.URL)))
 		}
 		b.WriteString("\n")
 		for _, a := range c.Annotations {

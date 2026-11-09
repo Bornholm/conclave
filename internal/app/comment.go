@@ -110,12 +110,20 @@ func (a *App) WriteComment(ctx context.Context, req CommentRequest) (*Comment, e
 		return nil, fmt.Errorf("writer %s: invalid comment: %w", writer.ID, err)
 	}
 	missing := missingFindings(review, rep.Body, keepFrom(req.RequestChangesFrom))
+	missingChecks := missingChecks(review, rep.Body)
 	warnings = append(ex.Warnings, warnings...)
 	// final/comment.md is what the author reads, which the loop writes once
 	// it knows: this comment, or the review it falls back to.
-	if len(missing) > 0 {
+	if len(missing) > 0 || len(missingChecks) > 0 {
 		_ = store.Write("final", "comment-rejected.md", []byte(rep.Body+"\n"))
-		return nil, fmt.Errorf("writer %s: the comment leaves out the finding(s) at %s, rated %s or above", writer.ID, strings.Join(missing, ", "), keepFrom(req.RequestChangesFrom))
+		var reasons []string
+		if len(missing) > 0 {
+			reasons = append(reasons, fmt.Sprintf("the finding(s) at %s, rated %s or above", strings.Join(missing, ", "), keepFrom(req.RequestChangesFrom)))
+		}
+		if len(missingChecks) > 0 {
+			reasons = append(reasons, "the failed CI check(s) "+strings.Join(missingChecks, ", "))
+		}
+		return nil, fmt.Errorf("writer %s: the comment leaves out %s", writer.ID, strings.Join(reasons, ", and "))
 	}
 	_ = store.WriteJSON("final", "comment.json", rep)
 	log.Info("writer finished", "agent", writer.ID, "language", rep.Language, "bytes", len(rep.Body), "duration", res.Duration.Round(time.Millisecond))
@@ -155,6 +163,20 @@ func missingFindings(review *domain.ConsolidatedReview, body string, from domain
 			continue
 		}
 		missing = append(missing, f.File)
+	}
+	return missing
+}
+
+// missingChecks returns the names of the failed blocking checks a comment
+// does not name in backticks, as the review writes them: they request
+// changes as a finding does, and the author has to know which job to look
+// at. A bare name would be found in any sentence when it is "test".
+func missingChecks(review *domain.ConsolidatedReview, body string) []string {
+	var missing []string
+	for _, c := range review.CI.Blocking(domain.CheckFailure) {
+		if !strings.Contains(body, "`"+c.Name+"`") && !slices.Contains(missing, c.Name) {
+			missing = append(missing, c.Name)
+		}
 	}
 	return missing
 }

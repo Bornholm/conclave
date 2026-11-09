@@ -85,6 +85,9 @@ VERDICT RULES
 - "approve" only when there is no in-scope finding above "info" and every
   reviewer that succeeded either approved or raised nothing substantive.
 - When hesitating between two verdicts, choose the stricter one.
+- Judge the code, not the CI: Conclave applies the CI CHECKS below to the
+  verdict on its own. A finding that explains a failed check is weighed like
+  any other.
 
 {{if .PR.Local}}LOCAL COMMITS
 There is no pull request: the changes are local commits, reviewed as one
@@ -122,7 +125,7 @@ CHANGED FILES ({{len .PR.ChangedFiles}})
 {{.Body}}
 --- END UNTRUSTED {{.Kind}} ---
 {{end}}
-{{end}}SUCCESSFUL REVIEWERS
+{{end}}{{template "checks" .}}SUCCESSFUL REVIEWERS
 {{range .SucceededReviewers}}- {{.}}
 {{end}}
 FAILED REVIEWERS

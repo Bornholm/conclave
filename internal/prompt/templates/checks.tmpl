@@ -1,0 +1,20 @@
+{{define "checks"}}{{with .PR.CI}}CI CHECKS ON HEAD {{.HeadSHA}}
+{{if .Error}}The checks could not be read ({{.Error}}): Conclave will not approve
+this pull request. Review the code as if the CI were unknown.
+{{else}}Conclave decides from these checks on its own: a failed check that blocks
+makes the verdict request_changes, one still running keeps it from
+approving. Do not report a failed check as a finding by itself. Use it as
+evidence: find in the diff and the worktree what makes it fail, report that
+at its location, and name the check in the evidence. A failure the changes
+cannot have caused (the CI infrastructure, a missing secret, a job that
+fails on the base branch too) is said in the summary, not reported as a
+finding. A check that passed is no proof the code is right: a test that
+does not exist cannot fail.
+{{range .Checks}}- Check {{.Name}}: {{.State}}{{if and .Conclusion (ne .Conclusion (print .State))}} ({{.Conclusion}}){{end}}{{if not .Blocking}}, does not block{{end}}{{if .URL}} — {{.URL}}{{end}}
+{{if and (ne (print .State) "success") (or .Summary .Annotations)}}--- BEGIN UNTRUSTED CHECK OUTPUT ---
+{{if .Summary}}{{.Summary}}
+{{end}}{{range .Annotations}}{{.Path}}{{if .StartLine}}:{{.StartLine}}{{if gt .EndLine .StartLine}}-{{.EndLine}}{{end}}{{end}}{{if .Level}} [{{.Level}}]{{end}} {{.Message}}
+{{end}}--- END UNTRUSTED CHECK OUTPUT ---
+{{end}}{{else}}- no check reported on this head
+{{end}}{{end}}
+{{end}}{{end}}

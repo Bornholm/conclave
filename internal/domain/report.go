@@ -211,6 +211,9 @@ type ConsolidatedReview struct {
 	// PreviousFindings is what became of the previous review's findings, in
 	// an incremental review.
 	PreviousFindings []PreviousStatus `json:"previous_findings,omitempty"`
+	// CI is the state of the checks on the head reviewed, which the verdict
+	// follows. Filled by the orchestrator, never by the lead.
+	CI *CIStatus `json:"ci,omitempty"`
 	// Meta is filled by the orchestrator, never by the lead.
 	Meta ReviewMeta `json:"meta"`
 }

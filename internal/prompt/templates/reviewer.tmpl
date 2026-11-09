@@ -32,6 +32,8 @@ scope and of the decisions already taken:
 - A problem already raised in the discussion is still reported, but say so
   in its description ("already raised by <author>") and add what you verified.
 - Never ask the author a question that the discussion already answers.
+- A failed CI check, when there is one below, is where to start: it is the
+  one problem known to be real.
 - Findings in the newest commits deserve the most attention when the
   discussion shows the author is iterating on review feedback.
 
@@ -90,7 +92,7 @@ CHANGED FILES ({{len .PR.ChangedFiles}})
 {{.Body}}
 --- END UNTRUSTED {{.Kind}} ---
 {{end}}
-{{end}}{{if .DiffFile}}{{with .DiffIndex}}DIFF FILE (git diff {{$.MergeBaseSHA}} {{$.HeadSHA}}){{if $.DiffTruncated}} — TRUNCATED, inspect the worktree for the rest{{end}}
+{{end}}{{template "checks" .}}{{if .DiffFile}}{{with .DiffIndex}}DIFF FILE (git diff {{$.MergeBaseSHA}} {{$.HeadSHA}}){{if $.DiffTruncated}} — TRUNCATED, inspect the worktree for the rest{{end}}
 {{if $.DiffSince}}This review is incremental: start from the changes since the previous
 review, given below, and read the whole diff only where they or a previous
 finding lead you.

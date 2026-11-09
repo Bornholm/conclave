@@ -137,6 +137,19 @@ func Validate(cfg *Config) error {
 		add("ask.limits: all limits must be positive")
 	}
 
+	if cfg.CI.MaxWait != nil && *cfg.CI.MaxWait < 0 {
+		add("ci.max_wait: must be 0 or more")
+	}
+	for _, list := range []struct {
+		name     string
+		patterns []string
+	}{{"ci.required", cfg.CI.Required}, {"ci.ignore", cfg.CI.Ignore}} {
+		for i, p := range list.patterns {
+			if strings.TrimSpace(p) == "" {
+				add("%s[%d]: empty pattern", list.name, i)
+			}
+		}
+	}
 	if cfg.Loop.Interval < 0 {
 		add("loop.interval: must be positive")
 	}

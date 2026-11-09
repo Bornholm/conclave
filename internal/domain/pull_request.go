@@ -38,6 +38,9 @@ type PullRequest struct {
 	ChangedFiles []ChangedFile `json:"changed_files"`
 	Issues       []Issue       `json:"issues"`
 	Discussion   []Comment     `json:"discussion"`
+	// CI is the state of the checks on the head, nil when it was not read:
+	// a local review, a forge without CI, or ci.enabled false.
+	CI *CIStatus `json:"ci,omitempty"`
 }
 
 // Comment kinds.

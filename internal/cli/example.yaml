@@ -9,7 +9,7 @@ version: 1
 # env_file: .env
 
 forge:
-  provider: github          # github | gitea | redmine
+  provider: github          # github | gitea | gitlab | redmine
   remote: origin            # git remote naming the repository holding the pull
                             # requests and issues. A pull request opened from a
                             # fork lives in the upstream repository: contributors
@@ -18,9 +18,11 @@ forge:
   # base_url: https://api.github.com          # GitHub.com (default)
   # base_url: https://ghe.example.com/api/v3  # GitHub Enterprise
   # base_url: https://git.example.com         # Gitea / Forgejo (public instance URL)
+  # base_url: https://gitlab.com              # GitLab (public instance URL)
   # base_url: https://redmine.example.com   # Redmine (public instance URL)
   token_env: GITHUB_TOKEN   # name of the environment variable holding the token
                             # (GitHub: falls back to `gh auth token` when empty)
+                            # (GitLab: set GITLAB_TOKEN)
                             # (Redmine: set REDMINE_TOKEN)
 
 review:

@@ -2,7 +2,7 @@
 
 Conclave reviews a pull request with several local coding agents at once. Each agent gets its own disposable Git worktree at the pull request head, reads the code and prints a JSON report. A lead agent checks the reports against the code, merges the duplicates and writes one Markdown review with a verdict.
 
-It works with GitHub and with Gitea or Forgejo. [Claude Code](https://docs.anthropic.com/claude-code), [OpenCode](https://opencode.ai) and [Pi](https://github.com/badlogic/pi-mono) are configured in the example file. Any command that reads a prompt and prints one JSON object can be a reviewer.
+It works with GitHub, with Gitea or Forgejo, and with GitLab. [Claude Code](https://docs.anthropic.com/claude-code), [OpenCode](https://opencode.ai) and [Pi](https://github.com/badlogic/pi-mono) are configured in the example file. Any command that reads a prompt and prints one JSON object can be a reviewer.
 
 ## Install
 

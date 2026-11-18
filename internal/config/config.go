@@ -9,6 +9,7 @@ const (
 
 	ProviderGitHub  = "github"
 	ProviderGitea   = "gitea"
+	ProviderGitLab  = "gitlab"
 	ProviderRedmine = "redmine"
 
 	RoleReviewer = "reviewer"

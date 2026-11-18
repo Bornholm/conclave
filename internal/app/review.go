@@ -212,7 +212,7 @@ func (a *App) Review(ctx context.Context, req ReviewRequest) (*ReviewResult, err
 		if err := git.EnsureCommit(ctx, pr.Base.SHA, "", cfg.Forge.Remote, pr.Base.CloneURL); err != nil {
 			return nil, fmt.Errorf("base commit: %w", err)
 		}
-		if err := git.EnsureCommit(ctx, pr.Head.SHA, gitrepo.PullRequestRef(pr.Number), cfg.Forge.Remote, pr.Head.CloneURL); err != nil {
+		if err := git.EnsureCommit(ctx, pr.Head.SHA, gitrepo.PullRequestRef(cfg.Forge.Provider, pr.Number), cfg.Forge.Remote, pr.Head.CloneURL); err != nil {
 			return nil, fmt.Errorf("head commit: %w", err)
 		}
 		mergeBase, err := git.MergeBase(ctx, pr.Base.SHA, pr.Head.SHA)

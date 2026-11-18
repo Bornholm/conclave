@@ -82,8 +82,19 @@ func runConfigValidate(ctx context.Context, args []string, stdout, stderr io.Wri
 		}
 	case factory.TokenSourceGH:
 		fmt.Fprintf(stdout, "✓ token from gh auth token (%s is empty)\n", cfg.Forge.TokenEnv)
+	case factory.TokenSourceGlab:
+		fmt.Fprintf(stdout, "✓ token from glab config get token (%s is empty)\n", cfg.Forge.TokenEnv)
 	default:
-		fmt.Fprintf(stdout, "! no token: %s is empty and gh auth token is unavailable (only public repositories will work)\n", cfg.Forge.TokenEnv)
+		// Only GitHub and GitLab fall back on their CLI: naming one for the
+		// other providers sends the reader after a token it cannot use.
+		hint := ""
+		switch cfg.Forge.Provider {
+		case config.ProviderGitHub:
+			hint = " and gh auth token is unavailable"
+		case config.ProviderGitLab:
+			hint = " and glab config get token is unavailable"
+		}
+		fmt.Fprintf(stdout, "! no token: %s is empty%s (only public repositories will work)\n", cfg.Forge.TokenEnv, hint)
 	}
 	fmt.Fprintf(stdout, "✓ %d reviewer(s) configured\n", len(cfg.Reviewers()))
 	fmt.Fprintf(stdout, "✓ 1 lead configured (%s)\n", cfg.Lead().ID)

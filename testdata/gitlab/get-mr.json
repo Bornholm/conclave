@@ -1,0 +1,22 @@
+{
+  "id": 90001,
+  "iid": 42,
+  "project_id": 77,
+  "title": "Add retries to the client",
+  "description": "Fixes #7 and relates to acme/proj#99.",
+  "state": "opened",
+  "web_url": "https://gitlab.example.com/acme/proj/-/merge_requests/42",
+  "author": { "id": 3, "username": "carol", "name": "Carol" },
+  "source_branch": "retries",
+  "target_branch": "main",
+  "sha": "dddddddddddddddddddddddddddddddddddddddd",
+  "diff_refs": {
+    "base_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "start_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "head_sha": "dddddddddddddddddddddddddddddddddddddddd"
+  },
+  "source_project_id": 77,
+  "target_project_id": 77,
+  "labels": ["enhancement"],
+  "draft": false
+}

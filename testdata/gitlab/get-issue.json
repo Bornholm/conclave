@@ -1,0 +1,13 @@
+{
+  "id": 50007,
+  "iid": 7,
+  "title": "Need retries",
+  "description": "The client gives up on the first error.",
+  "state": "opened",
+  "web_url": "https://gitlab.example.com/acme/proj/-/issues/7",
+  "author": { "username": "dave" },
+  "labels": ["bug"],
+  "created_at": "2024-04-01T08:00:00.000Z",
+  "updated_at": "2024-04-20T08:00:00.000Z",
+  "closed_at": null
+}

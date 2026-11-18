@@ -4,6 +4,10 @@ package domain
 // returns.
 const CommentSchemaVersion = "1"
 
+// LoopMarkPrefix opens the mark hidden in each review the loop submits. A
+// forge without a review object recognizes the loop's reviews by it.
+const LoopMarkPrefix = "<!-- conclave-loop "
+
 // ForgeReview is one review submitted on a pull request, as the forge lists
 // it.
 type ForgeReview struct {

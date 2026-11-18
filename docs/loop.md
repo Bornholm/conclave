@@ -10,7 +10,9 @@ conclave loop --interval 15m --max-rounds 2
 conclave loop --include 172         # take up #172 although it was reviewed by hand
 ```
 
-It runs from the repository's root, like `conclave review`, and reviews one pull request at a time. The token needs write access to the pull requests. GitHub and Gitea are supported. Redmine has no reviews to submit, so the command stops there.
+It runs from the repository's root, like `conclave review`, and reviews one pull request at a time. The token needs write access to the pull requests. GitHub, Gitea and GitLab are supported. Redmine has no reviews to submit, so the command stops there.
+
+GitLab has no review object, so Conclave puts one together. It posts the review as a note and, for an approval, then approves the merge request at the head it reviewed, which GitLab refuses once the head has moved. GitLab's API has no request for changes: that verdict is the note alone and blocks nothing, since what holds a merge on GitLab is a missing approval, where the project requires one. Approving takes the Developer role at least for the token's account. A merge request counts as reviewed when someone approved it or commented inline on its diff; a plain comment does not count, as it does not on GitHub. When the approval fails after the note went out, refused or not answered, the loop takes the review as submitted and follows the merge request no further, new pushes included: it stays unapproved until someone approves it by hand.
 
 ## Which pull requests
 

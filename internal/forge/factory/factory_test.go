@@ -39,6 +39,18 @@ func TestMatchesRepository(t *testing.T) {
 			want: true,
 		},
 		{
+			name: "gitlab matches its host",
+			cfg:  config.ForgeConfig{Provider: config.ProviderGitLab, BaseURL: "https://gitlab.com"},
+			repo: domain.Repository{Host: "gitlab.com", Owner: "acme", Name: "proj"},
+			want: true,
+		},
+		{
+			name: "gitlab does not match another host",
+			cfg:  config.ForgeConfig{Provider: config.ProviderGitLab, BaseURL: "https://gitlab.com"},
+			repo: domain.Repository{Host: "github.com", Owner: "acme", Name: "proj"},
+			want: false,
+		},
+		{
 			name: "gitea does not match github",
 			cfg:  config.ForgeConfig{Provider: config.ProviderGitea, BaseURL: "https://git.example.com"},
 			repo: domain.Repository{Host: "github.com", Owner: "acme", Name: "proj"},

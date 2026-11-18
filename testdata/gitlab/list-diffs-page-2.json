@@ -1,0 +1,10 @@
+[
+  {
+    "old_path": "legacy.go",
+    "new_path": "legacy.go",
+    "new_file": false,
+    "renamed_file": false,
+    "deleted_file": true,
+    "diff": "--- a/legacy.go\n+++ /dev/null\n@@ -1,2 +0,0 @@\n-package client\n-func legacy() {}\n"
+  }
+]

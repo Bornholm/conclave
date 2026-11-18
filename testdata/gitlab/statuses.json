@@ -1,0 +1,6 @@
+[
+  { "name": "build", "status": "success", "description": "", "target_url": "https://gitlab.example.com/acme/proj/-/jobs/1", "allow_failure": false },
+  { "name": "test", "status": "failed", "description": "2 tests failed", "target_url": "https://gitlab.example.com/acme/proj/-/jobs/2", "allow_failure": false },
+  { "name": "lint", "status": "failed", "description": "advisory", "target_url": "https://gitlab.example.com/acme/proj/-/jobs/3", "allow_failure": true },
+  { "name": "deploy", "status": "manual", "description": "", "target_url": "https://gitlab.example.com/acme/proj/-/jobs/4", "allow_failure": false }
+]

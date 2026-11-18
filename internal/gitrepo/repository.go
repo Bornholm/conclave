@@ -442,7 +442,15 @@ func (g *Git) FileAt(ctx context.Context, sha, path string, limit int64) ([]byte
 	return []byte(out), nil
 }
 
-// PullRequestRef returns the hidden ref forges expose for a pull request head.
-func PullRequestRef(number int64) string {
-	return fmt.Sprintf("+refs/pull/%d/head:refs/conclave/pull/%d/head", number, number)
+// PullRequestRef returns the hidden ref the forge exposes for a pull
+// request head. GitHub, Gitea and Forgejo publish refs/pull/N/head; GitLab
+// publishes refs/merge-requests/N/head. It is this ref, in the repository
+// the remote points at, that makes the head of a pull request opened from a
+// fork fetchable at all.
+func PullRequestRef(provider string, number int64) string {
+	remote := "refs/pull"
+	if provider == "gitlab" {
+		remote = "refs/merge-requests"
+	}
+	return fmt.Sprintf("+%s/%d/head:refs/conclave/pull/%d/head", remote, number, number)
 }

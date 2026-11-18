@@ -1,0 +1,8 @@
+{
+  "id": 90001,
+  "iid": 42,
+  "approved": true,
+  "approved_by": [
+    { "user": { "username": "frank" }, "approved_at": "2024-05-01T13:00:00.000Z" }
+  ]
+}

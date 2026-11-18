@@ -79,6 +79,8 @@ func applyDefaults(cfg *Config) {
 			cfg.Forge.TokenEnv = "GITHUB_TOKEN"
 		case ProviderGitea:
 			cfg.Forge.TokenEnv = "GITEA_TOKEN"
+		case ProviderGitLab:
+			cfg.Forge.TokenEnv = "GITLAB_TOKEN"
 		case ProviderRedmine:
 			cfg.Forge.TokenEnv = "REDMINE_TOKEN"
 		}

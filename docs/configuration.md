@@ -59,7 +59,9 @@ The file is trusted as much as the `.conclave.yaml` of the working directory, wh
 
 `forge.token_env` is the name of a variable, not the token. For GitHub, when that variable is empty and the `gh` CLI is logged in, Conclave asks `gh auth token` for the forge host instead. `config validate` says which source it used.
 
-`forge.base_url` means two different things. For GitHub it is the API root, `https://api.github.com` or `https://ghe.example.com/api/v3`. For Gitea it is the public instance URL, `https://git.example.com`, sub-path included if there is one.
+`forge.base_url` means two different things. For GitHub it is the API root, `https://api.github.com` or `https://ghe.example.com/api/v3`. For Gitea and for GitLab it is the public instance URL, `https://git.example.com` or `https://gitlab.com`, sub-path included if there is one; Conclave appends `/api/v1` and `/api/v4` itself.
+
+On GitLab the number Conclave uses is the merge request `iid`, the one the web UI shows, not the instance-wide `id`. The project is taken from the Git remote as `group/project`: a project in a nested subgroup is not resolved yet. `conclave loop` is not available on GitLab, which has no review object — `review`, `triage`, `plan` and `ask` are.
 
 ## Agents
 
@@ -117,7 +119,7 @@ None of this depends on which agent runs it. The salvage reads the report where 
 
 ## Running label
 
-`review.running_label` names a label Conclave puts on the pull request once it has loaded it, and takes off when the review ends: on success, on failure, on timeout, and on interruption by Ctrl-C or SIGTERM, since the removal runs on a context of its own once the run is over. Something like `conclave/running` tells the team, or a CI job, that a review is under way. It is empty by default, which disables it. The token needs write access to the pull requests. GitHub creates the label on first use, and on Gitea Conclave creates it when the repository does not define it. Redmine has no pull requests to label, and the setting is ignored with a warning. A failure to add or remove the label is logged and never fails the review. A process killed with SIGKILL leaves the label behind, to be removed by hand.
+`review.running_label` names a label Conclave puts on the pull request once it has loaded it, and takes off when the review ends: on success, on failure, on timeout, and on interruption by Ctrl-C or SIGTERM, since the removal runs on a context of its own once the run is over. Something like `conclave/running` tells the team, or a CI job, that a review is under way. It is empty by default, which disables it. The token needs write access to the pull requests. GitHub creates the label on first use, and on Gitea Conclave creates it when the repository does not define it. GitLab attaches labels by name and creates the missing one itself. Redmine has no pull requests to label, and the setting is ignored with a warning. A failure to add or remove the label is logged and never fails the review. A process killed with SIGKILL leaves the label behind, to be removed by hand.
 
 ## Triage
 
@@ -155,7 +157,7 @@ An ask run reads no forge, so a configuration used only for questions never need
 
 ## CI
 
-The checks of the pull request head are read when the review starts, on GitHub (check runs and commit statuses) and on Gitea or Forgejo (commit statuses, their Actions included). Each agent gets them, with the summary and the annotations of the ones that did not pass, and the run keeps them in `context/checks.json`. The verdict follows them whatever the lead says: a failed check requests changes, and a check still running, or checks that could not be read, keep the review from approving. A cancelled or timed out job counts as failed.
+The checks of the pull request head are read when the review starts, on GitHub (check runs and commit statuses), on Gitea or Forgejo (commit statuses, their Actions included) and on GitLab (commit statuses, which is how GitLab reports its own CI jobs; a job the pipeline allows to fail counts as passed, a manual job that has not run stays pending). Each agent gets them, with the summary and the annotations of the ones that did not pass, and the run keeps them in `context/checks.json`. The verdict follows them whatever the lead says: a failed check requests changes, and a check still running, or checks that could not be read, keep the review from approving. A cancelled or timed out job counts as failed.
 
 Every check reported on the head decides by default. `ci.ignore` lists the names of the checks that never do, an optional or flaky job; the agents still see them. `ci.required`, when set, restricts the checks that decide to the ones it names, and each of them is waited for even before it reports: without it, a head whose CI has not started yet looks like a head without CI. `ignore` wins over `required`. In both lists, `*` matches anything, slashes included, and `?` one character: `CI / test (*)`.
 

@@ -1,7 +1,7 @@
 #!/bin/sh
 # Installs or updates conclave from the GitHub Releases.
 #
-#   curl -fsSL https://raw.githubusercontent.com/bornholm/conclave/main/install.sh | sh
+#   curl -fsSL https://raw.githubusercontent.com/bornholm/conclave/master/install.sh | sh
 #
 # On Debian/Ubuntu the .deb is installed with apt or dpkg, on Arch/Manjaro the
 # pacman package. Anywhere else (macOS, other distributions, no root) the
@@ -29,7 +29,7 @@ usage() {
     cat <<'USAGE'
 Installs or updates conclave from the GitHub Releases.
 
-  curl -fsSL https://raw.githubusercontent.com/bornholm/conclave/main/install.sh | sh
+  curl -fsSL https://raw.githubusercontent.com/bornholm/conclave/master/install.sh | sh
 
 Options: --version <tag>, --binary, --prefix <dir>, --force, --download-only.
 Variables: CONCLAVE_VERSION, CONCLAVE_BINARY, CONCLAVE_PREFIX, CONCLAVE_FORCE,

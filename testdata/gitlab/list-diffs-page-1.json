@@ -1,0 +1,10 @@
+[
+  {
+    "old_path": "retry.go",
+    "new_path": "retry.go",
+    "new_file": false,
+    "renamed_file": false,
+    "deleted_file": false,
+    "diff": "--- a/retry.go\n+++ b/retry.go\n@@ -1,4 +1,6 @@\n package client\n \n+// Retry retries f.\n+func Retry() {}\n-func old() {}\n"
+  }
+]

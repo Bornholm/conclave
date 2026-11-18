@@ -1,0 +1,59 @@
+[
+  {
+    "id": "aaa111",
+    "individual_note": true,
+    "notes": [
+      {
+        "id": 1,
+        "type": null,
+        "body": "Looks good, but see acme/proj#8.",
+        "author": { "username": "dave" },
+        "created_at": "2024-05-01T10:00:00.000Z",
+        "system": false
+      }
+    ]
+  },
+  {
+    "id": "bbb222",
+    "individual_note": false,
+    "notes": [
+      {
+        "id": 2,
+        "type": "DiffNote",
+        "body": "This loop never exits.",
+        "author": { "username": "erin" },
+        "created_at": "2024-05-01T11:00:00.000Z",
+        "system": false,
+        "position": {
+          "new_path": "retry.go",
+          "old_path": "retry.go",
+          "new_line": 12,
+          "old_line": null,
+          "position_type": "text"
+        }
+      },
+      {
+        "id": 3,
+        "type": "DiscussionNote",
+        "body": "Fixed in the last push.",
+        "author": { "username": "carol" },
+        "created_at": "2024-05-01T12:00:00.000Z",
+        "system": false
+      }
+    ]
+  },
+  {
+    "id": "ccc333",
+    "individual_note": true,
+    "notes": [
+      {
+        "id": 4,
+        "type": null,
+        "body": "assigned to @carol",
+        "author": { "username": "dave" },
+        "created_at": "2024-05-01T09:00:00.000Z",
+        "system": true
+      }
+    ]
+  }
+]

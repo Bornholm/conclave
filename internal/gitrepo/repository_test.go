@@ -187,7 +187,7 @@ func TestEnsureCommitFetchesPullRef(t *testing.T) {
 	if g.HasCommit(ctx, head) {
 		t.Fatal("clone should not have the PR head yet")
 	}
-	if err := g.EnsureCommit(ctx, head, PullRequestRef(1), "origin"); err != nil {
+	if err := g.EnsureCommit(ctx, head, PullRequestRef("github", 1), "origin"); err != nil {
 		t.Fatal(err)
 	}
 	if !g.HasCommit(ctx, head) {

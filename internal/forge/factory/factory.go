@@ -11,6 +11,7 @@ import (
 	"github.com/bornholm/conclave/internal/forge"
 	"github.com/bornholm/conclave/internal/forge/gitea"
 	"github.com/bornholm/conclave/internal/forge/github"
+	"github.com/bornholm/conclave/internal/forge/gitlab"
 	"github.com/bornholm/conclave/internal/forge/redmine"
 )
 
@@ -23,6 +24,8 @@ func New(cfg config.ForgeConfig, hc *http.Client) (forge.Forge, error) {
 		return github.New(cfg.BaseURL, token, hc)
 	case config.ProviderGitea:
 		return gitea.New(cfg.BaseURL, token, hc)
+	case config.ProviderGitLab:
+		return gitlab.New(cfg.BaseURL, token, hc)
 	case config.ProviderRedmine:
 		return redmine.New(cfg.BaseURL, token, hc)
 	default:

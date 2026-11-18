@@ -10,7 +10,7 @@ conclave loop --interval 15m --max-rounds 2
 conclave loop --include 172         # take up #172 although it was reviewed by hand
 ```
 
-It runs from the repository's root, like `conclave review`, and reviews one pull request at a time. The token needs write access to the pull requests. GitHub and Gitea are supported. Redmine has no reviews to submit, so the command stops there.
+It runs from the repository's root, like `conclave review`, and reviews one pull request at a time. The token needs write access to the pull requests. GitHub and Gitea are supported. Redmine has no reviews to submit, and GitLab has no review object to submit one as, so the command stops there on both.
 
 ## Which pull requests
 

@@ -167,7 +167,7 @@ func (a *App) sinceDiff(ctx context.Context, r *run) {
 	// The previous head may be missing from this clone for reasons other than
 	// a force push: pruned, or reviewed from another clone. The pull request
 	// ref still holds it when the branch was only extended.
-	prRef := gitrepo.PullRequestRef(r.pr.Number)
+	prRef := gitrepo.PullRequestRef(r.cfg.Forge.Provider, r.pr.Number)
 	if r.pr.Local {
 		prRef = ""
 	}

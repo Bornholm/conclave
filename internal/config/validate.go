@@ -26,6 +26,12 @@ var protectedEnv = map[string]bool{
 func IsProtectedEnv(name string) bool { return protectedEnv[name] }
 
 // Validate checks structural and semantic rules. All problems are reported together.
+// forgeNeedsBaseURL lists the providers with no default instance: only
+// GitHub has one.
+var forgeNeedsBaseURL = map[string]bool{
+	ProviderGitea: true, ProviderGitLab: true, ProviderRedmine: true,
+}
+
 func Validate(cfg *Config) error {
 	var errs []error
 	add := func(format string, args ...any) { errs = append(errs, fmt.Errorf(format, args...)) }
@@ -35,13 +41,13 @@ func Validate(cfg *Config) error {
 	}
 
 	switch cfg.Forge.Provider {
-	case ProviderGitHub, ProviderGitea, ProviderRedmine:
+	case ProviderGitHub, ProviderGitea, ProviderGitLab, ProviderRedmine:
 	case "":
-		add("forge.provider: required (github, gitea or redmine)")
+		add("forge.provider: required (github, gitea, gitlab or redmine)")
 	default:
-		add("forge.provider: unsupported %q (github, gitea or redmine)", cfg.Forge.Provider)
+		add("forge.provider: unsupported %q (github, gitea, gitlab or redmine)", cfg.Forge.Provider)
 	}
-	if (cfg.Forge.Provider == ProviderGitea || cfg.Forge.Provider == ProviderRedmine) && cfg.Forge.BaseURL == "" {
+	if forgeNeedsBaseURL[cfg.Forge.Provider] && cfg.Forge.BaseURL == "" {
 		add("forge.base_url: required for %s", cfg.Forge.Provider)
 	}
 	if cfg.Forge.BaseURL != "" {

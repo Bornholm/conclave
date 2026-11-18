@@ -59,7 +59,8 @@ func TestDecodeRejects(t *testing.T) {
 		"two leads":           {strings.Replace(validYAML, "role: reviewer", "role: lead", 1), "exactly one lead"},
 		"no reviewer":         {strings.Replace(validYAML, "role: reviewer", "role: lead", 1), "at least one reviewer"},
 		"empty command":       {strings.Replace(validYAML, "command: [echo]", "command: []", 1), "at least the executable"},
-		"bad provider":        {strings.Replace(validYAML, "provider: github", "provider: gitlab", 1), "unsupported"},
+		"bad provider":        {strings.Replace(validYAML, "provider: github", "provider: bitbucket", 1), "unsupported"},
+		"gitlab no url":       {strings.Replace(validYAML, "provider: github", "provider: gitlab", 1), "base_url: required"},
 		"gitea no url":        {strings.Replace(validYAML, "provider: github", "provider: gitea", 1), "base_url: required"},
 		"redmine no url":      {strings.Replace(validYAML, "provider: github", "provider: redmine", 1), "base_url: required"},
 		"bad token env":       {strings.Replace(validYAML, "provider: github", "provider: github\n  token_env: ghp-secret", 1), "token_env"},
@@ -89,6 +90,20 @@ func TestDecodeRejects(t *testing.T) {
 				t.Errorf("error %q does not contain %q", err, tc.want)
 			}
 		})
+	}
+}
+
+func TestDecodeAcceptsGitLab(t *testing.T) {
+	y := strings.Replace(validYAML, "provider: github", "provider: gitlab\n  base_url: https://gitlab.com", 1)
+	cfg, err := Decode(strings.NewReader(y))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Forge.TokenEnv != "GITLAB_TOKEN" {
+		t.Errorf("token env: %q", cfg.Forge.TokenEnv)
+	}
+	if cfg.Forge.Provider != ProviderGitLab || cfg.Forge.BaseURL != "https://gitlab.com" {
+		t.Errorf("forge: %+v", cfg.Forge)
 	}
 }
 

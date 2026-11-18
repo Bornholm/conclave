@@ -253,15 +253,17 @@ func ListChecks(ctx context.Context, f Forge, repo domain.Repository, sha string
 	return r.ListChecks(ctx, repo, sha)
 }
 
-// StatusState maps a commit status state, as GitHub, Gitea and Forgejo
-// name it, to a check state. An unknown state is pending: it is not a
-// success the review can approve on, nor a failure it can blame the author
-// for.
+// StatusState maps a commit status state, as GitHub, Gitea, Forgejo and
+// GitLab name it, to a check state. An unknown state is pending: it is not
+// a success the review can approve on, nor a failure it can blame the
+// author for. GitLab's own waiting states (created, preparing, manual,
+// scheduled, waiting_for_resource) fall there, which is where a job that
+// has not run belongs.
 func StatusState(s string) domain.CheckState {
 	switch strings.ToLower(s) {
 	case "success", "warning", "skipped", "neutral":
 		return domain.CheckSuccess
-	case "failure", "error", "cancelled", "canceled", "timed_out", "timedout":
+	case "failure", "failed", "error", "cancelled", "canceled", "canceling", "timed_out", "timedout":
 		return domain.CheckFailure
 	}
 	return domain.CheckPending

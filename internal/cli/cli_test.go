@@ -543,3 +543,26 @@ func TestStaleCommandsSaysWhenTheConfigurationDoesNotLoad(t *testing.T) {
 		t.Errorf("warnings: %q", w)
 	}
 }
+
+func TestConfigValidateSaysTheTokenCameFromGlab(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	t.Setenv("GITLAB_TOKEN", "")
+	bin := t.TempDir()
+	if err := os.WriteFile(filepath.Join(bin, "glab"), []byte("#!/bin/sh\necho glabtoken\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	if err := os.WriteFile(".conclave.yaml", []byte(isolated+"version: 1\nforge: {provider: gitlab, base_url: https://gitlab.com}\nagents: [{id: rev, role: reviewer, command: [echo]}, {id: lead, role: lead, command: [echo]}]\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var out, errb bytes.Buffer
+	Main([]string{"config", "validate"}, &out, &errb)
+	want := "✓ token from glab config get token (GITLAB_TOKEN is empty)\n"
+	if !strings.Contains(out.String(), want) {
+		t.Errorf("missing %q in:\n%s", want, out.String())
+	}
+	if strings.Contains(out.String()+errb.String(), "glabtoken") {
+		t.Error("the token value was printed")
+	}
+}

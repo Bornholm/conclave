@@ -55,11 +55,11 @@ type loopMark struct {
 	Held domain.Verdict `json:"held,omitempty"`
 }
 
-var loopMarkRe = regexp.MustCompile(`<!-- conclave-loop (\{[^\n]*?\}) -->`)
+var loopMarkRe = regexp.MustCompile(regexp.QuoteMeta(domain.LoopMarkPrefix) + `(\{[^\n]*?\}) -->`)
 
 func (m loopMark) String() string {
 	data, _ := json.Marshal(m)
-	return "<!-- conclave-loop " + string(data) + " -->"
+	return domain.LoopMarkPrefix + string(data) + " -->"
 }
 
 // parseLoopMark reads the last mark of a review body.

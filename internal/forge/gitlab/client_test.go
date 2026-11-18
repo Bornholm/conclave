@@ -235,13 +235,7 @@ func TestGitLabInterfaces(t *testing.T) {
 	var _ forge.PullRequestLabeler = c
 	var _ forge.ForkResolver = c
 	var _ forge.CheckReader = c
-}
-
-func TestGitLabNoReviewer(t *testing.T) {
-	// GitLab has no review object: loop must say so rather than guess.
-	if _, err := forge.Reviewer(&Client{}); err == nil {
-		t.Fatal("expected ErrReviewsUnsupported")
-	}
+	var _ forge.PullRequestReviewer = c
 }
 
 func TestMapMergeRequestFork(t *testing.T) {

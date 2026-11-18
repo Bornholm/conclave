@@ -274,3 +274,11 @@ func TestRedmineListReferences(t *testing.T) {
 		t.Errorf("title: got %q", refs[0].Title)
 	}
 }
+
+// Redmine has no reviews: loop must say so rather than guess. It is the
+// forge left to cover forge.Reviewer's refusal.
+func TestRedmineNoReviewer(t *testing.T) {
+	if _, err := forge.Reviewer(&Client{}); !errors.Is(err, forge.ErrReviewsUnsupported) {
+		t.Fatalf("want ErrReviewsUnsupported, got %v", err)
+	}
+}

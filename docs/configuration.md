@@ -57,11 +57,11 @@ The file is trusted as much as the `.conclave.yaml` of the working directory, wh
 
 ## Forge
 
-`forge.token_env` is the name of a variable, not the token. For GitHub, when that variable is empty and the `gh` CLI is logged in, Conclave asks `gh auth token` for the forge host instead. `config validate` says which source it used.
+`forge.token_env` is the name of a variable, not the token. When that variable is empty, Conclave asks the forge's CLI for the token of the forge host instead: `gh auth token` for GitHub, `glab config get token` for GitLab, when that CLI is logged in. `config validate` says which source it used.
 
 `forge.base_url` means two different things. For GitHub it is the API root, `https://api.github.com` or `https://ghe.example.com/api/v3`. For Gitea and for GitLab it is the public instance URL, `https://git.example.com` or `https://gitlab.com`, sub-path included if there is one; Conclave appends `/api/v1` and `/api/v4` itself.
 
-On GitLab the number Conclave uses is the merge request `iid`, the one the web UI shows, not the instance-wide `id`. The project is taken from the Git remote as `group/project`: a project in a nested subgroup is not resolved yet. `conclave loop` is not available on GitLab, which has no review object — `review`, `triage`, `plan` and `ask` are.
+On GitLab the number Conclave uses is the merge request `iid`, the one the web UI shows, not the instance-wide `id`. The project is taken from the Git remote as `group/project`: a project in a nested subgroup is not resolved yet. `conclave loop` publishes a review as a note followed, for an approval, by an approval of the head reviewed; see [loop](loop.md).
 
 ## Agents
 

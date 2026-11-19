@@ -69,3 +69,19 @@ func TestRunContextCancel(t *testing.T) {
 		t.Fatal("expected cancellation error")
 	}
 }
+
+// An explicit Env stops os/exec from updating PWD, and some agents (OpenCode)
+// resolve their project from PWD: they then read the caller's checkout instead
+// of their own worktree.
+func TestRunSetsPWDToDir(t *testing.T) {
+	dir := t.TempDir()
+	r := &ExecRunner{}
+	res, err := r.Run(context.Background(), Request{
+		Command: []string{"printenv", "PWD"},
+		Dir:     dir, Env: append(os.Environ(), "PWD=/elsewhere"),
+		Timeout: 10 * time.Second, MaxStdoutBytes: 1024, MaxStderrBytes: 1024,
+	})
+	if err != nil || strings.TrimSpace(string(res.Stdout)) != dir {
+		t.Fatalf("PWD = %q, want %q (err %v)", res.Stdout, dir, err)
+	}
+}

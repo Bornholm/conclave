@@ -7,6 +7,8 @@ import (
 	"errors"
 	"fmt"
 	"os/exec"
+	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 )
@@ -65,6 +67,14 @@ func (r *ExecRunner) Run(ctx context.Context, req Request) (*Result, error) {
 	cmd := exec.CommandContext(runCtx, bin, req.Command[1:]...)
 	cmd.Dir = req.Dir
 	cmd.Env = req.Env
+	if req.Dir != "" && req.Env != nil {
+		// os/exec only updates PWD when Env is nil; agents that trust PWD
+		// (OpenCode) would otherwise work in the caller's directory.
+		// The last PWD wins in os/exec's de-duplication.
+		if dir, err := filepath.Abs(req.Dir); err == nil {
+			cmd.Env = append(slices.Clip(req.Env), "PWD="+dir)
+		}
+	}
 	if req.Stdin != nil {
 		cmd.Stdin = strings.NewReader(string(req.Stdin))
 	}
